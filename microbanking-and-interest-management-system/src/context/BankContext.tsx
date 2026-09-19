@@ -60,6 +60,12 @@ interface BankContextType {
   currentBranchId: string;
   setCurrentBranchId: (branchId: string) => void;
   currentBranch: Branch | undefined;
+  
+  // Navigation & Global Search
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
+  globalSearch: string;
+  setGlobalSearch: (search: string) => void;
 
   // Master lists
   branches: Branch[];
@@ -156,9 +162,10 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
   const [currentRole, setCurrentRoleState] = useState<UserRole>('Manager');
   const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
   const [currentUser, setCurrentUser] = useState<Employee>(initialEmployees[0]); // Manager Nalin Perera
-  const [currentBranchId, setCurrentBranchId] = useState<string>('BR001'); // Colombo Central
+  const [currentBranchId, setCurrentBranchId] = useState<string>('BR001'); // Colombo Branch
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [globalSearch, setGlobalSearch] = useState<string>('');
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
-
   // Entities state
   const [branches, setBranches] = useState<Branch[]>(initialBranches);
   const [accountTypes] = useState<AccountType[]>(initialAccountTypes);
@@ -791,6 +798,10 @@ export function BankProvider({ children }: { children: React.ReactNode }) {
         setCurrentUser,
         currentBranchId,
         setCurrentBranchId,
+        activeTab,
+        setActiveTab,
+        globalSearch,
+        setGlobalSearch,
         currentBranch,
         branches,
         employees,
