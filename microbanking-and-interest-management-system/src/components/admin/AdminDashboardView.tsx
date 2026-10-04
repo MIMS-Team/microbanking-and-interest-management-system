@@ -120,7 +120,7 @@ export default function AdminDashboardView({ onNavigateTab }: AdminDashboardView
                 <KeyRound className="w-4 h-4 text-indigo-600" />
                 <div>
                   <div className="font-semibold text-slate-800">HRM OTP Dispatch Gateway</div>
-                  <div className="text-[10px] text-slate-400">SMS / Email Notification Service</div>
+                  <div className="text-[10px] text-slate-400">HRM authorization delivery service</div>
                 </div>
               </div>
               <span className="text-emerald-600 font-semibold font-mono">OPERATIONAL</span>

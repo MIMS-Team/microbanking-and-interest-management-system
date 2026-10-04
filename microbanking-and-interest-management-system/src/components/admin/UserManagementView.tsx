@@ -17,7 +17,6 @@ import {
   renewCustomerPassword,
 } from '@/services/customerService';
 import { getBranches } from '@/services/branchService';
-import { useSession } from '@/context/SessionContext';
 import Pagination from '@/components/common/Pagination';
 import Modal from '@/components/common/Modal';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
@@ -41,7 +40,6 @@ import {
 
 // Administrator user management portal with separate Employee and Customer account tabs
 export default function UserManagementView() {
-  const { showNotification } = useSession();
   const branches = getBranches();
 
   // Active sub-tab: 'employees' or 'customers'
@@ -76,8 +74,7 @@ export default function UserManagementView() {
   const [formHrmOtp, setFormHrmOtp] = useState('849201'); // Pre-filled default OTP for testing
   const [formError, setFormError] = useState('');
 
-  // Password Renewal Notification Modal
-  const [renewNotice, setRenewNotice] = useState<{
+  const [passwordResetInfo, setPasswordResetInfo] = useState<{
     isOpen: boolean;
     name: string;
     tempPass: string;
@@ -183,7 +180,6 @@ export default function UserManagementView() {
         if (result.success) {
           setEmployees(getEmployees());
           setIsAddEmployeeModalOpen(false);
-          showNotification(result.message);
         } else {
           setFormError(result.message);
         }
@@ -217,7 +213,6 @@ export default function UserManagementView() {
         if (result.success) {
           setEmployees(getEmployees());
           setIsEditEmployeeModalOpen(false);
-          showNotification(result.message);
         }
       },
     });
@@ -236,7 +231,6 @@ export default function UserManagementView() {
         const result = toggleEmployeeStatus(emp.id);
         if (result.success) {
           setEmployees(getEmployees());
-          showNotification(`Staff member ${emp.name} account marked as ${result.newStatus}.`);
         }
       },
     });
@@ -246,14 +240,13 @@ export default function UserManagementView() {
   const handleRenewEmpPassword = (emp: Employee) => {
     const res = renewEmployeePassword(emp.id);
     if (res.success) {
-      setRenewNotice({
+      setPasswordResetInfo({
         isOpen: true,
         name: emp.name,
         tempPass: res.temporaryPassword,
         message: res.message,
         type: 'Employee',
       });
-      showNotification(`Temporary password dispatched to ${emp.name}`);
     }
   };
 
@@ -261,14 +254,13 @@ export default function UserManagementView() {
   const handleRenewCustPassword = (c: Customer) => {
     const res = renewCustomerPassword(c.id);
     if (res.success) {
-      setRenewNotice({
+      setPasswordResetInfo({
         isOpen: true,
         name: c.name,
         tempPass: res.temporaryPassword,
         message: res.message,
         type: 'Customer',
       });
-      showNotification(`Temporary password sent via SMS to ${c.name}`);
     }
   };
 
@@ -449,7 +441,7 @@ export default function UserManagementView() {
                           <button
                             onClick={() => handleRenewEmpPassword(emp)}
                             className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                            title="Reset Password & Send Notification"
+                            title="Reset Password"
                           >
                             <KeyRound className="w-3.5 h-3.5" />
                           </button>
@@ -794,32 +786,32 @@ export default function UserManagementView() {
         </form>
       </Modal>
 
-      {/* Password Renewal Notification Modal */}
+      {/* Password reset details modal */}
       <Modal
-        isOpen={renewNotice.isOpen}
-        onClose={() => setRenewNotice((prev) => ({ ...prev, isOpen: false }))}
-        title={`${renewNotice.type} Password Reset & Notification`}
+        isOpen={passwordResetInfo.isOpen}
+        onClose={() => setPasswordResetInfo((prev) => ({ ...prev, isOpen: false }))}
+        title={`${passwordResetInfo.type} Password Reset`}
         maxWidth="max-w-md"
       >
         <div className="space-y-4">
           <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="flex items-center gap-2 text-xs font-bold text-blue-900">
               <CheckCircle className="w-4 h-4 text-blue-600" />
-              <span>Password Renewed for {renewNotice.name}</span>
+              <span>Password Renewed for {passwordResetInfo.name}</span>
             </div>
-            <p className="text-xs text-blue-700 mt-1">{renewNotice.message}</p>
+            <p className="text-xs text-blue-700 mt-1">{passwordResetInfo.message}</p>
           </div>
 
           <div className="p-3 bg-slate-100 rounded-xl text-center">
             <span className="text-[11px] text-slate-500 block">Temporary Password Generated:</span>
             <span className="font-mono font-bold text-lg text-slate-900 tracking-wider">
-              {renewNotice.tempPass}
+              {passwordResetInfo.tempPass}
             </span>
           </div>
 
           <div className="flex justify-end pt-2">
             <button
-              onClick={() => setRenewNotice((prev) => ({ ...prev, isOpen: false }))}
+              onClick={() => setPasswordResetInfo((prev) => ({ ...prev, isOpen: false }))}
               className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl cursor-pointer"
             >
               Done

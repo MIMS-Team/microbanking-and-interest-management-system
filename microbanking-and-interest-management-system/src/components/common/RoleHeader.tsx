@@ -1,15 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { useSession } from '@/context/SessionContext';
 import Modal from './Modal';
 import {
   Landmark,
-  Bell,
   ChevronDown,
   KeyRound,
+  LogOut,
   ShieldCheck,
   Check,
   Building2,
@@ -34,7 +32,6 @@ interface RoleHeaderProps {
   tabs: NavItem[];
   activeTab: string;
   onTabChange: (tabId: string) => void;
-  pendingApprovalsCount?: number;
 }
 
 // Global banking header adhering to the reference screenshot design
@@ -43,10 +40,8 @@ export default function RoleHeader({
   tabs,
   activeTab,
   onTabChange,
-  pendingApprovalsCount = 0,
 }: RoleHeaderProps) {
-  const pathname = usePathname();
-  const { currentUser, updateUserPassword, showNotification } = useSession();
+  const { currentUser, updateUserPassword, logout } = useSession();
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
@@ -78,51 +73,7 @@ export default function RoleHeader({
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200/90 shadow-2xs">
-      {/* Top Portal Switcher Bar */}
-      <div className="bg-slate-900 text-slate-300 px-4 sm:px-6 py-1.5 text-xs flex flex-wrap items-center justify-between gap-2 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-            System Online
-          </span>
-          <span className="text-slate-400 hidden sm:inline">Active Portal:</span>
-          <span className="font-semibold text-white">{roleBadgeText}</span>
-        </div>
 
-        {/* Navigation links to the 3 separate dedicated user level interfaces */}
-        <div className="flex items-center gap-1.5 text-[11px]">
-          <span className="text-slate-400 mr-1 hidden md:inline">Switch Portal:</span>
-          <Link
-            href="/branch-management"
-            className={`px-2.5 py-0.5 rounded-md font-medium transition-colors ${
-              pathname.startsWith('/branch-management')
-                ? 'bg-blue-600 text-white font-semibold'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            Branch Management
-          </Link>
-          <Link
-            href="/higher-management"
-            className={`px-2.5 py-0.5 rounded-md font-medium transition-colors ${
-              pathname.startsWith('/higher-management')
-                ? 'bg-blue-600 text-white font-semibold'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            Higher Management
-          </Link>
-          <Link
-            href="/admin"
-            className={`px-2.5 py-0.5 rounded-md font-medium transition-colors ${
-              pathname.startsWith('/admin')
-                ? 'bg-blue-600 text-white font-semibold'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            Admin
-          </Link>
-        </div>
-      </div>
 
       {/* Main Header Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -130,7 +81,7 @@ export default function RoleHeader({
           {/* 1. Left: Bank Brand & MIMS Tag */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-xs">
-              <Landmark className="w-5 h-5 text-blue-400" />
+              <Landmark className="w-5 h-5 text-blue-400" />  {/* bank logo */}
             </div>
             <div>
               <div className="font-bold text-slate-900 text-base leading-tight tracking-tight">
@@ -144,7 +95,7 @@ export default function RoleHeader({
             </div>
           </div>
 
-          {/* 2. Middle: Navigation Tabs Matching Reference Screenshot */}
+          {/* 2. Middle: Navigation Tabs  */}
           <nav className="hidden lg:flex items-center gap-1 overflow-x-auto py-1">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
@@ -175,20 +126,8 @@ export default function RoleHeader({
             })}
           </nav>
 
-          {/* 3. Right: Notifications & User Profile */}
+          {/* 3. Right: User Profile */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Notification Bell */}
-            <button
-              onClick={() => onTabChange('approvals')}
-              className="relative p-2 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-              title={`${pendingApprovalsCount} pending approvals`}
-            >
-              <Bell className="w-4 h-4" />
-              {pendingApprovalsCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
-              )}
-            </button>
-
             {/* User Avatar & Dropdown */}
             <div className="relative">
               <button
@@ -234,7 +173,18 @@ export default function RoleHeader({
                     >
                       <KeyRound className="w-3.5 h-3.5 text-slate-400" />
                       <span>Change Account Password</span>
+
                     </button>
+                    <button
+                        onClick={() => {
+                          setProfileDropdownOpen(false);
+                          logout();
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors text-left"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Logout</span>
+                      </button>
                   </div>
                 </div>
               )}

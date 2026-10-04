@@ -31,7 +31,7 @@ import {
 
 // Customer management portal scoped to branch operations
 export default function CustomersView() {
-  const { currentBranchId, showNotification } = useSession();
+  const { currentBranchId } = useSession();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -162,7 +162,6 @@ export default function CustomersView() {
         if (result.success) {
           setCustomers(getCustomers(currentBranchId));
           setIsAddModalOpen(false);
-          showNotification(`Customer ${formName} registered successfully.`);
         }
       },
     });
@@ -195,7 +194,6 @@ export default function CustomersView() {
         if (result.success) {
           setCustomers(getCustomers(currentBranchId));
           setIsEditModalOpen(false);
-          showNotification(result.message);
         }
       },
     });
@@ -212,7 +210,6 @@ export default function CustomersView() {
         const result = toggleCustomerStatus(c.id);
         if (result.success) {
           setCustomers(getCustomers(currentBranchId));
-          showNotification(`Customer ${c.name} is now ${result.newStatus}.`);
         }
       },
     });
@@ -228,7 +225,6 @@ export default function CustomersView() {
         tempPass: res.temporaryPassword,
         message: res.message,
       });
-      showNotification(`Password renewed for ${c.name}`);
     }
   };
 
@@ -594,11 +590,11 @@ export default function CustomersView() {
         </form>
       </Modal>
 
-      {/* Password Renewal Alert Modal */}
+      {/* Password reset details modal */}
       <Modal
         isOpen={passwordRenewInfo.isOpen}
         onClose={() => setPasswordRenewInfo((prev) => ({ ...prev, isOpen: false }))}
-        title="Customer Password Reset & Notification"
+        title="Customer Password Reset"
         maxWidth="max-w-md"
       >
         <div className="space-y-4">

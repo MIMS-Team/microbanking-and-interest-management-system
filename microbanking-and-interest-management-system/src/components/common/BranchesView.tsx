@@ -9,7 +9,6 @@ import {
   toggleBranchStatusWithOtp,
 } from '@/services/branchService';
 import { getEmployees } from '@/services/staffService';
-import { useSession } from '@/context/SessionContext';
 import Pagination from './Pagination';
 import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
@@ -29,7 +28,6 @@ import {
 
 // Branch management component with OTP verification on administrative changes
 export default function BranchesView() {
-  const { showNotification } = useSession();
   const [branches, setBranches] = useState<Branch[]>(getBranches());
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -132,7 +130,6 @@ export default function BranchesView() {
     if (result.success) {
       setBranches(getBranches());
       setIsAddModalOpen(false);
-      showNotification(result.message);
     } else {
       setFormError(result.message);
     }
@@ -166,7 +163,6 @@ export default function BranchesView() {
         if (result.success) {
           setBranches(getBranches());
           setIsEditModalOpen(false);
-          showNotification(result.message);
         } else {
           setFormError(result.message);
         }
@@ -187,9 +183,6 @@ export default function BranchesView() {
         const result = toggleBranchStatusWithOtp(branch.id, '849201');
         if (result.success) {
           setBranches(getBranches());
-          showNotification(result.message);
-        } else {
-          showNotification(result.message);
         }
       },
     });

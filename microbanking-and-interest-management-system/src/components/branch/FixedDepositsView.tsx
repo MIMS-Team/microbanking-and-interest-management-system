@@ -29,7 +29,7 @@ import {
 
 // Fixed deposits management portal scoped to branch operations
 export default function FixedDepositsView() {
-  const { currentBranchId, showNotification } = useSession();
+  const { currentBranchId } = useSession();
   const [deposits, setDeposits] = useState<FixedDeposit[]>([]);
   const [savingsAccounts, setSavingsAccounts] = useState<SavingsAccount[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -131,7 +131,6 @@ export default function FixedDepositsView() {
         if (result.success) {
           setDeposits(getFixedDeposits(currentBranchId));
           setIsAddModalOpen(false);
-          showNotification(`Fixed Deposit ${result.fixedDeposit.id} established.`);
         }
       },
     });
@@ -142,7 +141,6 @@ export default function FixedDepositsView() {
     const res = toggleFDRenewal(fd.id);
     if (res.success) {
       setDeposits(getFixedDeposits(currentBranchId));
-      showNotification(`Auto-renewal ${res.autoRenew ? 'enabled' : 'disabled'} for ${fd.id}.`);
     }
   };
 
@@ -157,7 +155,6 @@ export default function FixedDepositsView() {
         const res = closeFixedDeposit(fd.id);
         if (res.success) {
           setDeposits(getFixedDeposits(currentBranchId));
-          showNotification(res.message);
         }
       },
     });

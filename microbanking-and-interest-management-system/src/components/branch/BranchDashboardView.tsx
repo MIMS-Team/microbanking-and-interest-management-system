@@ -28,7 +28,7 @@ interface BranchDashboardViewProps {
 
 // Branch Management executive dashboard matching the photo layout
 export default function BranchDashboardView({ onNavigateTab }: BranchDashboardViewProps) {
-  const { currentBranchId, setCurrentBranchId, showNotification } = useSession();
+  const { currentBranchId, setCurrentBranchId } = useSession();
   const branches = getBranches();
 
   // Branch-specific transactions and approvals
@@ -43,7 +43,6 @@ export default function BranchDashboardView({ onNavigateTab }: BranchDashboardVi
     const res = approveRequest(id);
     if (res.success) {
       setApprovals(getApprovalRequests(currentBranchId));
-      showNotification(res.message);
     }
   };
 
@@ -52,7 +51,6 @@ export default function BranchDashboardView({ onNavigateTab }: BranchDashboardVi
     const res = rejectRequest(id, 'Reviewed and declined via dashboard shortcut.');
     if (res.success) {
       setApprovals(getApprovalRequests(currentBranchId));
-      showNotification(res.message);
     }
   };
 

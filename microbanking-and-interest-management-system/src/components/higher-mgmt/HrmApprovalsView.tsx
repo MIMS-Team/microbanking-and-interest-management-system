@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { SecurityToken } from '@/types';
 import { getSecurityTokens, releaseSecurityToken } from '@/services/staffService';
-import { useSession } from '@/context/SessionContext';
 import Pagination from '@/components/common/Pagination';
 import Modal from '@/components/common/Modal';
 import {
@@ -20,7 +19,6 @@ import {
 
 // Higher Management / HRM authorization and security gateway
 export default function HrmApprovalsView() {
-  const { showNotification } = useSession();
   const [tokens, setTokens] = useState<SecurityToken[]>(getSecurityTokens());
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
@@ -52,7 +50,6 @@ export default function HrmApprovalsView() {
     if (res.success) {
       setTokens(getSecurityTokens());
       setSelectedToken(null);
-      showNotification(`Token ${selectedToken.code} verified and released to Administrator.`);
     }
   };
 

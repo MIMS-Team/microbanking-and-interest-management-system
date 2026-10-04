@@ -31,7 +31,7 @@ import {
 
 // Regulatory Financial Reports hub adhering to the SRS and photo layout
 export default function ReportsView() {
-  const { currentRole, currentBranchId, currentUser, showNotification } = useSession();
+  const { currentRole, currentBranchId, currentUser } = useSession();
   const branches = getBranches();
   const employees = getEmployees('Field Agent');
   const customers = getCustomers();
@@ -135,7 +135,6 @@ export default function ReportsView() {
     setActiveReport(generated);
     setIsReportGenerated(true);
     setCurrentPage(1);
-    showNotification(`Generated online report: ${generated.reportName}`);
   };
 
   // Switch report type
@@ -168,7 +167,6 @@ export default function ReportsView() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showNotification(`Exported ${activeReport.reportCode}.csv successfully.`);
   };
 
   // Paginated table records

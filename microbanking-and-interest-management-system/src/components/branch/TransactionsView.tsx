@@ -25,7 +25,7 @@ import {
 
 // Counter and field agent transaction processing terminal
 export default function TransactionsView() {
-  const { currentBranchId, currentUser, showNotification } = useSession();
+  const { currentBranchId, currentUser } = useSession();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -149,7 +149,6 @@ export default function TransactionsView() {
           setTransactions(getTransactions(currentBranchId));
           setAccounts(getSavingsAccounts(currentBranchId));
           setIsProcessModalOpen(false);
-          showNotification(result.message);
           setReceiptTxn(result.transaction);
         } else {
           setFormError(result.message);

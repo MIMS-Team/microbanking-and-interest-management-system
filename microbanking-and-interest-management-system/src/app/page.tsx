@@ -3,7 +3,8 @@
 import React from 'react';
 import Link from 'next/link';
 import {
-  Landmark,
+   Landmark,
+  Check,
   Briefcase,
   UserCheck,
   Shield,

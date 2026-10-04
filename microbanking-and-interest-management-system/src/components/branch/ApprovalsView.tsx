@@ -21,7 +21,7 @@ import {
 
 // Branch Manager 2-tier operational approvals hub
 export default function ApprovalsView() {
-  const { currentBranchId, showNotification } = useSession();
+  const { currentBranchId } = useSession();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [filterCategory, setFilterCategory] = useState<string>('All');
   const [filterStatus, setFilterStatus] = useState<string>('All');
@@ -74,7 +74,6 @@ export default function ApprovalsView() {
         const res = approveRequest(req.id);
         if (res.success) {
           setApprovals(getApprovalRequests(currentBranchId));
-          showNotification(res.message);
         }
       },
     });
@@ -94,7 +93,6 @@ export default function ApprovalsView() {
     if (res.success) {
       setApprovals(getApprovalRequests(currentBranchId));
       setIsRejectModalOpen(false);
-      showNotification(res.message);
     }
   };
 

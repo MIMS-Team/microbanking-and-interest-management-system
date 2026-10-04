@@ -31,7 +31,7 @@ import {
 
 // Savings accounts management portal scoped to branch operations
 export default function SavingsAccountsView() {
-  const { currentBranchId, showNotification } = useSession();
+  const { currentBranchId } = useSession();
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -166,7 +166,6 @@ export default function SavingsAccountsView() {
         if (result.success) {
           setAccounts(getSavingsAccounts(currentBranchId));
           setIsAddModalOpen(false);
-          showNotification(`Account ${result.account.accountNumber} created successfully.`);
         }
       },
     });
@@ -206,7 +205,6 @@ export default function SavingsAccountsView() {
         if (result.success) {
           setAccounts(getSavingsAccounts(currentBranchId));
           setIsTransferModalOpen(false);
-          showNotification(result.message);
         }
       },
     });
@@ -225,7 +223,6 @@ export default function SavingsAccountsView() {
         const result = toggleAccountStatus(acc.accountNumber);
         if (result.success) {
           setAccounts(getSavingsAccounts(currentBranchId));
-          showNotification(`Account ${acc.accountNumber} marked as ${result.newStatus}.`);
         }
       },
     });

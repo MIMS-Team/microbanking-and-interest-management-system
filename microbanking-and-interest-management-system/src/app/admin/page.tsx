@@ -6,7 +6,6 @@ import AdminDashboardView from '@/components/admin/AdminDashboardView';
 import UserManagementView from '@/components/admin/UserManagementView';
 import BranchesView from '@/components/common/BranchesView';
 import AuditLogsView from '@/components/admin/AuditLogsView';
-import { useSession } from '@/context/SessionContext';
 import {
   LayoutDashboard,
   Users,
@@ -16,8 +15,7 @@ import {
 
 // Dedicated portal interface for System Administrators
 export default function AdminPage() {
-  const { notification, clearNotification } = useSession();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('dashboard');  //make the dashboard tab available on at the firts
 
   const navTabs: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -35,19 +33,6 @@ export default function AdminPage() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
       />
-
-      {/* Floating Toast Notification */}
-      {notification && (
-        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl border border-slate-700 text-xs flex items-center gap-3 animate-in slide-in-from-bottom-5">
-          <span>{notification}</span>
-          <button
-            onClick={clearNotification}
-            className="text-slate-400 hover:text-white text-xs font-bold cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* 2. Workspace Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
