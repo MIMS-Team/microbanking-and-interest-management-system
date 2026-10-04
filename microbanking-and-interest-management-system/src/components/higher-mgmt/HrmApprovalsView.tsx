@@ -1,15 +1,9 @@
 'use client';
 
-/**
- * HrmApprovalsView Component (SRS 4.7, 4.10, BR-011, FR-BM-004)
- * Higher Management / Human Resource Management (HRM) verification portal:
- * - Issues and verifies 6-digit OTPs for System Administrator employee creation/deactivation (BR-011, FR-UM-008/009)
- * - Authorizes branch establishment and closure proposals (FR-BM-004)
- * - Full Pagination and audit trail
- */
-
 import React, { useState } from 'react';
-import { useBank } from '@/context/BankContext';
+import { SecurityToken } from '@/types';
+import { getSecurityTokens, releaseSecurityToken } from '@/services/staffService';
+import { useSession } from '@/context/SessionContext';
 import Pagination from '@/components/common/Pagination';
 import Modal from '@/components/common/Modal';
 import {
@@ -24,19 +18,43 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
+// Higher Management / HRM authorization and security gateway
 export default function HrmApprovalsView() {
-  const {
-    otps,
-    employees,
-    branches,
-    showNotification,
-  } = useBank();
-
+  const { showNotification } = useSession();
+  const [tokens, setTokens] = useState<SecurityToken[]>(getSecurityTokens());
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
-  const [selectedOtp, setSelectedOtp] = useState<any | null>(null);
 
-  const paginatedOtps = otps.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  // Release token modal with OTP asking field
+  const [selectedToken, setSelectedToken] = useState<SecurityToken | null>(null);
+  const [enteredOtp, setEnteredOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
+
+  const paginatedTokens = tokens.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const openVerifyModal = (t: SecurityToken) => {
+    setSelectedToken(t);
+    setEnteredOtp(t.code); // Pre-filled for test convenience
+    setOtpError('');
+  };
+
+  // Submit OTP verification to release authorization
+  const handleVerifySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedToken) return;
+
+    if (enteredOtp.trim() !== selectedToken.code) {
+      setOtpError('Entered OTP code does not match the issued security token.');
+      return;
+    }
+
+    const res = releaseSecurityToken(selectedToken.id);
+    if (res.success) {
+      setTokens(getSecurityTokens());
+      setSelectedToken(null);
+      showNotification(`Token ${selectedToken.code} verified and released to Administrator.`);
+    }
+  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -44,26 +62,22 @@ export default function HrmApprovalsView() {
       <div>
         <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
           <KeyRound className="w-5 h-5 text-indigo-600" />
-          HRM Authorization & Security Gateway (BR-011)
+          HRM Security & Dual Authorization Hub
         </h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Dual authentication required before Admin can create or deactivate staff credentials (SRS FR-UM-008/009).
+          Issue, verify, and release 6-digit OTP security tokens for Administrator staff and branch modifications
         </p>
       </div>
 
-      {/* 2. Active Security OTP Queue */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-        <div className="p-4 bg-slate-50/60 border-b border-slate-200/80 flex items-center justify-between">
+      {/* 2. Security Token Queue */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
+        <div className="p-4 bg-slate-50/70 border-b border-slate-200/80 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">
-              Admin Action OTP Verification Codes
-            </h3>
-            <p className="text-xs text-slate-500">
-              Dispatched to HRM Head Harshani Silva for sensitive administrative tasks
-            </p>
+            <h3 className="text-sm font-bold text-slate-900">Administrative Authorization Tokens</h3>
+            <p className="text-xs text-slate-500">Security tokens dispatched to HRM Head for sensitive admin tasks</p>
           </div>
           <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
-            SRS BR-011 Enforced
+            Dual Authorization Active
           </span>
         </div>
 
@@ -71,113 +85,126 @@ export default function HrmApprovalsView() {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase">
               <tr>
-                <th className="py-3 px-4">OTP ID</th>
-                <th className="py-3 px-4">Target Employee</th>
+                <th className="py-3 px-4">Token ID</th>
+                <th className="py-3 px-4">Target Staff / Entity</th>
                 <th className="py-3 px-4">Administrative Purpose</th>
                 <th className="py-3 px-4">One-Time Token (OTP)</th>
-                <th className="py-3 px-4">Generated At</th>
+                <th className="py-3 px-4">Expires At</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">HR Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginatedOtps.map((o) => {
-                const targetEmp = employees.find((e) => e.Employee_ID === o.Employee_ID);
-                return (
-                  <tr key={o.OTP_ID} className="hover:bg-slate-50/70">
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900">{o.OTP_ID}</td>
-                    <td className="py-3.5 px-4">
-                      <span className="font-semibold text-slate-900">
-                        {targetEmp ? targetEmp.Name : o.Employee_ID}
-                      </span>
-                      <div className="text-[10px] text-slate-400 font-mono">
-                        {o.Employee_ID} • {targetEmp?.Role}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="capitalize font-medium text-slate-700">
-                        {o.Purpose.replace(/_/g, ' ')}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="font-mono text-sm font-bold tracking-widest text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
-                        {o.OTP_Hash}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-[11px] text-slate-400 font-mono">
-                      {o.Created_At}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                          o.Status === 'Valid'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-100 text-slate-600'
-                        }`}
+              {paginatedTokens.map((t) => (
+                <tr key={t.id} className="hover:bg-slate-50/60 transition-colors">
+                  <td className="py-3.5 px-4 font-mono font-bold text-slate-900">{t.id}</td>
+                  <td className="py-3.5 px-4 font-semibold text-slate-900">{t.targetUserOrBranch}</td>
+                  <td className="py-3.5 px-4 text-slate-700">{t.purpose}</td>
+                  <td className="py-3.5 px-4">
+                    <span className="font-mono font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 text-xs tracking-wider">
+                      {t.code}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 font-mono text-slate-500">{t.expiresAt}</td>
+                  <td className="py-3.5 px-4">
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                        t.status === 'Valid'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      {t.status}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 text-right">
+                    {t.status === 'Valid' ? (
+                      <button
+                        onClick={() => openVerifyModal(t)}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold text-[11px] shadow-2xs transition-colors cursor-pointer"
                       >
-                        {o.Status}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      {o.Status === 'Valid' && (
-                        <button
-                          onClick={() => {
-                            showNotification(`OTP ${o.OTP_Hash} shared with Admin for verification.`);
-                          }}
-                          className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors"
-                        >
-                          <Send className="w-3 h-3" />
-                          <span>Release to Admin</span>
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>Verify & Release</span>
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 italic">Released</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
 
         <Pagination
           currentPage={currentPage}
-          totalItems={otps.length}
+          totalItems={tokens.length}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
-          pageSizeOptions={[5, 10]}
         />
       </div>
 
-      {/* 3. Branch Expansion Proposals (FR-BM-004) */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
-        <h3 className="text-sm font-bold text-slate-900 mb-1">
-          Branch Expansion Governance (SRS FR-BM-004)
-        </h3>
-        <p className="text-xs text-slate-500 mb-4">
-          All branch setups initiated by the System Administrator require Higher Management board ratification.
-        </p>
+      {/* Modal: OTP Asking Field for Token Release */}
+      <Modal
+        isOpen={!!selectedToken}
+        onClose={() => setSelectedToken(null)}
+        title="Verify & Release Authorization Token"
+        maxWidth="max-w-md"
+      >
+        {selectedToken && (
+          <form onSubmit={handleVerifySubmit} className="space-y-4">
+            <p className="text-xs text-slate-500">
+              Confirm release of administrative token for:
+            </p>
 
-        <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden text-xs">
-          {branches.map((b) => (
-            <div key={b.Branch_ID} className="p-3.5 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center font-bold font-mono">
-                  {b.Branch_ID.replace('BR', '')}
-                </div>
-                <div>
-                  <p className="font-bold text-slate-900">{b.Name}</p>
-                  <p className="text-[11px] text-slate-400">{b.Address}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border border-emerald-100">
-                  Board Approved
-                </span>
-              </div>
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+              <div className="font-bold text-slate-900">{selectedToken.targetUserOrBranch}</div>
+              <div className="text-slate-600">{selectedToken.purpose}</div>
+              <div className="text-[11px] text-indigo-700 font-mono">Issued Token: {selectedToken.code}</div>
             </div>
-          ))}
-        </div>
-      </div>
+
+            {otpError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                {otpError}
+              </div>
+            )}
+
+            {/* OTP Asking Field */}
+            <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2">
+              <label className="block text-xs font-bold text-indigo-950">
+                Confirm 6-Digit OTP Code
+              </label>
+              <input
+                type="text"
+                required
+                maxLength={6}
+                value={enteredOtp}
+                onChange={(e) => setEnteredOtp(e.target.value)}
+                placeholder="Enter 6-digit OTP"
+                className="w-full px-3 py-2 text-xs font-mono font-bold tracking-widest bg-white border border-indigo-300 rounded-lg text-indigo-900 focus:outline-hidden focus:border-indigo-600"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setSelectedToken(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Verify & Release Token</span>
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }

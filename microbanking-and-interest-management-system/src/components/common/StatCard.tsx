@@ -1,74 +1,43 @@
-import React from 'react';
-import { LucideIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+'use client';
 
-/**
- * KPI Stat Card Component
- * Exactly matches the card design from the reference screenshot:
- * - Subtle border, rounded corners, soft shadow
- * - Top row: Title and icon in light pill badge
- * - Large metric number with formatted units
- * - Bottom row: Green/Red trend indicator + subtitle label
- */
+import React from 'react';
+import { LucideIcon } from 'lucide-react';
 
 interface StatCardProps {
   title: string;
   value: string;
   trend: string;
-  trendPositive?: boolean;
-  subtitle: string;
+  trendLabel: string;
+  isPositive?: boolean;
   icon: LucideIcon;
-  iconBg?: string;
-  iconColor?: string;
-  onClick?: () => void;
 }
 
+// KPI stat card matching the banking dashboard reference layout
 export default function StatCard({
   title,
   value,
   trend,
-  trendPositive = true,
-  subtitle,
+  trendLabel,
+  isPositive = true,
   icon: Icon,
-  iconBg = 'bg-slate-100',
-  iconColor = 'text-slate-600',
-  onClick,
 }: StatCardProps) {
   return (
-    <div
-      onClick={onClick}
-      className={`bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs transition-all hover:border-slate-300 ${
-        onClick ? 'cursor-pointer hover:shadow-sm' : ''
-      }`}
-    >
+    <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs hover:shadow-xs transition-shadow">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-500 tracking-tight">
-          {title}
-        </span>
-        <div className={`w-8 h-8 rounded-lg ${iconBg} ${iconColor} flex items-center justify-center`}>
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{title}</span>
+        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
           <Icon className="w-4 h-4" />
         </div>
       </div>
 
       <div className="mt-3">
-        <div className="text-2xl font-bold text-slate-900 tracking-tight">
-          {value}
+        <div className="text-2xl font-bold text-slate-900 tracking-tight">{value}</div>
+        <div className="flex items-center gap-1.5 mt-2 text-xs">
+          <span className={`font-semibold ${isPositive ? 'text-emerald-600' : 'text-amber-600'}`}>
+            {trend}
+          </span>
+          <span className="text-slate-400 font-medium">{trendLabel}</span>
         </div>
-      </div>
-
-      <div className="mt-2.5 flex items-center gap-1.5 text-xs">
-        <span
-          className={`inline-flex items-center font-medium ${
-            trendPositive ? 'text-emerald-600' : 'text-amber-600'
-          }`}
-        >
-          {trendPositive ? (
-            <ArrowUpRight className="w-3.5 h-3.5 mr-0.5 inline" />
-          ) : (
-            <ArrowDownRight className="w-3.5 h-3.5 mr-0.5 inline" />
-          )}
-          {trend}
-        </span>
-        <span className="text-slate-500 text-[11px] truncate">{subtitle}</span>
       </div>
     </div>
   );

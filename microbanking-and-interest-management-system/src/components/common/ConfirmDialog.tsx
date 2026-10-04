@@ -1,76 +1,68 @@
 'use client';
 
-/**
- * ConfirmDialog Component
- * Specialized confirmation prompt for record deactivations, status changes, and critical actions.
- * Enforces SRS BR-013: soft deactivation to preserve financial records integrity.
- */
-
 import React from 'react';
 import Modal from './Modal';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Check, X } from 'lucide-react';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  title: string;
+  title?: string;
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
   isDestructive?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
 }
 
+// Confirmation dialog requiring explicit verification before critical actions
 export default function ConfirmDialog({
   isOpen,
-  onClose,
-  onConfirm,
-  title,
+  title = 'Please Confirm Action',
   message,
-  confirmLabel = 'Confirm Deactivate',
+  confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
-  isDestructive = true,
+  isDestructive = false,
+  onConfirm,
+  onCancel,
 }: ConfirmDialogProps) {
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="md">
-      <div className="flex items-start gap-4">
-        <div
-          className={`p-3 rounded-xl shrink-0 ${
-            isDestructive ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
-          }`}
-        >
-          <AlertTriangle className="w-6 h-6" />
+    <Modal isOpen={isOpen} onClose={onCancel} title={title} maxWidth="max-w-md">
+      <div className="space-y-4">
+        <div className="flex items-start gap-3.5">
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+              isDestructive ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'
+            }`}
+          >
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-sm text-slate-700 leading-relaxed">{message}</p>
+          </div>
         </div>
-        <div className="space-y-2">
-          <p className="text-sm text-slate-600 leading-relaxed">{message}</p>
-          <p className="text-[11px] text-slate-400">
-            Note: In accordance with SRS BR-013, records are deactivated to maintain financial integrity and audit trails.
-          </p>
-        </div>
-      </div>
 
-      <div className="mt-6 flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors"
-        >
-          {cancelLabel}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onConfirm();
-            onClose();
-          }}
-          className={`px-4 py-2 text-xs font-semibold text-white rounded-xl shadow-xs transition-colors ${
-            isDestructive
-              ? 'bg-amber-600 hover:bg-amber-700'
-              : 'bg-blue-600 hover:bg-blue-700'
-          }`}
-        >
-          {confirmLabel}
-        </button>
+        <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-xl shadow-xs transition-colors ${
+              isDestructive
+                ? 'bg-rose-600 hover:bg-rose-700'
+                : 'bg-slate-900 hover:bg-slate-800'
+            }`}
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>{confirmLabel}</span>
+          </button>
+        </div>
       </div>
     </Modal>
   );

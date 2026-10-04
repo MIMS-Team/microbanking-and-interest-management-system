@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --background: #c9e2fa;
+  --foreground: #c1ceef;
 }
 
 body {
@@ -12,7 +12,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom scrollbar for tables */
+/* Custom scrollbars for data tables and panels */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
