@@ -107,7 +107,8 @@ export function verifyOtpChallenge(challenge: string, code: string): UserRecord 
   record.attempts += 1;
   if (record.code !== code.trim()) return undefined;
   otpChallenges.delete(challenge);
-  return findUserById(record.userId);
+  const user = findUserById(record.userId);
+  return user?.status === 'active' ? user : undefined;
 }
 
 export function createSession(userId: number): string {
@@ -123,7 +124,8 @@ export function getUserForSession(token: string | undefined): UserRecord | undef
     sessions.delete(token);
     return undefined;
   }
-  return findUserById(session.userId);
+  const user = findUserById(session.userId);
+  return user?.status === 'active' ? user : undefined;
 }
 
 export function deleteSession(token: string | undefined): void {
@@ -191,7 +193,12 @@ export function updateUser(id: number, input: Partial<Pick<UserRecord, 'full_nam
   if (input.email !== undefined) user.email = input.email.trim().toLowerCase();
   if (input.role !== undefined) user.role = input.role;
   if (input.branch_id !== undefined) user.branch_id = input.branch_id;
-  if (input.status !== undefined) user.status = input.status;
+  if (input.status !== undefined) {
+    user.status = input.status;
+    if (input.status === 'inactive') {
+      for (const [token, session] of sessions) if (session.userId === user.id) sessions.delete(token);
+    }
+  }
   if (input.password_hash !== undefined) user.password_hash = passwordHash(input.password_hash);
   return publicUser(user);
 }
