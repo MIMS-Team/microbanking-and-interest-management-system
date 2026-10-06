@@ -3,9 +3,9 @@
 import React, { useState } from 'react';
 import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
 import AdminDashboardView from '@/components/admin/AdminDashboardView';
-import UserManagementView from '@/components/admin/UserManagementView';
+//import UserManagementView from '@/components/admin/UserManagementView';
 import BranchesView from '@/components/common/BranchesView';
-import AuditLogsView from '@/components/admin/AuditLogsView';
+//import AuditLogsView from '@/components/admin/AuditLogsView';
 import {
   LayoutDashboard,
   Users,
@@ -37,9 +37,9 @@ export default function AdminPage() {
       {/* 2. Workspace Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'dashboard' && <AdminDashboardView onNavigateTab={setActiveTab} />}
-        {activeTab === 'users' && <UserManagementView />}
+        {/*activeTab === 'users' && <UserManagementView />*/}
         {activeTab === 'branches' && <BranchesView />}
-        {activeTab === 'audit' && <AuditLogsView />}
+        {/*activeTab === 'audit' && <AuditLogsView />*/}
       </main>
     </div>
   );

@@ -13,6 +13,7 @@ interface ConfirmDialogProps {
   isDestructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  children?: React.ReactNode; // Optional slot for extra content like OTP inputs
 }
 
 // Confirmation dialog requiring explicit verification before critical actions
@@ -25,6 +26,7 @@ export default function ConfirmDialog({
   isDestructive = false,
   onConfirm,
   onCancel,
+  children,
 }: ConfirmDialogProps) {
   return (
     <Modal isOpen={isOpen} onClose={onCancel} title={title} maxWidth="max-w-md">
@@ -41,6 +43,9 @@ export default function ConfirmDialog({
             <p className="text-sm text-slate-700 leading-relaxed">{message}</p>
           </div>
         </div>
+
+        {/* Render any extra content passed as children (e.g. OTP input) */}
+        {children}
 
         <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
           <button

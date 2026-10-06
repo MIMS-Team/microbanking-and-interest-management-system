@@ -1,8 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { getEmployees } from '@/services/staffService';
-import { getBranches } from '@/services/branchService';
 import { getCustomers } from '@/services/customerService';
 import StatCard from '@/components/common/StatCard';
 import {
@@ -25,8 +24,22 @@ interface AdminDashboardViewProps {
 // System Administrator dashboard and infrastructure health overview
 export default function AdminDashboardView({ onNavigateTab }: AdminDashboardViewProps) {
   const employees = getEmployees();
-  const branches = getBranches();
   const customers = getCustomers();
+  const [branchCount, setBranchCount] = useState(0);
+
+  // Fetch branch count from the API on mount
+  useEffect(() => {
+    async function fetchBranchCount() {
+      try {
+        const response = await fetch('/api/branches?page=1&pageSize=1');
+        const data = await response.json();
+        setBranchCount(data.total || 0);
+      } catch (error) {
+        console.error('Error fetching branch count:', error);
+      }
+    }
+    fetchBranchCount();
+  }, []);
 
   const activeEmployees = employees.filter((e) => e.status === 'Active');
 
@@ -72,7 +85,7 @@ export default function AdminDashboardView({ onNavigateTab }: AdminDashboardView
         />
         <StatCard
           title="Branch Centers"
-          value={`${branches.length} Branches`}
+          value={`${branchCount} Branches`}
           trend="Operational"
           trendLabel="All branches online"
           isPositive={true}

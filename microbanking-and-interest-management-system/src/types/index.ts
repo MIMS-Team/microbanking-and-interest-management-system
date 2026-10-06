@@ -8,12 +8,10 @@ export type EmployeeRole = 'Higher Management' | 'HRM' | 'Branch Manager' | 'Fie
 export interface Branch {
   id: string;
   name: string;
-  code: string;
   address: string;
   phone: string;
-  managerId: string;
-  managerName: string;
-  status: 'Active' | 'Inactive';
+  email: string;
+  status: boolean;
   openedDate: string;
 }
 

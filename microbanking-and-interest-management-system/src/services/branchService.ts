@@ -1,127 +1,160 @@
+"use server";
+
 import { Branch } from '@/types';
-import { mockBranches } from '@/data/mockData';
+import sql from '@/lib/db';
 
-// In-memory branch records repository
-let branchesState: Branch[] = [...mockBranches];
+// Retrieve paginated branch records from the database with optional search filtering
+export async function getBranches(
+  page: number,
+  pageSize: number,
+  search: string = '',
+  searchColumn: string = 'name'
+) {
+  const offset = (page - 1) * pageSize;
+  let rows: any[] = [];
+  let countResult: any[] = [];
 
-// Valid OTP codes for administrative authorization
-const validOtpCodes = new Set(['849201', '731904', '123456']);
+  search = search.trim();
 
-// Retrieve all bank branches
-export function getBranches(): Branch[] {
-  return [...branchesState];
+  // Queries acording to searching criteria
+  if (search === '') {
+    rows = await sql`SELECT branch_id, name, address, phone_no, is_active, email, opened_date
+      FROM branch ORDER BY branch_id LIMIT ${pageSize} OFFSET ${offset}`;
+    countResult = await sql`SELECT COUNT(*) AS total FROM branch`;
+  } else if (searchColumn === 'name') {
+    rows = await sql`SELECT branch_id, name, address, phone_no, is_active, email, opened_date
+      FROM branch WHERE name ILIKE ${'%' + search + '%'} ORDER BY branch_id LIMIT ${pageSize} OFFSET ${offset}`;
+    countResult = await sql`SELECT COUNT(*) AS total FROM branch WHERE name ILIKE ${'%' + search + '%'}`;
+  } else if (searchColumn === 'branch_id') {
+    rows = await sql`SELECT branch_id, name, address, phone_no, is_active, email, opened_date
+      FROM branch WHERE branch_id::text ILIKE ${'%' + search + '%'} ORDER BY branch_id LIMIT ${pageSize} OFFSET ${offset}`;
+    countResult = await sql`SELECT COUNT(*) AS total FROM branch WHERE branch_id::text ILIKE ${'%' + search + '%'}`;
+  }
+
+  // Map database column names to frontend Branch interface fields to loose the coupling between Table names and keys
+  const branches: Branch[] = rows.map((row) => ({
+    id: String(row.branch_id),
+    name: row.name,
+    address: row.address ?? '',
+    phone: row.phone_no ?? '',
+    email: row.email ?? '',
+    status: row.is_active,
+    openedDate: String(row.opened_date),
+  }));
+
+  return {
+    branches,
+    total: Number(countResult[0]?.total ?? 0),
+  };
 }
 
-// Add a new branch requiring Higher Management OTP authorization
-export function createBranchWithOtp(
-  data: Omit<Branch, 'id' | 'openedDate'>,
+// Insert a new branch record into the database after OTP authorization
+export async function createBranch(
+  data: { name: string; address: string; phone: string; email: string },
   otpCode: string
-): { success: boolean; message: string; branch?: Branch } {
-  if (!validOtpCodes.has(otpCode.trim())) {
+): Promise<{ success: boolean; message: string; branch?: Branch }> {
+  // Validate OTP before allowing creation
+  const otpValid = await validateOtp(otpCode);
+  if (!otpValid) {
     return {
       success: false,
       message: 'Invalid or expired Higher Management OTP. Authorization rejected.',
     };
   }
 
-  const newBranch: Branch = {
-    ...data,
-    id: `BR${String(branchesState.length + 1).padStart(3, '0')}`,
-    openedDate: new Date().toISOString().split('T')[0],
-  };
+  try {
+    // Insert and return the newly created branch record
+    const result = await sql`
+      INSERT INTO branch (name, address, phone_no, email, is_active, opened_date)
+      VALUES (${data.name}, ${data.address}, ${data.phone}, ${data.email}, true, CURRENT_DATE)
+      RETURNING branch_id, name, address, phone_no, email, is_active, opened_date
+    `;
 
-  branchesState = [...branchesState, newBranch];
-  return {
-    success: true,
-    message: `Branch "${newBranch.name}" created successfully under code ${newBranch.code}.`,
-    branch: newBranch,
-  };
+    const row = result[0];
+    const newBranch: Branch = {
+      id: String(row.branch_id),
+      name: row.name,
+      address: row.address ?? '',
+      phone: row.phone_no ?? '',
+      email: row.email ?? '',
+      status: row.is_active,
+      openedDate: String(row.opened_date),
+    };
+
+    return {
+      success: true,
+      message: `Branch "${newBranch.name}" created successfully.`,
+      branch: newBranch,
+    };
+  } catch (error) {
+    console.error('Error creating branch:', error);
+    return { success: false, message: 'Database error while creating branch.' };
+  }
 }
 
-// Update branch parameters with OTP authorization
-export function updateBranchWithOtp(
-  branch: Branch,
+// Update an existing branch's details in the database after OTP authorization
+export async function updateBranch(
+  branchId: string,
+  data: { name: string; address: string; phone: string; email: string },
   otpCode: string
-): { success: boolean; message: string } {
-  if (!validOtpCodes.has(otpCode.trim())) {
+): Promise<{ success: boolean; message: string }> {
+  const otpValid = await validateOtp(otpCode);
+  if (!otpValid) {
     return {
       success: false,
       message: 'Invalid Higher Management OTP. Unauthorized branch modification.',
     };
   }
 
-  branchesState = branchesState.map((b) => (b.id === branch.id ? branch : b));
-  return {
-    success: true,
-    message: `Branch "${branch.name}" parameters updated successfully.`,
-  };
+  try {
+    await sql`
+      UPDATE branch
+      SET name = ${data.name}, address = ${data.address}, phone_no = ${data.phone}, email = ${data.email}
+      WHERE branch_id = ${Number(branchId)}
+    `;
+
+    return { success: true, message: `Branch "${data.name}" parameters updated successfully.` };
+  } catch (error) {
+    console.error('Error updating branch:', error);
+    return { success: false, message: 'Database error while updating branch.' };
+  }
 }
 
-// Toggle branch operational status with OTP authorization
-export function toggleBranchStatusWithOtp(
+// Toggle a branch's active/inactive status in the database after OTP authorization
+export async function toggleBranchStatus(
   branchId: string,
   otpCode: string
-): { success: boolean; message: string } {
-  if (!validOtpCodes.has(otpCode.trim())) {
+): Promise<{ success: boolean; message: string }> {
+  const otpValid = await validateOtp(otpCode);
+  if (!otpValid) {
     return {
       success: false,
       message: 'OTP validation failed. Cannot alter branch operational status.',
     };
   }
 
-  let updatedName = '';
-  branchesState = branchesState.map((b) => {
-    if (b.id === branchId) {
-      updatedName = b.name;
-      return { ...b, status: b.status === 'Active' ? 'Inactive' : 'Active' };
-    }
-    return b;
-  });
+  try {
+    // Flip the is_active boolean and return the updated branch name
+    const result = await sql`
+      UPDATE branch SET is_active = NOT is_active
+      WHERE branch_id = ${Number(branchId)}
+      RETURNING name, is_active
+    `;
 
-  return {
-    success: true,
-    message: `Operational status updated for branch ${updatedName}.`,
-  };
+    const updated = result[0];
+    return {
+      success: true,
+      message: `Branch "${updated.name}" is now ${updated.is_active ? 'Active' : 'Inactive'}.`,
+    };
+  } catch (error) {
+    console.error('Error toggling branch status:', error);
+    return { success: false, message: 'Database error while toggling branch status.' };
+  }
 }
 
-// Executive performance metrics across all bank branches
-export function getBranchMetrics() {
-  return [
-    {
-      id: 'BR001',
-      name: 'Colombo Central Main',
-      deposits: 'Rs. 48.5M',
-      customers: 6240,
-      activeAccounts: 4890,
-      growthRate: '+14.2%',
-      status: 'Optimal',
-    },
-    {
-      id: 'BR002',
-      name: 'Kandy Metro Branch',
-      deposits: 'Rs. 18.2M',
-      customers: 3120,
-      activeAccounts: 2280,
-      growthRate: '+9.8%',
-      status: 'Good',
-    },
-    {
-      id: 'BR003',
-      name: 'Galle Fort Coastal',
-      deposits: 'Rs. 11.4M',
-      customers: 2150,
-      activeAccounts: 1450,
-      growthRate: '+7.4%',
-      status: 'Normal',
-    },
-    {
-      id: 'BR004',
-      name: 'Jaffna Northern Hub',
-      deposits: 'Rs. 6.1M',
-      customers: 1335,
-      activeAccounts: 692,
-      growthRate: '+5.1%',
-      status: 'Expanding',
-    },
-  ];
+// Validate the OTP code against known valid codes
+// This is a placeholder — replace with real OTP verification in production
+async function validateOtp(otpCode: string): Promise<boolean> {
+  const validOtpCodes = new Set(['849201', '731904', '123456']);
+  return validOtpCodes.has(otpCode.trim());
 }
