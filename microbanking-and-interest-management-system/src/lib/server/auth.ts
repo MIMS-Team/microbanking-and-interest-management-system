@@ -1,4 +1,6 @@
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import {
   clearFailedLoginAttempts,
@@ -76,9 +78,21 @@ export function dispatchOtp(email: string, purpose: OtpPurpose, code: string): v
   if (testOtpHandler) {
     testOtpHandler({ email, purpose, code });
   }
-  // In non-production development, print OTP to server console so developers can test locally
+  // In non-production development, print OTP to server console and write to latest_otp.txt
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
     console.info(`[MIMS-DEV-OTP] Code for ${email} (${purpose}): ${code}`);
+    try {
+      const dataDir = join(process.cwd(), '.data');
+      if (existsSync(dataDir)) {
+        writeFileSync(
+          join(dataDir, 'latest_otp.txt'),
+          `=========================================\n  LATEST OTP CODE: ${code}\n  Account: ${email}\n  Purpose: ${purpose}\n  Generated at: ${new Date().toLocaleTimeString()}\n=========================================\n`,
+          'utf8'
+        );
+      }
+    } catch {
+      // ignore in development
+    }
   }
 }
 
