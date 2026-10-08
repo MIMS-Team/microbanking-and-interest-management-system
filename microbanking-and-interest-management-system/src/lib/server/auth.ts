@@ -76,9 +76,9 @@ export function dispatchOtp(email: string, purpose: OtpPurpose, code: string): v
   if (testOtpHandler) {
     testOtpHandler({ email, purpose, code });
   }
-  // In non-production, secure debug log without revealing in client responses
-  if (process.env.NODE_ENV === 'test') {
-    // handled by tests
+  // In non-production development, print OTP to server console so developers can test locally
+  if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
+    console.info(`[MIMS-DEV-OTP] Code for ${email} (${purpose}): ${code}`);
   }
 }
 
