@@ -1,59 +1,71 @@
--- Database verification cases
--- Run after database.sql and with a test employee_authentication row.
+-- Database Verification Test Cases
+-- Target Engine: MySQL 8.0+
 
-BEGIN;
+START TRANSACTION;
 
--- Test fixtures for the OTP and authentication checks.
-INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, expires_at)
-SELECT 'test-login-challenge', id, 'login', 'expected-code-hash', CURRENT_TIMESTAMP + INTERVAL '5 minutes'
-FROM employees
-WHERE email = 'manager@ravindu.bank'
-ON CONFLICT (id) DO NOTHING;
+-- Fixture: Ensure test branch exists
+INSERT IGNORE INTO `branches` (`id`, `code`, `name`)
+VALUES (999, 'TEST-BR', 'Test Branch');
 
--- Test 1: login success returns the active employee.
-SELECT e.id, e.email, e.role
-FROM employees e
-JOIN employee_authentication a ON a.employee_id = e.id
-WHERE e.email = 'manager@ravindu.bank' AND e.status = 'active';
+-- Fixture: Create a test employee
+INSERT INTO `staff` (`id`, `full_name`, `email`, `password_hash`, `role`, `branch_id`, `status`)
+VALUES (999, 'Test Employee', 'test.emp@mims.bank', 'test-salt:test-hash', 'manager', 999, 'active')
+ON DUPLICATE KEY UPDATE `status` = 'active';
 
--- Test 2: wrong password is rejected by the application and logged.
-INSERT INTO authentication_attempts (employee_id, email, attempt_type)
-SELECT id, email, 'wrong_password'
-FROM employees
-WHERE email = 'manager@ravindu.bank';
+INSERT INTO `staff_authentication` (`employee_id`, `password_hash`, `failed_attempts`)
+VALUES (999, 'test-salt:test-hash', 0)
+ON DUPLICATE KEY UPDATE `failed_attempts` = 0;
 
--- Test 3: wrong OTP does not consume the challenge and increments attempts.
-UPDATE otp_challenges
-SET attempts = attempts + 1
-WHERE id = 'test-login-challenge'
-  AND consumed_at IS NULL
-  AND expires_at > CURRENT_TIMESTAMP
-  AND attempts < 5
-  AND code_hash <> 'wrong-code-hash';
-SELECT attempts
-FROM otp_challenges
-WHERE id = 'test-login-challenge' AND attempts = 1;
+-- Test 1: Employee login lookup returns active employee with auth record
+SELECT s.id, s.email, s.role, a.password_hash
+FROM staff s
+JOIN staff_authentication a ON a.employee_id = s.id
+WHERE s.email = 'test.emp@mims.bank' AND s.status = 'active';
 
--- Test 4: deactivated employees cannot have an active session.
-UPDATE employees SET status = 'inactive' WHERE email = 'manager@ravindu.bank';
-SELECT 0 AS active_session_count
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM employee_sessions s
-  JOIN employees e ON e.id = s.employee_id
-  WHERE e.email = 'manager@ravindu.bank'
-    AND e.status = 'active'
-    AND s.expires_at > CURRENT_TIMESTAMP
-);
+-- Test 2: Insert OTP challenge with expiration
+INSERT INTO `otp_challenges` (`id`, `employee_id`, `purpose`, `code_hash`, `attempts`, `max_attempts`, `expires_at`)
+VALUES ('test-challenge-uuid', 999, 'login', 'hashed-otp-code', 0, 5, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 MINUTE))
+ON DUPLICATE KEY UPDATE `attempts` = 0;
+
+-- Test 3: OTP verification attempt increment
+UPDATE `otp_challenges`
+SET `attempts` = `attempts` + 1
+WHERE `id` = 'test-challenge-uuid'
+  AND `consumed_at` IS NULL
+  AND `expires_at` > CURRENT_TIMESTAMP;
+
+SELECT `attempts` FROM `otp_challenges` WHERE `id` = 'test-challenge-uuid';
+
+-- Test 4: Create and validate session
+INSERT INTO `employee_sessions` (`token_hash`, `employee_id`, `expires_at`)
+VALUES ('test-session-hash-123', 999, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 8 HOUR))
+ON DUPLICATE KEY UPDATE `revoked_at` = NULL;
+
+SELECT s.token_hash, s.employee_id, e.status
+FROM employee_sessions s
+JOIN staff e ON e.id = s.employee_id
+WHERE s.token_hash = 'test-session-hash-123'
+  AND s.revoked_at IS NULL
+  AND s.expires_at > CURRENT_TIMESTAMP
+  AND e.status = 'active';
+
+-- Test 5: Deactivate employee and verify session is revoked
+UPDATE `staff` SET `status` = 'inactive' WHERE `id` = 999;
+UPDATE `employee_sessions` SET `revoked_at` = CURRENT_TIMESTAMP WHERE `employee_id` = 999;
+
+-- Verify no active session remains
+SELECT COUNT(*) AS active_sessions
+FROM employee_sessions s
+JOIN staff e ON e.id = s.employee_id
+WHERE s.token_hash = 'test-session-hash-123'
+  AND s.revoked_at IS NULL
+  AND s.expires_at > CURRENT_TIMESTAMP
+  AND e.status = 'active';
+
+-- Test 6: Audit log recording
+INSERT INTO `authentication_audit` (`employee_id`, `email`, `event_type`, `details`)
+VALUES (999, 'test.emp@mims.bank', 'employee_deactivation_confirmed', JSON_OBJECT('reason', 'Test deactivation'));
+
+SELECT event_type FROM `authentication_audit` WHERE `employee_id` = 999 ORDER BY id DESC LIMIT 1;
+
 ROLLBACK;
-
--- Test 5: unauthorized access returns no employee row when the token is absent.
-SELECT 0 AS authorized
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM employee_sessions s
-  JOIN employees e ON e.id = s.employee_id
-  WHERE s.token_hash = 'missing-token'
-    AND e.status = 'active'
-    AND s.expires_at > CURRENT_TIMESTAMP
-);

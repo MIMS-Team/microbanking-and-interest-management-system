@@ -1,24 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteUser, findUserById, publicUser, updateUser, type Role } from '@/lib/server/auth';
-import { ApiError, jsonError, requireUser } from '@/lib/server/api';
-import { branchId, emailAddress, password, requiredText, userRole } from '@/lib/server/validation';
+import {
+  initiateEmployeeDeactivation,
+  publicUser,
+  roleFromInput,
+  updateEmployeeDetails,
+} from '@/lib/server/auth';
+import { ApiError, getClientIp, getClientUserAgent, jsonError, requireUser } from '@/lib/server/api';
+import { findEmployeeById } from '@/lib/server/db';
+import { branchId, emailAddress, requiredText } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-async function userId(context: RouteContext): Promise<number> {
-  const value = Number((await context.params).id);
-  if (!Number.isSafeInteger(value) || value < 1) throw new ApiError('User ID is invalid.');
+async function getTargetId(context: RouteContext): Promise<number> {
+  const resolved = await context.params;
+  const value = Number(resolved.id);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new ApiError('User ID is invalid.', 400);
+  }
   return value;
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
-    requireUser(request, ['admin', 'higher_manager']);
-    const user = findUserById(await userId(context));
-    if (!user) throw new ApiError('User not found.', 404);
-    return NextResponse.json({ user: publicUser(user) });
+    await requireUser(request, ['admin', 'higher_manager']);
+    const id = await getTargetId(context);
+    const employee = await findEmployeeById(id);
+    if (!employee) throw new ApiError('User not found.', 404);
+    return NextResponse.json({ user: publicUser(employee) });
   } catch (error) {
     return jsonError(error);
   }
@@ -26,20 +36,34 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
-    requireUser(request, ['admin']);
+    const { user: actor } = await requireUser(request, ['admin']);
+    const targetId = await getTargetId(context);
     const body = await request.json();
-    const input: Parameters<typeof updateUser>[1] = {};
-    if (body.full_name !== undefined) input.full_name = requiredText(body.full_name, 'Full name');
-    if (body.email !== undefined) input.email = emailAddress(body.email);
-    if (body.password !== undefined) input.password_hash = password(body.password);
-    if (body.role !== undefined) input.role = userRole(body.role) as Role;
-    if (body.branch_id !== undefined) input.branch_id = branchId(body.branch_id);
-    if (body.status !== undefined) {
-      if (body.status !== 'active' && body.status !== 'inactive') throw new ApiError('Status is invalid.');
-      input.status = body.status;
+
+    const updates: Parameters<typeof updateEmployeeDetails>[2] = {};
+    if (body.full_name !== undefined) updates.full_name = requiredText(body.full_name, 'Full name');
+    if (body.email !== undefined) updates.email = emailAddress(body.email);
+    if (body.role !== undefined) {
+      const parsedRole = roleFromInput(body.role);
+      if (!parsedRole) throw new ApiError('Invalid role specified.', 400);
+      updates.role = parsedRole;
     }
-    const updated = updateUser(await userId(context), input);
-    if (!updated) throw new ApiError('User not found.', 404);
+    if (body.branch_id !== undefined) updates.branch_id = branchId(body.branch_id);
+    if (body.status !== undefined) {
+      if (body.status !== 'active' && body.status !== 'inactive') {
+        throw new ApiError('Status must be either active or inactive.', 400);
+      }
+      updates.status = body.status;
+    }
+
+    const ipAddress = getClientIp(request);
+    const userAgent = getClientUserAgent(request);
+
+    const updated = await updateEmployeeDetails(actor, targetId, updates, {
+      ip_address: ipAddress,
+      user_agent: userAgent,
+    });
+
     return NextResponse.json({ user: updated });
   } catch (error) {
     return jsonError(error);
@@ -48,11 +72,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
-    const { user: actor } = requireUser(request, ['admin']);
-    const id = await userId(context);
-    if (actor.id === id) throw new ApiError('You cannot delete your own account.');
-    if (!deleteUser(id)) throw new ApiError('User not found.', 404);
-    return NextResponse.json({ success: true });
+    const { user: actor } = await requireUser(request, ['admin']);
+    const targetId = await getTargetId(context);
+
+    const ipAddress = getClientIp(request);
+    const userAgent = getClientUserAgent(request);
+
+    const result = await initiateEmployeeDeactivation(actor, targetId, {
+      ip_address: ipAddress,
+      user_agent: userAgent,
+    });
+
+    return NextResponse.json(
+      {
+        pendingApproval: true,
+        challengeId: result.challengeId,
+        hrManagerEmail: result.hrManagerEmail,
+        message: `Deactivation requested. An approval OTP has been sent to Higher Management (${result.hrManagerEmail}). Confirm OTP to deactivate the employee.`,
+      },
+      { status: 202 }
+    );
   } catch (error) {
     return jsonError(error);
   }

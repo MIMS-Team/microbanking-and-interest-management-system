@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authCookies, getUserForSession, publicUser, type PublicUser, type Role } from './auth';
+import {
+  AuthError,
+  authCookies,
+  requireSession,
+  type PublicEmployee,
+  type Role,
+} from './auth';
 
 export class ApiError extends Error {
   constructor(message: string, public status = 400) {
@@ -9,18 +15,23 @@ export class ApiError extends Error {
 }
 
 export function jsonError(error: unknown): NextResponse {
-  if (error instanceof ApiError) return NextResponse.json({ error: error.message }, { status: error.status });
-  if (error instanceof Error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error instanceof AuthError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  if (error instanceof ApiError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  if (error instanceof Error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
   return NextResponse.json({ error: 'An unexpected server error occurred.' }, { status: 500 });
 }
 
-export function requireUser(request: NextRequest, roles?: Role[]): { user: PublicUser; token: string } {
-  const token = request.cookies.get(authCookies.SESSION_COOKIE)?.value;
-  const user = getUserForSession(token);
-  if (!token || !user) throw new ApiError('Authentication is required.', 401);
-  const safeUser = publicUser(user);
-  if (roles && !roles.includes(safeUser.role)) throw new ApiError('You do not have permission to perform this action.', 403);
-  return { user: safeUser, token };
+export async function requireUser(
+  request: NextRequest,
+  roles?: Role[]
+): Promise<{ user: PublicEmployee; token: string }> {
+  return requireSession(request, roles);
 }
 
 export function sessionCookie(response: NextResponse, token: string): void {
@@ -38,7 +49,7 @@ export function otpCookie(response: NextResponse, challenge: string): void {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 5 * 60,
+    maxAge: authCookies.OTP_TTL_MS / 1000,
     path: '/',
   });
 }
@@ -50,4 +61,16 @@ export function clearAuthCookies(response: NextResponse): void {
 
 export function isValidPassword(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 8 && value.length <= 128;
+}
+
+export function getClientIp(request: NextRequest): string | null {
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  return request.headers.get('x-real-ip') ?? null;
+}
+
+export function getClientUserAgent(request: NextRequest): string | null {
+  return request.headers.get('user-agent') ?? null;
 }

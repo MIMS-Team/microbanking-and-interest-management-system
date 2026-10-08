@@ -255,6 +255,96 @@ CREATE TABLE `staff` (
   CONSTRAINT `chk_staff_role_branch` CHECK (((`role` in (_utf8mb4'admin',_utf8mb4'higher_manager')) or (`branch_id` is not null)))
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `staff_authentication`
+--
+
+DROP TABLE IF EXISTS `staff_authentication`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `staff_authentication` (
+  `employee_id` int NOT NULL,
+  `password_hash` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `failed_attempts` int NOT NULL DEFAULT '0',
+  `locked_until` timestamp NULL DEFAULT NULL,
+  `last_login_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`employee_id`),
+  CONSTRAINT `fk_staff_auth_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `employee_sessions`
+--
+
+DROP TABLE IF EXISTS `employee_sessions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `employee_sessions` (
+  `token_hash` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `employee_id` int NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_activity_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL,
+  `revoked_at` timestamp NULL DEFAULT NULL,
+  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_agent` text COLLATE utf8mb4_unicode_ci,
+  PRIMARY KEY (`token_hash`),
+  KEY `idx_sessions_employee` (`employee_id`),
+  KEY `idx_sessions_expires_at` (`expires_at`),
+  CONSTRAINT `fk_sessions_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `otp_challenges`
+--
+
+DROP TABLE IF EXISTS `otp_challenges`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `otp_challenges` (
+  `id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `employee_id` int NOT NULL,
+  `purpose` enum('login','password_reset','employee_creation','employee_deactivation') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code_hash` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `attempts` int NOT NULL DEFAULT '0',
+  `max_attempts` int NOT NULL DEFAULT '5',
+  `expires_at` timestamp NOT NULL,
+  `consumed_at` timestamp NULL DEFAULT NULL,
+  `metadata` json DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_otp_employee_purpose` (`employee_id`,`purpose`,`created_at`),
+  CONSTRAINT `fk_otp_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `authentication_audit`
+--
+
+DROP TABLE IF EXISTS `authentication_audit`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `authentication_audit` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `employee_id` int DEFAULT NULL,
+  `email` varchar(254) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `event_type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_agent` text COLLATE utf8mb4_unicode_ci,
+  `details` json DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_audit_email` (`email`,`created_at`),
+  KEY `idx_audit_employee` (`employee_id`,`created_at`),
+  KEY `idx_audit_event` (`event_type`,`created_at`),
+  CONSTRAINT `fk_audit_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
