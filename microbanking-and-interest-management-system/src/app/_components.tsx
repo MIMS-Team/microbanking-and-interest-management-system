@@ -43,6 +43,8 @@ export const roleDetails: Record<RavinduRole, { short: string; tone: string; des
 
 const navItems: Array<{ label: string; href: string; icon: typeof BarChart3; roles: RavinduRole[] }> = [
   { label: 'Overview', href: '/dashboard', icon: BarChart3, roles: ['Branch Manager', 'Higher Management', 'System Administrator'] },
+  { label: 'Savings Accounts', href: '/savings', icon: Landmark, roles: ['Branch Manager', 'Higher Management', 'System Administrator'] },
+  { label: 'Fixed Deposits', href: '/fixed-deposits', icon: BriefcaseBusiness, roles: ['Branch Manager', 'Higher Management', 'System Administrator'] },
   { label: 'My profile', href: '/profile', icon: UserRound, roles: ['Branch Manager', 'Higher Management', 'System Administrator'] },
   { label: 'Password reset', href: '/passwordreset', icon: KeyRound, roles: ['Branch Manager', 'Higher Management', 'System Administrator'] },
 ];
