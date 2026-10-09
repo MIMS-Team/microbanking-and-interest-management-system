@@ -54,7 +54,7 @@ export const authCookies = {
 };
 
 export class AuthError extends Error {
-  constructor(message: string, public status = 400) {
+  constructor(message: string, public status = 400, public code = 'AUTH_ERROR') {
     super(message);
     this.name = 'AuthError';
   }
