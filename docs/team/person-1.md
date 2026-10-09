@@ -26,8 +26,19 @@ needs the entire repository to run the app; the list below is the code you maint
 - `microbanking-and-interest-management-system/src/app/api/users/route.ts`
 - `microbanking-and-interest-management-system/src/app/api/users/[id]/route.ts`
 - `microbanking-and-interest-management-system/src/app/api/users/confirm-create/route.ts`
-- `microbanking-and-interest-management-system/src/app/api/users/[id]/confirm-deactivate/route.ts`
+- `microbanking-and-interest-management-system/src/app/_components.tsx`
+- `microbanking-and-interest-management-system/src/middleware.ts`
+- `microbanking-and-interest-management-system/src/lib/server/frontend-logout.test.ts`
 - `.github/workflows/ci.yml`
+
+## Frontend Logout Integration & Session Revocation
+
+- **Component Ownership**: The frontend logout action is owned by `LogoutButton` and `RavinduShell` in [`src/app/_components.tsx`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/app/_components.tsx). It is rendered exclusively for authenticated users (hidden when unauthenticated) across desktop navigation, mobile drawer, and the 403 Forbidden screen. It provides full keyboard accessibility (`aria-label="Logout"`), disables during pending requests (`aria-busy`), debounces double-clicks, and displays safe localized errors.
+- **API Endpoint Called**: Calls `POST /api/auth/logout` with `{ credentials: 'include' }` ensuring cookies are transmitted.
+- **Frontend State Clearing**: `performClientLogout()` immediately purges `localStorage` (`mims-user-session`) via `clearSession()`, wipes `sessionStorage`, and resets React session state (`setSession(null)`). In case of network outage or server 500 error, local state is still guaranteed wiped in the `finally` block to prevent leaving the UI in a misleading authenticated state.
+- **User Redirection & Route Guarding**: The user is redirected to `/login?status=logged_out` via `router.replace()`, preventing browser Back button re-entry into protected history. Protected routes (`/dashboard`, `/profile`, `/savings`, `/fixed-deposits`) are guarded both at the server/edge level ([`src/middleware.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/middleware.ts)) and client level (`RequireSession`), redirecting unauthenticated users to `/login`. The login page displays an accessible "You have been successfully logged out" banner.
+- **Backend Session Revocation**: In [`src/lib/server/auth.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/auth.ts), `logoutSession` hashes the raw token with SHA-256, sets `revoked_at` in the database, expires session cookies (`Max-Age=0, path=/`), emits `Cache-Control: no-store` headers, and logs an audit record to `authentication_audit`. Revoked sessions return `401 Unauthorized` on `/api/auth/session` and all protected endpoints.
+- **Automated Verification Tests**: Verified by 13 dedicated integration tests in [`src/lib/server/frontend-logout.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/frontend-logout.test.ts), as well as [`src/lib/server/api.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/api.test.ts) and [`src/lib/server/auth.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/auth.test.ts) (72 total tests).
 
 ## Database Responsibility
 
