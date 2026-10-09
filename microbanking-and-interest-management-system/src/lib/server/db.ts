@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Pool, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import mysql from 'mysql2/promise';
 
 export type Role = 'agent' | 'manager' | 'higher_manager' | 'admin';
 export type EmployeeStatus = 'active' | 'inactive';
@@ -19,7 +21,9 @@ export type AuditEventType =
   | 'employee_updated'
   | 'employee_deactivation_requested'
   | 'employee_deactivation_confirmed'
-  | 'session_revoked';
+  | 'employee_reactivated'
+  | 'session_revoked'
+  | 'otp_resent';
 
 export interface PublicEmployee {
   id: number;
@@ -108,7 +112,65 @@ export interface AuditAttemptData {
   details?: Record<string, unknown> | null;
 }
 
+// ---------------------------------------------------------
+// Adapter Selection & Configuration
+// ---------------------------------------------------------
+
+let testAdapterOverride: 'mysql' | 'sqlite' | null = null;
+let mysqlPoolInstance: Pool | null = null;
 let sqliteDbInstance: DatabaseSync | null = null;
+
+export function setDbAdapterForTest(adapter: 'mysql' | 'sqlite' | null): void {
+  testAdapterOverride = adapter;
+}
+
+export function getActiveDbAdapterName(): 'mysql' | 'sqlite' {
+  if (testAdapterOverride) return testAdapterOverride;
+  if (process.env.MIMS_AUTH_DB_ADAPTER === 'mysql') return 'mysql';
+  if (process.env.MIMS_AUTH_DB_ADAPTER === 'sqlite') return 'sqlite';
+  if (process.env.NODE_ENV === 'production') return 'mysql';
+  if (process.env.DB_HOST && process.env.NODE_ENV !== 'test') return 'mysql';
+  return 'sqlite';
+}
+
+function toIso(val: unknown): string {
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === 'string') return val;
+  if (!val) return '';
+  return String(val);
+}
+
+// ---------------------------------------------------------
+// MySQL 8.0 Adapter Implementation
+// ---------------------------------------------------------
+
+export function getMySqlPool(): Pool {
+  if (mysqlPoolInstance) return mysqlPoolInstance;
+
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
+  const port = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
+  const user = process.env.DB_USER || process.env.MYSQL_USER || 'root';
+  const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : (process.env.MYSQL_PASSWORD ?? 'PSandDT@2004');
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'mims_dev_test';
+
+  mysqlPoolInstance = mysql.createPool({
+    host,
+    port,
+    user,
+    password,
+    database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    dateStrings: true,
+  });
+
+  return mysqlPoolInstance;
+}
+
+// ---------------------------------------------------------
+// SQLite Lightweight Test Adapter Implementation
+// ---------------------------------------------------------
 
 function getSqliteDb(): DatabaseSync {
   if (sqliteDbInstance) return sqliteDbInstance;
@@ -128,7 +190,6 @@ function getSqliteDb(): DatabaseSync {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA journal_mode = WAL;');
 
-  // Schema creation matching MySQL 8.0 structure
   db.exec(`
     CREATE TABLE IF NOT EXISTS branches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,7 +273,22 @@ function getSqliteDb(): DatabaseSync {
   return db;
 }
 
-export function resetDatabase(): void {
+// ---------------------------------------------------------
+// Unified Public Database Operations
+// ---------------------------------------------------------
+
+export async function resetDatabase(): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute('DELETE FROM authentication_audit');
+    await pool.execute('DELETE FROM employee_sessions');
+    await pool.execute('DELETE FROM otp_challenges');
+    await pool.execute('DELETE FROM staff_authentication');
+    await pool.execute('DELETE FROM staff');
+    return;
+  }
+
   const db = getSqliteDb();
   db.exec(`
     DELETE FROM authentication_audit;
@@ -224,18 +300,78 @@ export function resetDatabase(): void {
 }
 
 export async function findEmployeeByEmail(email: string): Promise<PublicEmployee | null> {
+  const normalized = email.trim().toLowerCase();
+  const adapter = getActiveDbAdapterName();
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE LOWER(email) = ? LIMIT 1`,
+      [normalized]
+    );
+    const row = rows[0] as (PublicEmployee & RowDataPacket) | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      full_name: row.full_name,
+      email: row.email,
+      role: row.role as Role,
+      branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+      status: row.status as EmployeeStatus,
+      created_at: toIso(row.created_at),
+    };
+  }
+
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT id, full_name, email, role, branch_id, status, created_at
     FROM staff
-    WHERE lower(email) = lower(?)
+    WHERE lower(email) = ?
     LIMIT 1
   `);
-  const row = stmt.get(email.trim()) as unknown as PublicEmployee | undefined;
-  return row ?? null;
+  const row = stmt.get(normalized) as unknown as PublicEmployee | undefined;
+  if (!row) return null;
+  return {
+    ...row,
+    created_at: toIso(row.created_at),
+  };
 }
 
 export async function findEmployeeWithAuthByEmail(email: string): Promise<EmployeeWithAuth | null> {
+  const normalized = email.trim().toLowerCase();
+  const adapter = getActiveDbAdapterName();
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT s.id, s.full_name, s.email, s.role, s.branch_id, s.status, s.created_at,
+              COALESCE(a.password_hash, s.password_hash) as password_hash,
+              COALESCE(a.failed_attempts, 0) as failed_attempts,
+              a.locked_until,
+              a.last_login_at
+       FROM staff s
+       LEFT JOIN staff_authentication a ON a.employee_id = s.id
+       WHERE LOWER(s.email) = ?
+       LIMIT 1`,
+      [normalized]
+    );
+    const row = rows[0] as (EmployeeWithAuth & RowDataPacket) | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      full_name: row.full_name,
+      email: row.email,
+      role: row.role as Role,
+      branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+      status: row.status as EmployeeStatus,
+      created_at: toIso(row.created_at),
+      password_hash: row.password_hash,
+      failed_attempts: Number(row.failed_attempts),
+      locked_until: row.locked_until ? toIso(row.locked_until) : null,
+      last_login_at: row.last_login_at ? toIso(row.last_login_at) : null,
+    };
+  }
+
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT s.id, s.full_name, s.email, s.role, s.branch_id, s.status, s.created_at,
@@ -245,14 +381,40 @@ export async function findEmployeeWithAuthByEmail(email: string): Promise<Employ
            a.last_login_at
     FROM staff s
     LEFT JOIN staff_authentication a ON a.employee_id = s.id
-    WHERE lower(s.email) = lower(?)
+    WHERE lower(s.email) = ?
     LIMIT 1
   `);
-  const row = stmt.get(email.trim()) as unknown as EmployeeWithAuth | undefined;
-  return row ?? null;
+  const row = stmt.get(normalized) as unknown as EmployeeWithAuth | undefined;
+  if (!row) return null;
+  return {
+    ...row,
+    created_at: toIso(row.created_at),
+    locked_until: row.locked_until ? toIso(row.locked_until) : null,
+    last_login_at: row.last_login_at ? toIso(row.last_login_at) : null,
+  };
 }
 
 export async function findEmployeeById(id: number): Promise<PublicEmployee | null> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const row = rows[0] as (PublicEmployee & RowDataPacket) | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      full_name: row.full_name,
+      email: row.email,
+      role: row.role as Role,
+      branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+      status: row.status as EmployeeStatus,
+      created_at: toIso(row.created_at),
+    };
+  }
+
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT id, full_name, email, role, branch_id, status, created_at
@@ -261,10 +423,29 @@ export async function findEmployeeById(id: number): Promise<PublicEmployee | nul
     LIMIT 1
   `);
   const row = stmt.get(id) as unknown as PublicEmployee | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    created_at: toIso(row.created_at),
+  };
 }
 
 export async function getEmployeePasswordHash(employeeId: number): Promise<string | null> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT COALESCE(a.password_hash, s.password_hash) as password_hash
+       FROM staff s
+       LEFT JOIN staff_authentication a ON a.employee_id = s.id
+       WHERE s.id = ?
+       LIMIT 1`,
+      [employeeId]
+    );
+    const row = rows[0] as { password_hash: string } | undefined;
+    return row?.password_hash ?? null;
+  }
+
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT coalesce(a.password_hash, s.password_hash) as password_hash
@@ -278,6 +459,18 @@ export async function getEmployeePasswordHash(employeeId: number): Promise<strin
 }
 
 export async function recordFailedLogin(employeeId: number): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+       VALUES (?, (SELECT password_hash FROM staff WHERE id = ?), 1, CURRENT_TIMESTAMP)
+       ON DUPLICATE KEY UPDATE failed_attempts = failed_attempts + 1, updated_at = CURRENT_TIMESTAMP`,
+      [employeeId, employeeId]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
@@ -289,6 +482,16 @@ export async function recordFailedLogin(employeeId: number): Promise<void> {
 }
 
 export async function clearFailedLoginAttempts(employeeId: number): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE staff_authentication SET failed_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE employee_id = ?`,
+      [employeeId]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     UPDATE staff_authentication
@@ -298,6 +501,20 @@ export async function clearFailedLoginAttempts(employeeId: number): Promise<void
 }
 
 export async function lockEmployee(employeeId: number, lockedUntil: Date): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  const dateStr = lockedUntil.toISOString().slice(0, 19).replace('T', ' ');
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, locked_until, updated_at)
+       VALUES (?, (SELECT password_hash FROM staff WHERE id = ?), 5, ?, CURRENT_TIMESTAMP)
+       ON DUPLICATE KEY UPDATE locked_until = VALUES(locked_until), updated_at = CURRENT_TIMESTAMP`,
+      [employeeId, employeeId, dateStr]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, locked_until, updated_at)
@@ -309,6 +526,18 @@ export async function lockEmployee(employeeId: number, lockedUntil: Date): Promi
 }
 
 export async function updateLastLogin(employeeId: number): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, last_login_at, updated_at)
+       VALUES (?, (SELECT password_hash FROM staff WHERE id = ?), 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON DUPLICATE KEY UPDATE failed_attempts = 0, locked_until = NULL, last_login_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP`,
+      [employeeId, employeeId]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, last_login_at, updated_at)
@@ -322,6 +551,26 @@ export async function updateLastLogin(employeeId: number): Promise<void> {
 }
 
 export async function recordAuthenticationAttempt(data: AuditAttemptData): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  const detailsJson = data.details ? JSON.stringify(data.details) : null;
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `INSERT INTO authentication_audit (employee_id, email, event_type, ip_address, user_agent, details, created_at)
+       VALUES (?, LOWER(?), ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        data.employee_id ?? null,
+        data.email.trim(),
+        data.event_type,
+        data.ip_address ?? null,
+        data.user_agent ?? null,
+        detailsJson,
+      ]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     INSERT INTO authentication_audit (employee_id, email, event_type, ip_address, user_agent, details, created_at)
@@ -332,14 +581,44 @@ export async function recordAuthenticationAttempt(data: AuditAttemptData): Promi
     data.event_type,
     data.ip_address ?? null,
     data.user_agent ?? null,
-    data.details ? JSON.stringify(data.details) : null
+    detailsJson
   );
 }
 
 export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  const metadataJson = data.metadata ? JSON.stringify(data.metadata) : null;
+  const expiresIso = data.expires_at.toISOString();
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
+
+    // Invalidate earlier unconsumed OTPs for same employee and purpose
+    await pool.execute(
+      `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND purpose = ? AND consumed_at IS NULL`,
+      [data.employee_id, data.purpose]
+    );
+
+    await pool.execute(
+      `INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, created_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON DUPLICATE KEY UPDATE code_hash = VALUES(code_hash), attempts = 0, expires_at = VALUES(expires_at), consumed_at = NULL, metadata = VALUES(metadata)`,
+      [
+        data.id,
+        data.employee_id,
+        data.purpose,
+        data.code_hash,
+        data.max_attempts ?? 5,
+        expiresFormatted,
+        metadataJson,
+      ]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   const nowIso = new Date().toISOString();
-  // Invalidate any previous unconsumed active OTPs for the same employee and purpose
   db.prepare(`
     UPDATE otp_challenges
     SET consumed_at = ?
@@ -361,13 +640,39 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
     data.purpose,
     data.code_hash,
     data.max_attempts ?? 5,
-    data.expires_at.toISOString(),
-    data.metadata ? JSON.stringify(data.metadata) : null,
+    expiresIso,
+    metadataJson,
     nowIso
   );
 }
 
 export async function findOtpChallenge(id: string, purpose: OtpPurpose): Promise<OtpChallengeRecord | null> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, created_at
+       FROM otp_challenges
+       WHERE id = ? AND purpose = ?
+       LIMIT 1`,
+      [id, purpose]
+    );
+    const row = rows[0] as (OtpChallengeRecord & RowDataPacket) | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      employee_id: Number(row.employee_id),
+      purpose: row.purpose,
+      code_hash: row.code_hash,
+      attempts: Number(row.attempts),
+      max_attempts: Number(row.max_attempts),
+      expires_at: toIso(row.expires_at),
+      consumed_at: row.consumed_at ? toIso(row.consumed_at) : null,
+      metadata: typeof row.metadata === 'object' && row.metadata !== null ? JSON.stringify(row.metadata) : (row.metadata ?? null),
+      created_at: toIso(row.created_at),
+    };
+  }
+
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, created_at
@@ -376,32 +681,78 @@ export async function findOtpChallenge(id: string, purpose: OtpPurpose): Promise
     LIMIT 1
   `);
   const row = stmt.get(id, purpose) as unknown as OtpChallengeRecord | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    expires_at: toIso(row.expires_at),
+    consumed_at: row.consumed_at ? toIso(row.consumed_at) : null,
+    created_at: toIso(row.created_at),
+  };
 }
 
 export async function incrementOtpAttempts(id: string): Promise<number> {
-  const db = getSqliteDb();
-  db.prepare(`
-    UPDATE otp_challenges
-    SET attempts = attempts + 1
-    WHERE id = ?
-  `).run(id);
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(`UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = ?`, [id]);
+    const [rows] = await pool.execute<RowDataPacket[]>(`SELECT attempts FROM otp_challenges WHERE id = ?`, [id]);
+    const row = rows[0] as { attempts: number } | undefined;
+    return Number(row?.attempts ?? 0);
+  }
 
+  const db = getSqliteDb();
+  db.prepare(`UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = ?`).run(id);
   const stmt = db.prepare(`SELECT attempts FROM otp_challenges WHERE id = ?`);
   const row = stmt.get(id) as unknown as { attempts: number } | undefined;
   return row?.attempts ?? 0;
 }
 
-export async function consumeOtpChallenge(id: string): Promise<void> {
+/**
+ * Atomically consumes an OTP challenge.
+ * Returns true if this invocation successfully consumed the challenge; false if already consumed or invalid.
+ */
+export async function consumeOtpChallenge(id: string): Promise<boolean> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [result] = await pool.execute<ResultSetHeader>(
+      `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
+      [id]
+    );
+    return result.affectedRows > 0;
+  }
+
   const db = getSqliteDb();
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE otp_challenges
     SET consumed_at = ?
-    WHERE id = ? AND consumed_at IS NULL
+    WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts
   `).run(new Date().toISOString(), id);
+  return result.changes > 0;
 }
 
 export async function createSession(data: CreateSessionData): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  const expiresIso = data.expires_at.toISOString();
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
+    await pool.execute(
+      `INSERT INTO employee_sessions (token_hash, employee_id, created_at, last_activity_at, expires_at, ip_address, user_agent)
+       VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE revoked_at = NULL, last_activity_at = CURRENT_TIMESTAMP, expires_at = VALUES(expires_at)`,
+      [
+        data.token_hash,
+        data.employee_id,
+        expiresFormatted,
+        data.ip_address ?? null,
+        data.user_agent ?? null,
+      ]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   const nowIso = new Date().toISOString();
   db.prepare(`
@@ -416,13 +767,65 @@ export async function createSession(data: CreateSessionData): Promise<void> {
     data.employee_id,
     nowIso,
     nowIso,
-    data.expires_at.toISOString(),
+    expiresIso,
     data.ip_address ?? null,
     data.user_agent ?? null
   );
 }
 
 export async function findSessionByHash(tokenHash: string): Promise<SessionWithEmployee | null> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT s.token_hash, s.employee_id, s.created_at, s.last_activity_at, s.expires_at, s.revoked_at, s.ip_address, s.user_agent,
+              e.id, e.full_name, e.email, e.role, e.branch_id, e.status, e.created_at as emp_created_at
+       FROM employee_sessions s
+       JOIN staff e ON e.id = s.employee_id
+       WHERE s.token_hash = ?
+       LIMIT 1`,
+      [tokenHash]
+    );
+    const row = rows[0] as (RowDataPacket & {
+      token_hash: string;
+      employee_id: number;
+      created_at: string;
+      last_activity_at: string;
+      expires_at: string;
+      revoked_at: string | null;
+      ip_address: string | null;
+      user_agent: string | null;
+      id: number;
+      full_name: string;
+      email: string;
+      role: Role;
+      branch_id: number | null;
+      status: EmployeeStatus;
+      emp_created_at: string;
+    }) | undefined;
+
+    if (!row) return null;
+    return {
+      token_hash: row.token_hash,
+      employee_id: Number(row.employee_id),
+      created_at: toIso(row.created_at),
+      last_activity_at: toIso(row.last_activity_at),
+      expires_at: toIso(row.expires_at),
+      revoked_at: row.revoked_at ? toIso(row.revoked_at) : null,
+      ip_address: row.ip_address,
+      user_agent: row.user_agent,
+      employee: {
+        id: Number(row.id),
+        full_name: row.full_name,
+        email: row.email,
+        role: row.role,
+        branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+        status: row.status,
+        created_at: toIso(row.emp_created_at),
+      },
+    };
+  }
+
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT s.token_hash, s.employee_id, s.created_at, s.last_activity_at, s.expires_at, s.revoked_at, s.ip_address, s.user_agent,
@@ -455,10 +858,10 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
   return {
     token_hash: row.token_hash,
     employee_id: row.employee_id,
-    created_at: row.created_at,
-    last_activity_at: row.last_activity_at,
-    expires_at: row.expires_at,
-    revoked_at: row.revoked_at,
+    created_at: toIso(row.created_at),
+    last_activity_at: toIso(row.last_activity_at),
+    expires_at: toIso(row.expires_at),
+    revoked_at: row.revoked_at ? toIso(row.revoked_at) : null,
     ip_address: row.ip_address,
     user_agent: row.user_agent,
     employee: {
@@ -468,12 +871,22 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
       role: row.role,
       branch_id: row.branch_id,
       status: row.status,
-      created_at: row.emp_created_at,
+      created_at: toIso(row.emp_created_at),
     },
   };
 }
 
 export async function updateSessionActivity(tokenHash: string): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE employee_sessions SET last_activity_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL`,
+      [tokenHash]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     UPDATE employee_sessions
@@ -483,24 +896,48 @@ export async function updateSessionActivity(tokenHash: string): Promise<void> {
 }
 
 export async function setSessionLastActivityForTest(tokenHash: string, date: Date): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  const dateIso = date.toISOString();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE employee_sessions SET last_activity_at = ? WHERE token_hash = ?`,
+      [dateIso.slice(0, 19).replace('T', ' '), tokenHash]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
-  db.prepare(`
-    UPDATE employee_sessions
-    SET last_activity_at = ?
-    WHERE token_hash = ?
-  `).run(date.toISOString(), tokenHash);
+  db.prepare(`UPDATE employee_sessions SET last_activity_at = ? WHERE token_hash = ?`).run(dateIso, tokenHash);
 }
 
 export async function setSessionExpiresAtForTest(tokenHash: string, date: Date): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  const dateIso = date.toISOString();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE employee_sessions SET expires_at = ? WHERE token_hash = ?`,
+      [dateIso.slice(0, 19).replace('T', ' '), tokenHash]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
-  db.prepare(`
-    UPDATE employee_sessions
-    SET expires_at = ?
-    WHERE token_hash = ?
-  `).run(date.toISOString(), tokenHash);
+  db.prepare(`UPDATE employee_sessions SET expires_at = ? WHERE token_hash = ?`).run(dateIso, tokenHash);
 }
 
 export async function revokeSession(tokenHash: string): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL`,
+      [tokenHash]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     UPDATE employee_sessions
@@ -510,6 +947,16 @@ export async function revokeSession(tokenHash: string): Promise<void> {
 }
 
 export async function revokeAllEmployeeSessions(employeeId: number): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+      [employeeId]
+    );
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`
     UPDATE employee_sessions
@@ -523,6 +970,39 @@ export async function listEmployees(filters?: {
   status?: EmployeeStatus;
   branch_id?: number | null;
 }): Promise<PublicEmployee[]> {
+  const adapter = getActiveDbAdapterName();
+
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    let query = `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE 1=1`;
+    const params: (string | number)[] = [];
+
+    if (filters?.role) {
+      query += ` AND role = ?`;
+      params.push(filters.role);
+    }
+    if (filters?.status) {
+      query += ` AND status = ?`;
+      params.push(filters.status);
+    }
+    if (filters?.branch_id !== undefined && filters.branch_id !== null) {
+      query += ` AND branch_id = ?`;
+      params.push(filters.branch_id);
+    }
+
+    query += ` ORDER BY id ASC`;
+    const [rows] = await pool.execute<RowDataPacket[]>(query, params);
+    return (rows as RowDataPacket[]).map((r) => ({
+      id: Number(r.id),
+      full_name: r.full_name,
+      email: r.email,
+      role: r.role as Role,
+      branch_id: r.branch_id !== null ? Number(r.branch_id) : null,
+      status: r.status as EmployeeStatus,
+      created_at: toIso(r.created_at),
+    }));
+  }
+
   const db = getSqliteDb();
   let query = `
     SELECT id, full_name, email, role, branch_id, status, created_at
@@ -546,13 +1026,44 @@ export async function listEmployees(filters?: {
 
   query += ` ORDER BY id ASC`;
   const rows = db.prepare(query).all(...params) as unknown as PublicEmployee[];
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    created_at: toIso(r.created_at),
+  }));
 }
 
 export async function createEmployee(data: CreateEmployeeData): Promise<PublicEmployee> {
-  const db = getSqliteDb();
+  const adapter = getActiveDbAdapterName();
   const normalizedEmail = data.email.trim().toLowerCase();
 
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [result] = await pool.execute<ResultSetHeader>(
+      `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        data.full_name.trim(),
+        normalizedEmail,
+        data.password_hash,
+        data.role,
+        data.branch_id ?? null,
+        data.status ?? 'active',
+      ]
+    );
+
+    const newId = result.insertId;
+    await pool.execute(
+      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+       VALUES (?, ?, 0, CURRENT_TIMESTAMP)`,
+      [newId, data.password_hash]
+    );
+
+    const created = await findEmployeeById(newId);
+    if (!created) throw new Error('Failed to retrieve newly created employee.');
+    return created;
+  }
+
+  const db = getSqliteDb();
   db.prepare(`
     INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -573,11 +1084,13 @@ export async function createEmployee(data: CreateEmployeeData): Promise<PublicEm
     VALUES (?, ?, 0, CURRENT_TIMESTAMP)
   `).run(row.id, data.password_hash);
 
-  return row;
+  return {
+    ...row,
+    created_at: toIso(row.created_at),
+  };
 }
 
 export async function updateEmployee(id: number, data: UpdateEmployeeData): Promise<PublicEmployee | null> {
-  const db = getSqliteDb();
   const current = await findEmployeeById(id);
   if (!current) return null;
 
@@ -587,6 +1100,32 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
   const nextBranch = data.branch_id !== undefined ? data.branch_id : current.branch_id;
   const nextStatus = data.status !== undefined ? data.status : current.status;
 
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(
+      `UPDATE staff SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ? WHERE id = ?`,
+      [nextName, nextEmail, nextRole, nextBranch, nextStatus, id]
+    );
+
+    if (data.password_hash) {
+      await pool.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [data.password_hash, id]);
+      await pool.execute(
+        `INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), updated_at = CURRENT_TIMESTAMP`,
+        [id, data.password_hash]
+      );
+    }
+
+    if (nextStatus === 'inactive') {
+      await revokeAllEmployeeSessions(id);
+    }
+
+    return findEmployeeById(id);
+  }
+
+  const db = getSqliteDb();
   db.prepare(`
     UPDATE staff
     SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ?
@@ -594,10 +1133,7 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
   `).run(nextName, nextEmail, nextRole, nextBranch, nextStatus, id);
 
   if (data.password_hash) {
-    db.prepare(`
-      UPDATE staff SET password_hash = ? WHERE id = ?
-    `).run(data.password_hash, id);
-
+    db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(data.password_hash, id);
     db.prepare(`
       INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
       VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -615,6 +1151,20 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
 }
 
 export async function updatePasswordHash(employeeId: number, passwordHash: string): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [passwordHash, employeeId]);
+    await pool.execute(
+      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+       VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+       ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), failed_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP`,
+      [employeeId, passwordHash]
+    );
+    await revokeAllEmployeeSessions(employeeId);
+    return;
+  }
+
   const db = getSqliteDb();
   db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(passwordHash, employeeId);
   db.prepare(`
@@ -631,13 +1181,22 @@ export async function updatePasswordHash(employeeId: number, passwordHash: strin
 }
 
 export async function deactivateEmployee(id: number): Promise<boolean> {
-  const db = getSqliteDb();
-  const result = db.prepare(`
-    UPDATE staff
-    SET status = 'inactive'
-    WHERE id = ?
-  `).run(id);
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [result] = await pool.execute<ResultSetHeader>(
+      `UPDATE staff SET status = 'inactive' WHERE id = ?`,
+      [id]
+    );
+    if (result.affectedRows > 0) {
+      await revokeAllEmployeeSessions(id);
+      return true;
+    }
+    return false;
+  }
 
+  const db = getSqliteDb();
+  const result = db.prepare(`UPDATE staff SET status = 'inactive' WHERE id = ?`).run(id);
   if (result.changes > 0) {
     await revokeAllEmployeeSessions(id);
     return true;
@@ -646,12 +1205,18 @@ export async function deactivateEmployee(id: number): Promise<boolean> {
 }
 
 export async function countActiveAdmins(): Promise<number> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM staff WHERE role = 'admin' AND status = 'active'`
+    );
+    const row = rows[0] as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
   const db = getSqliteDb();
-  const stmt = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM staff
-    WHERE role = 'admin' AND status = 'active'
-  `);
+  const stmt = db.prepare(`SELECT COUNT(*) as count FROM staff WHERE role = 'admin' AND status = 'active'`);
   const row = stmt.get() as unknown as { count: number } | undefined;
   return row?.count ?? 0;
 }
@@ -659,21 +1224,54 @@ export async function countActiveAdmins(): Promise<number> {
 export async function getAuditLogsForTest(
   email?: string
 ): Promise<Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    if (email) {
+      const [rows] = await pool.execute<RowDataPacket[]>(
+        `SELECT id, employee_id, email, event_type, created_at FROM authentication_audit WHERE LOWER(email) = LOWER(?) ORDER BY id DESC`,
+        [email.trim()]
+      );
+      return (rows as RowDataPacket[]).map((r) => ({
+        id: Number(r.id),
+        employee_id: r.employee_id !== null ? Number(r.employee_id) : null,
+        email: r.email,
+        event_type: r.event_type,
+        created_at: toIso(r.created_at),
+      }));
+    }
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT id, employee_id, email, event_type, created_at FROM authentication_audit ORDER BY id DESC`
+    );
+    return (rows as RowDataPacket[]).map((r) => ({
+      id: Number(r.id),
+      employee_id: r.employee_id !== null ? Number(r.employee_id) : null,
+      email: r.email,
+      event_type: r.event_type,
+      created_at: toIso(r.created_at),
+    }));
+  }
+
   const db = getSqliteDb();
   if (email) {
     const rows = db.prepare(`
       SELECT id, employee_id, email, event_type, created_at
       FROM authentication_audit
-      WHERE email = lower(?)
+      WHERE lower(email) = lower(?)
       ORDER BY id DESC
     `).all(email.trim());
-    return rows as unknown as Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>;
+    return (rows as unknown as Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>).map((r) => ({
+      ...r,
+      created_at: toIso(r.created_at),
+    }));
   }
   const rows = db.prepare(`
     SELECT id, employee_id, email, event_type, created_at
     FROM authentication_audit
     ORDER BY id DESC
   `).all();
-  return rows as unknown as Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>;
+  return (rows as unknown as Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>).map((r) => ({
+    ...r,
+    created_at: toIso(r.created_at),
+  }));
 }
-
