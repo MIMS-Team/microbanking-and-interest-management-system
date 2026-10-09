@@ -34,6 +34,14 @@ import {
   revokeSession,
   type PublicEmployee,
 } from './db';
+import { clearAllRateLimits, checkRateLimit } from './rate-limit';
+import {
+  validateLoginPayload,
+  validateOtpPayload,
+  validatePasswordResetConfirmPayload,
+  validateCreateEmployeePayload,
+} from './validation';
+import { enforceRateLimit, RateLimitError } from './api';
 
 describe('Authentication and User Management System Tests', () => {
   let adminUser: PublicEmployee;
@@ -43,6 +51,7 @@ describe('Authentication and User Management System Tests', () => {
 
   beforeEach(async () => {
     resetDatabase();
+    clearAllRateLimits();
 
     // Seed test accounts for test execution
     adminUser = await createEmployee({
@@ -538,6 +547,163 @@ describe('Authentication and User Management System Tests', () => {
       await expect(
         updateEmployeeDetails(agentUser, adminUser.id, { full_name: 'Hacked Name' })
       ).rejects.toThrowError(/permission/);
+    });
+  });
+
+  describe('6. Abuse Prevention and Rate Limiting Tests', () => {
+    it('rate limiter allows requests within threshold and blocks subsequent ones', () => {
+      const key = 'test:login:ip:192.168.1.100';
+      const maxAttempts = 3;
+      const windowMs = 60000;
+
+      // First 3 attempts should be allowed
+      expect(checkRateLimit(key, maxAttempts, windowMs).allowed).toBe(true);
+      expect(checkRateLimit(key, maxAttempts, windowMs).allowed).toBe(true);
+      expect(checkRateLimit(key, maxAttempts, windowMs).allowed).toBe(true);
+
+      // 4th attempt should be blocked
+      const blocked = checkRateLimit(key, maxAttempts, windowMs);
+      expect(blocked.allowed).toBe(false);
+      expect(blocked.remaining).toBe(0);
+      expect(blocked.resetInSeconds).toBeGreaterThan(0);
+    });
+
+    it('enforceRateLimit helper throws RateLimitError when limit is exceeded', () => {
+      const req = new NextRequest('http://localhost/api/auth/login', {
+        headers: { 'x-forwarded-for': '203.0.113.195' },
+      });
+
+      // Exhaust limit of 5 requests
+      for (let i = 0; i < 5; i++) {
+        expect(() => enforceRateLimit(req, 'LOGIN', 'victim@bank.com')).not.toThrow();
+      }
+
+      // 6th request throws RateLimitError
+      expect(() => enforceRateLimit(req, 'LOGIN', 'victim@bank.com')).toThrowError(RateLimitError);
+    });
+
+    it('replayed OTP codes are rejected after consumption', async () => {
+      const { challengeId } = await authenticateCredentials('agent@ravindu.bank', 'AgentPass!123');
+      const otp = getLastDispatchedOtpForTest()!.code;
+
+      // First consumption succeeds
+      const first = await verifyLoginOtpChallenge(challengeId, otp);
+      expect(first.sessionToken).toBeTruthy();
+
+      // Second consumption with exact same code and challenge fails
+      await expect(verifyLoginOtpChallenge(challengeId, otp)).rejects.toThrowError(/already been used/);
+    });
+
+    it('exceeding maximum OTP attempts locks the challenge', async () => {
+      const { challengeId } = await authenticateCredentials('agent@ravindu.bank', 'AgentPass!123');
+
+      // 5 wrong attempts
+      for (let i = 0; i < 5; i++) {
+        await expect(verifyLoginOtpChallenge(challengeId, '000000')).rejects.toThrowError();
+      }
+
+      // Even if the real OTP is subsequently entered, it is locked
+      const correctOtp = getLastDispatchedOtpForTest()!.code;
+      await expect(verifyLoginOtpChallenge(challengeId, correctOtp)).rejects.toThrowError(/Maximum verification attempts exceeded/);
+    });
+  });
+
+  describe('7. Request Validation and Negative Input Tests', () => {
+    it('validateLoginPayload rejects malformed or missing fields', () => {
+      expect(() => validateLoginPayload(null)).toThrowError(/JSON object expected/);
+      expect(() => validateLoginPayload({})).toThrowError(/Email is required/);
+      expect(() => validateLoginPayload({ email: 'not-an-email', password: 'ValidPassword123' })).toThrowError(/valid email/);
+      expect(() => validateLoginPayload({ email: 'valid@bank.com', password: 'short' })).toThrowError(/Password must be between 8 and 128 characters/);
+      
+      const valid = validateLoginPayload({ email: 'Valid@Bank.com', password: 'ValidPassword123' });
+      expect(valid.email).toBe('valid@bank.com');
+      expect(valid.password).toBe('ValidPassword123');
+    });
+
+    it('validateOtpPayload enforces 6-digit numeric codes', () => {
+      expect(() => validateOtpPayload(null)).toThrowError(/JSON object expected/);
+      expect(() => validateOtpPayload({ code: '123' })).toThrowError(/exactly 6 digits/);
+      expect(() => validateOtpPayload({ code: 'abcdef' })).toThrowError(/exactly 6 digits/);
+      expect(() => validateOtpPayload({ code: '1234567' })).toThrowError(/exactly 6 digits/);
+
+      const valid = validateOtpPayload({ code: ' 654321 ', challengeId: ' ch-123 ' });
+      expect(valid.code).toBe('654321');
+      expect(valid.challengeId).toBe('ch-123');
+    });
+
+    it('validatePasswordResetConfirmPayload enforces password match and length', () => {
+      expect(() => validatePasswordResetConfirmPayload({
+        challengeId: 'cid',
+        code: '123456',
+        password: 'Pass1',
+        confirmPassword: 'Pass1',
+      })).toThrowError(/Password must be between 8 and 128 characters/);
+
+      expect(() => validatePasswordResetConfirmPayload({
+        challengeId: 'cid',
+        code: '123456',
+        password: 'NewPassword123!',
+        confirmPassword: 'MismatchPassword123!',
+      })).toThrowError(/do not match/);
+
+      const valid = validatePasswordResetConfirmPayload({
+        challengeId: 'cid',
+        code: '123456',
+        password: 'NewPassword123!',
+        confirmPassword: 'NewPassword123!',
+      });
+      expect(valid.challengeId).toBe('cid');
+      expect(valid.code).toBe('123456');
+    });
+
+    it('validateCreateEmployeePayload validates required role and branch', () => {
+      expect(() => validateCreateEmployeePayload({
+        full_name: 'Test',
+        email: 'test@bank.com',
+        role: 'invalid_role',
+      })).toThrowError(/Role is invalid/);
+
+      const valid = validateCreateEmployeePayload({
+        full_name: 'John Doe',
+        email: 'john@bank.com',
+        role: 'agent',
+        branch_id: 2,
+      });
+      expect(valid.full_name).toBe('John Doe');
+      expect(valid.role).toBe('agent');
+      expect(valid.branch_id).toBe(2);
+    });
+  });
+
+  describe('8. Database Security and Audit Trail Tests', () => {
+    it('authentication attempts are recorded in the audit trail', async () => {
+      // Record a failed login
+      try {
+        await authenticateCredentials('agent@ravindu.bank', 'BadPassword');
+      } catch {
+        // Expected
+      }
+
+      // Check database audit records
+      const { getAuditLogsForTest } = await import('./db');
+      const logs = await getAuditLogsForTest('agent@ravindu.bank');
+      expect(logs.length).toBeGreaterThan(0);
+      expect(logs.some((l) => l.event_type === 'wrong_password')).toBe(true);
+    });
+
+    it('session tokens in database are irreversibly hashed with SHA-256', async () => {
+      const { challengeId } = await authenticateCredentials('agent@ravindu.bank', 'AgentPass!123');
+      const otp = getLastDispatchedOtpForTest()!.code;
+      const { sessionToken } = await verifyLoginOtpChallenge(challengeId, otp);
+
+      // The plaintext token must NEVER appear in the sessions table
+      const rawMatch = await findSessionByHash(sessionToken);
+      expect(rawMatch).toBeNull();
+
+      // Only the hashed token exists
+      const hashMatch = await findSessionByHash(hashSessionToken(sessionToken));
+      expect(hashMatch).not.toBeNull();
+      expect(hashMatch?.employee_id).toBe(agentUser.id);
     });
   });
 });
