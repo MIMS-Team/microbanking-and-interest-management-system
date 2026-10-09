@@ -46,12 +46,14 @@ export const roleLabels: Record<Role, string> = {
   agent: 'Field Agent',
 };
 
+
 export const roleDetails: Record<Role, { short: string; tone: string; description: string }> = {
   admin: { short: 'SA', tone: 'bg-rose-100 text-rose-800 border-rose-200', description: 'Platform identity and user lifecycle management' },
   higher_manager: { short: 'HM', tone: 'bg-amber-100 text-amber-800 border-amber-200', description: 'Executive approvals and governance oversight' },
   manager: { short: 'BM', tone: 'bg-cyan-100 text-cyan-800 border-cyan-200', description: 'Branch banking operations and supervisory controls' },
   agent: { short: 'AG', tone: 'bg-emerald-100 text-emerald-800 border-emerald-200', description: 'Customer service and operational features' },
 };
+
 
 export function getStoredSession(): PublicEmployee | null {
   if (typeof window === 'undefined') return null;
