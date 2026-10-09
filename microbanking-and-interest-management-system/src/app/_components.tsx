@@ -8,6 +8,7 @@ import {
   BadgeCheck,
   Building2,
   Check,
+  CheckCircle2,
   ChevronRight,
   Clock3,
   KeyRound,
@@ -75,7 +76,118 @@ export function saveSession(user: PublicEmployee): void {
 export function clearSession(): void {
   if (typeof window !== 'undefined') {
     window.localStorage.removeItem(SESSION_KEY);
+    try {
+      window.sessionStorage.clear();
+    } catch {}
   }
+}
+
+export interface LogoutResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function performClientLogout(): Promise<LogoutResult> {
+  try {
+    const res = await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      let errMsg = 'Failed to revoke session on server.';
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body?.error) errMsg = body.error;
+      } catch {}
+      return { success: false, error: errMsg };
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Network failure during logout. Session cleared locally.' };
+  } finally {
+    clearSession();
+  }
+}
+
+export interface LogoutButtonProps {
+  className?: string;
+  variant?: 'nav' | 'mobile' | 'button';
+  onLogoutSuccess?: () => void;
+  onLogoutError?: (error: string) => void;
+  redirectUrl?: string;
+}
+
+export function LogoutButton({
+  className,
+  variant = 'nav',
+  onLogoutSuccess,
+  onLogoutError,
+  redirectUrl = '/login?status=logged_out',
+}: LogoutButtonProps) {
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    setErrorMessage(null);
+
+    const result = await performClientLogout();
+
+    if (!result.success && result.error) {
+      setErrorMessage(result.error);
+      if (onLogoutError) {
+        onLogoutError(result.error);
+      }
+    }
+
+    if (onLogoutSuccess) {
+      onLogoutSuccess();
+    }
+
+    router.replace(redirectUrl);
+  };
+
+  const baseStyles =
+    variant === 'mobile'
+      ? 'flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-bold text-[#b65f45] transition hover:bg-[#fff1ed] disabled:opacity-50 disabled:cursor-not-allowed'
+      : variant === 'button'
+      ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow transition hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed'
+      : 'ml-2 flex items-center gap-2 rounded-lg border border-[#d9e2ec] px-3 py-2 text-xs font-bold text-[#b65f45] transition hover:bg-[#fff1ed] disabled:opacity-50 disabled:cursor-not-allowed';
+
+  return (
+    <div className="inline-flex flex-col items-start">
+      <button
+        type="button"
+        onClick={handleLogout}
+        disabled={isLoggingOut}
+        aria-busy={isLoggingOut}
+        aria-label="Logout"
+        className={`${baseStyles} ${className ?? ''}`}
+      >
+        {isLoggingOut ? (
+          <>
+            <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+            <span>Logging out...</span>
+          </>
+        ) : (
+          <>
+            <LogOut className="h-4 w-4 shrink-0" />
+            <span>Logout</span>
+          </>
+        )}
+      </button>
+      {errorMessage && (
+        <span role="alert" className="mt-1 block text-[11px] font-semibold text-rose-600">
+          {errorMessage}
+        </span>
+      )}
+    </div>
+  );
 }
 
 export function getInitials(name: string): string {
@@ -204,7 +316,7 @@ export function RavinduShell({
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/session')
+    fetch('/api/auth/session', { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error('Unauthenticated');
         return res.json() as Promise<{ user: PublicEmployee }>;
@@ -218,15 +330,6 @@ export function RavinduShell({
         router.replace('/login');
       });
   }, [router]);
-
-  const logout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } finally {
-      clearSession();
-      router.push('/login');
-    }
-  };
 
   const userRole = session?.role ?? 'agent';
   const roleName = roleLabels[userRole];
@@ -253,33 +356,32 @@ export function RavinduShell({
           >
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
-          <nav className="hidden items-center gap-2 lg:flex">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = pathname === item.href || (item.href.includes('tab=') && pathname.includes('/dashboard'));
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition ${
-                    active ? 'bg-[#102a43] text-white' : 'text-[#52606d] hover:bg-[#e9eff5]'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
-                </Link>
-              );
-            })}
-            <button
-              onClick={logout}
-              className="ml-2 flex items-center gap-2 rounded-lg border border-[#d9e2ec] px-3 py-2 text-xs font-bold text-[#b65f45] transition hover:bg-[#fff1ed]"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </button>
-          </nav>
+          {session && (
+            <nav className="hidden items-center gap-2 lg:flex">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const active = pathname === item.href || (item.href.includes('tab=') && pathname.includes('/dashboard'));
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition ${
+                      active ? 'bg-[#102a43] text-white' : 'text-[#52606d] hover:bg-[#e9eff5]'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+              <LogoutButton
+                variant="nav"
+                onLogoutSuccess={() => setSession(null)}
+              />
+            </nav>
+          )}
         </div>
-        {mobileOpen && (
+        {mobileOpen && session && (
           <nav className="space-y-1 border-t border-[#d9e2ec] px-5 py-3 lg:hidden bg-white">
             {navItems.map((item) => (
               <Link
@@ -292,13 +394,13 @@ export function RavinduShell({
                 {item.label}
               </Link>
             ))}
-            <button
-              onClick={logout}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-bold text-[#b65f45]"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </button>
+            <LogoutButton
+              variant="mobile"
+              onLogoutSuccess={() => {
+                setSession(null);
+                setMobileOpen(false);
+              }}
+            />
           </nav>
         )}
       </header>
@@ -362,7 +464,7 @@ export function RequireSession({
 
   useEffect(() => {
     let mounted = true;
-    fetch('/api/auth/session')
+    fetch('/api/auth/session', { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error('Unauthenticated');
         return res.json() as Promise<{ user: PublicEmployee }>;
@@ -397,12 +499,15 @@ export function RequireSession({
           <p className="mt-2 text-sm text-[#627d98]">
             Your current assigned role does not have authorization to view this area.
           </p>
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="mt-6 rounded-xl bg-[#102a43] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#1d3f5e]"
-          >
-            Return to Authorized Dashboard
-          </button>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="rounded-xl bg-[#102a43] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#1d3f5e]"
+            >
+              Return to Dashboard
+            </button>
+            <LogoutButton variant="button" />
+          </div>
         </div>
       </div>
     );
@@ -428,6 +533,13 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [loggedOutNotice] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('status') === 'logged_out' || params.get('message') === 'logged_out';
+    }
+    return false;
+  });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -465,6 +577,12 @@ export function LoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      {loggedOutNotice && (
+        <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span>You have been successfully logged out.</span>
+        </div>
+      )}
       <Field
         label="Work Email"
         icon={Mail}
