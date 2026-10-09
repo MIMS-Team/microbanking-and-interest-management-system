@@ -491,6 +491,15 @@ export async function setSessionLastActivityForTest(tokenHash: string, date: Dat
   `).run(date.toISOString(), tokenHash);
 }
 
+export async function setSessionExpiresAtForTest(tokenHash: string, date: Date): Promise<void> {
+  const db = getSqliteDb();
+  db.prepare(`
+    UPDATE employee_sessions
+    SET expires_at = ?
+    WHERE token_hash = ?
+  `).run(date.toISOString(), tokenHash);
+}
+
 export async function revokeSession(tokenHash: string): Promise<void> {
   const db = getSqliteDb();
   db.prepare(`

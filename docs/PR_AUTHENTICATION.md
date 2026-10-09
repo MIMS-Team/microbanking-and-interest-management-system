@@ -39,8 +39,14 @@ This upgrade establishes an enterprise-grade banking security architecture:
    - Staff records are never deleted (`status = 'inactive'`) to maintain financial audit integrity.
 
 4. **Automated Testing & GitHub Actions CI**:
-   - Built a comprehensive test suite of **59 automated unit and integration tests** in Vitest.
-   - Configured `.github/workflows/ci.yml` to automatically execute ESLint, TypeScript compilation (`tsc --noEmit`), Vitest suite, and production build checks on every push and pull request.
+   - Built a comprehensive test suite of **72 automated unit and integration tests** in Vitest across 3 test suites.
+   - Configured `.github/workflows/ci.yml` to automatically execute ESLint, TypeScript compilation (`tsc --noEmit`), Vitest suite, and build checks on every push and pull request.
+
+5. **Frontend Logout Integration & Full Session Revocation**:
+   - Integrated keyboard-accessible, loading-aware `LogoutButton` into authenticated navigation layouts.
+   - Calls backend `POST /api/auth/logout` with credentials, immediately clearing `localStorage` and `sessionStorage`.
+   - Protects protected routes (`/dashboard`, `/profile`, `/savings`, `/fixed-deposits`) via Next.js route middleware (`src/middleware.ts`) and client-side `RequireSession` guards.
+   - Revokes session records in the database, expires session cookies, and emits anti-caching HTTP headers.
 
 ---
 
@@ -184,6 +190,17 @@ npm test
   - Dual-control employee creation and deactivation with HR OTP.
   - Role hierarchy rules, branch isolation, and audit trail verification.
   - Database persistence and SHA-256 token hashing verification.
+- **`frontend-logout.test.ts`** (13 tests):
+  - Frontend client state manager (`performClientLogout`).
+  - Request format verification (`POST /api/auth/logout`, `credentials: 'include'`).
+  - Purging of client session state from `localStorage` and `sessionStorage`.
+  - Resilience against network failure (local state guaranteed cleared).
+  - Backend database session revocation and `Set-Cookie` cookie expiration (`Max-Age=0`).
+  - Rejection of revoked old session across `/api/auth/session` and `/api/users`.
+  - Idempotent safe handling for missing or expired session cookies.
+  - Verification that logging in again produces a fresh, active session while old session stays rejected.
+  - Database audit event logging for logout.
+  - Security non-leakage verification (no plaintext token, hash, or password in client storage).
 - **`api.test.ts`** (14 tests):
   - Next.js HTTP API route handlers integration.
   - Cookie issuance (`HttpOnly`, `SameSite`, `Max-Age`).
@@ -203,7 +220,11 @@ Configured in `.github/workflows/ci.yml`. Runs on all pull requests and pushes t
 - [x] Rate limiting enforced on login, OTP, and password reset endpoints.
 - [x] Brute-force protections, account lockout, and timing attack defenses implemented.
 - [x] OTP expiration, one-time use, and retry limits strictly enforced.
-- [x] Automated unit and integration test suite created (59 passing tests).
+- [x] Frontend logout UI connected to backend `/api/auth/logout` API with session revocation.
+- [x] Client authentication state, `localStorage`, and `sessionStorage` purged on logout.
+- [x] Protected routes guarded on edge/server (`src/middleware.ts`) and client (`RequireSession`).
+- [x] Post-logout redirection to `/login?status=logged_out` with safe confirmation banner.
+- [x] Automated unit and integration test suite created (72 passing tests across 3 suites).
 - [x] GitHub Actions CI workflow configured (`.github/workflows/ci.yml`).
 - [x] Request payload validation schemas created with clear field-level feedback.
 - [x] Standardized error codes (`UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMIT_EXCEEDED`, `VALIDATION_ERROR`).

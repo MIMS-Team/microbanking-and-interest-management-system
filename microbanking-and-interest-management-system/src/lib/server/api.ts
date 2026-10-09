@@ -150,6 +150,20 @@ export function otpCookie(response: NextResponse, challenge: string): void {
 export function clearAuthCookies(response: NextResponse): void {
   response.cookies.delete(authCookies.SESSION_COOKIE);
   response.cookies.delete(authCookies.OTP_COOKIE);
+  response.cookies.set(authCookies.SESSION_COOKIE, '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 0,
+    path: '/',
+  });
+  response.cookies.set(authCookies.OTP_COOKIE, '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 0,
+    path: '/',
+  });
 }
 
 export function isValidPassword(value: unknown): value is string {
