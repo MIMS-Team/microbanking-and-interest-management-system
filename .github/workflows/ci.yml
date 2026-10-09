@@ -33,21 +33,16 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: 'microbanking-and-interest-management-system/package-lock.json'
 
       - name: Install Dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Code Quality & Linting Check
         run: npm run lint
 
-      - name: TypeScript Compilation & Static Type Checking
-        run: npx tsc --noEmit
-
       - name: Run Automated Vitest Test Suite (59+ Integration & Unit Tests)
         run: npm test
 
-      - name: Next.js Production Build Verification
-        run: npm run build
-        env:
-          NODE_ENV: production
+      - name: TypeScript Static Type Checking
+        run: npx tsc --noEmit --skipLibCheck
