@@ -41,8 +41,17 @@ jobs:
       - name: Code Quality & Linting Check
         run: npm run lint
 
-      - name: Run Automated Vitest Test Suite (59+ Integration & Unit Tests)
-        run: npm test
-
       - name: TypeScript Static Type Checking
         run: npx tsc --noEmit --skipLibCheck
+
+      - name: Run Automated Vitest Test Suite (86 Integration, Security & Unit Tests)
+        run: npm test
+        env:
+          NODE_ENV: test
+          VITEST: 'true'
+
+      - name: Next.js Production Build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: '1'
