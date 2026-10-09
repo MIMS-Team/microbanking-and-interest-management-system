@@ -3,7 +3,7 @@
 import { Resend } from "resend";
 
 // Convert the OTP purpose code into a readable operation
-function decodePurpose(purpose: string): string {
+function decodePurpose(purpose: string, details?: string): string {
   switch (purpose) {
     case "BC":
       return "Create Branch";
@@ -11,11 +11,16 @@ function decodePurpose(purpose: string): string {
     case "BU":
       return "Update Branch";
 
-    case "BT":
-      return "Toggle Branch Status";
+    case "BT": {
+      if (details) {
+        if (/deactivate/i.test(details)) return "Deactivate Branch";
+        if (/activate/i.test(details)) return "Activate Branch";
+      }
+      return "Toggle Branch Operational Status";
+    }
 
     default:
-      return "NULL";
+      return "Administrative Operation";
   }
 }
 
@@ -54,7 +59,7 @@ export async function sendOtpEmail(
     const resend = new Resend(process.env.RESEND_API_KEY);
 
     // Convert the purpose code into a readable name
-    const decodedPurpose = decodePurpose(purpose);
+    const decodedPurpose = decodePurpose(purpose, details);
 
     // Format details for HTML email
     const formattedDetails = details
@@ -65,7 +70,7 @@ export async function sendOtpEmail(
     const { error } = await resend.emails.send({
       from: process.env.EMAIL_FROM,
       to: [recipientEmail],
-      subject: `B-Trust Authorization OTP - ${decodedPurpose}`,
+      subject: `B-Trust Authorization OTP - ${decodedPurpose} by ${requestingEmployee?.name}`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
           <div style="background-color: #0f172a; padding: 20px 24px; color: #ffffff;">

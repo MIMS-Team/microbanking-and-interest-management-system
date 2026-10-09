@@ -341,7 +341,7 @@ export default function BranchesView() {
     }
   };
 
-  // Send PATCH request to toggle branch active/inactive status with OTP
+  // Open confirm dialog to toggle branch active/inactive status
   const handleToggleStatus = (branch: Branch) => {
     setOtp('');
     setOtpId(null);
@@ -353,40 +353,56 @@ export default function BranchesView() {
       title: `${branch.status ? 'Deactivate' : 'Activate'} Branch`,
       message: `Do you want to ${
         branch.status ? 'deactivate' : 'activate'
-      } "${branch.name}"? This requires Higher Management OTP authorization.`,
+      } "${branch.name}" (ID: ${branch.id})? This requires Higher Management OTP authorization.`,
       showOtp: true,
-       onConfirm: async (otp: string) => {
-        if (!otpId || !otpEmployeeId) {
-          alert('Please generate and enter a valid OTP first.');
-          return;
-        }
-
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-
-        try {
-          const response = await fetch('/api/branches', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              branchId: branch.id,
-              otpCode: otp,
-              otpId: otpId,
-              employeeId: otpEmployeeId,
-            }),
-          });
-
-          const result = await response.json();
-          if (result.success) {
-            loadBranches(); // Refresh to reflect new status
-          } else {
-            alert(result.message);
-          }
-        } catch (error) {
-          console.error('Error toggling branch status:', error);
-          alert('Network error. Please try again.');
-        }
-      },
     });
+  };
+
+  // Confirm and submit the PATCH request to toggle branch active/inactive status
+  const handleToggleConfirm = async () => {
+    if (!selectedBranch) return;
+
+    if (!otpId || !otpEmployeeId) {
+      alert('Please generate and enter a valid OTP first.');
+      return;
+    }
+
+    if (!otp || otp.trim().length !== 6) {
+      alert('Please enter a valid 6-digit OTP code.');
+      return;
+    }
+
+    setToggleConfirmSubmitting(true);
+
+    try {
+      const response = await fetch('/api/branches', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          branchId: selectedBranch.id,
+          otpCode: otp.trim(),
+          otpId: otpId,
+          employeeId: otpEmployeeId,
+        }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        setOtp('');
+        setOtpId(null);
+        setOtpEmployeeId(null);
+        setSelectedBranch(null);
+        loadBranches(); // Refresh to reflect new status
+      } else {
+        alert(result.message);
+      }
+    } catch (error) {
+      console.error('Error toggling branch status:', error);
+      alert('Network error. Please try again.');
+    } finally {
+      setToggleConfirmSubmitting(false);
+    }
   };
 
   return (
@@ -997,7 +1013,9 @@ export default function BranchesView() {
           isOpen={confirmDialog.isOpen}
           title={confirmDialog.title}
           message={confirmDialog.message}
-          onConfirm={() => confirmDialog.onConfirm(otp)}
+          confirmLabel={toggleConfirmSubmitting ? 'Updating...' : 'Confirm Action'}
+          isDestructive={Boolean(selectedBranch?.status)}
+          onConfirm={handleToggleConfirm}
           onCancel={() => {
             setConfirmDialog((prev) => ({
               ...prev,
@@ -1025,9 +1043,9 @@ export default function BranchesView() {
                     generateOtp('BT', details);
                   }}
                   disabled={otpGenerating}
-                  className="text-[11px] text-indigo-600 font-semibold hover:underline disabled:opacity-50 cursor-pointer"
-                >
-                  {otpGenerating ? 'Sending OTP...' : (otpId ? 'Resend OTP' : 'Generate OTP')}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                  {otpGenerating ? 'Sending OTP...' : otpId ? 'Resend OTP' : 'Generate OTP'}
                 </button>
               </div>
               <input
