@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateCredentials } from '@/lib/server/auth';
-import { getClientIp, getClientUserAgent, jsonError, otpCookie } from '@/lib/server/api';
+import {
+  enforceRateLimit,
+  getClientIp,
+  getClientUserAgent,
+  jsonError,
+  otpCookie,
+} from '@/lib/server/api';
+import { validateLoginPayload } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const email = typeof body.email === 'string' ? body.email.trim() : '';
-    const password = typeof body.password === 'string' ? body.password : '';
+    const rawBody = await request.json().catch(() => null);
+    const { email, password } = validateLoginPayload(rawBody);
 
-    if (!email || !password) {
-      return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 });
-    }
+    // Enforce rate limit per IP and per target email
+    enforceRateLimit(request, 'LOGIN', email);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);
