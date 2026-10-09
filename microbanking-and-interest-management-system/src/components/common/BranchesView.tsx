@@ -76,16 +76,31 @@ export default function BranchesView() {
     title: string;
     message: string;
     showOtp: boolean;
-    onConfirm: (otp: string) => void;
   }>({
     isOpen: false,
     title: '',
     message: '',
     showOtp: false,
-    onConfirm: () => {},
   });
-  
+  const [toggleConfirmSubmitting, setToggleConfirmSubmitting] = useState(false);
 
+
+  // Current logged in admin employee ID from sessionStorage
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem('btrust_session');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.employeeId) {
+          setCurrentEmployeeId(Number(parsed.employeeId));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to parse btrust_session:', err);
+    }
+  }, []);
 
   // Fetch branches from the API whenever pagination, search, or filter changes
   const loadBranches = async () => {
@@ -112,7 +127,7 @@ export default function BranchesView() {
     } finally {
       setLoading(false);
     }
-    };
+  };
 
   // Re-fetch when page, page size, search query, or column filter changes
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -173,6 +188,7 @@ export default function BranchesView() {
         body: JSON.stringify({
           purpose,
           details,
+          requestingEmployeeId: currentEmployeeId ?? undefined,
         }),
       });
 
@@ -184,12 +200,16 @@ export default function BranchesView() {
         alert('OTP has been sent to Higher Management email.');
         return true;
       } else {
-        alert(result.message || 'Failed to generate OTP.');
+        const errorMsg = result.message || 'Failed to generate OTP.';
+        setFormError(errorMsg);
+        alert(errorMsg);
         return false;
       }
     } catch (error) {
       console.error('OTP generation error:', error);
-      alert('Network error while generating OTP.');
+      const networkErrorMsg = 'Network error while generating OTP.';
+      setFormError(networkErrorMsg);
+      alert(networkErrorMsg);
       return false;
     } finally {
       setOtpGenerating(false);

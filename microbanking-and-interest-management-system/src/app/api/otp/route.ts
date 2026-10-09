@@ -9,7 +9,7 @@ const otpPurposes: OtpPurpose[] = ['BC', 'BU', 'BT'];
 export async function POST(request: NextRequest) {
   try {
     // Read the request body
-    const { purpose, details } = await request.json();
+    const { purpose, details, requestingEmployeeId } = await request.json();
 
     // Check whether the OTP purpose and operation details are valid
     if (
@@ -30,7 +30,8 @@ export async function POST(request: NextRequest) {
     // Generate and send the OTP to the configured sender for this purpose
     const result = await createOtp(
       purpose as OtpPurpose,
-      details
+      details,
+      requestingEmployeeId ? Number(requestingEmployeeId) : undefined
     );
 
     // Return success or failure response

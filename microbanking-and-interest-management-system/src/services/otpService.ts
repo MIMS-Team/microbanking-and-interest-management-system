@@ -25,7 +25,8 @@ function getOtpSenderRole(purpose: OtpPurpose): string | null {
 // Generate and store an OTP
 export async function createOtp(
   purpose: OtpPurpose,
-  details: string
+  details: string,
+  requestingEmployeeId?: number
 ): Promise<{
   success: boolean;
   message: string;
@@ -62,6 +63,31 @@ export async function createOtp(
 
     const sender = senderResult[0];
 
+    // Query requesting employee details if employee ID was provided
+    let requestingEmployee: {
+      name: string;
+      email: string;
+      phone: string;
+      employeeId: number;
+    } | undefined = undefined;
+
+    if (requestingEmployeeId) {
+      const requesterResult = await sql`
+        SELECT employee_id, name, email, mobile_no
+        FROM employee
+        WHERE employee_id = ${Number(requestingEmployeeId)}
+        LIMIT 1
+      `;
+      if (requesterResult.length > 0) {
+        requestingEmployee = {
+          employeeId: Number(requesterResult[0].employee_id),
+          name: requesterResult[0].name,
+          email: requesterResult[0].email,
+          phone: requesterResult[0].mobile_no || 'N/A',
+        };
+      }
+    }
+
     await sql`
       UPDATE otpe
       SET is_success = true
@@ -89,13 +115,14 @@ export async function createOtp(
 
     const otpId = Number(otpResult[0].otp_id);
 
-    // Send the OTP to the selected employee
+    // Send the OTP to the selected employee along with requester info and operation details
     const emailResult = await sendOtpEmail(
       sender.email,
       sender.name,
       otpCode,
       purpose,
-      details
+      details,
+      requestingEmployee
     );
 
     // Remove OTP if email sending fails
