@@ -1,0 +1,675 @@
+openapi: 3.0.3
+info:
+  title: MIMS Employee Authentication and User Management API
+  description: >
+    Specification for Person 1 (Authentication, Sessions, Role-Based Access Control,
+    and Dual-Control Employee Lifecycle Management) in the Microbanking and Interest Management System.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+    description: Local Development Server
+
+tags:
+  - name: Authentication
+    description: Endpoints for two-factor login, session validation, logout, and password recovery.
+  - name: User Management
+    description: Endpoints for staff directory, dual-control employee provisioning, updates, and deactivation.
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: microbank_session
+      description: Secure, HttpOnly 8-hour session token cookie.
+    otpCookieAuth:
+      type: apiKey
+      in: cookie
+      name: microbank_otp
+      description: Temporary 5-minute challenge ID cookie issued upon primary factor success.
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+          example: Invalid credentials.
+        code:
+          type: string
+          example: UNAUTHORIZED
+        retryAfter:
+          type: integer
+          description: Seconds until rate limit bucket replenishes (when code is RATE_LIMIT_EXCEEDED).
+          example: 60
+
+    PublicEmployee:
+      type: object
+      required:
+        - id
+        - full_name
+        - email
+        - role
+        - status
+        - created_at
+      properties:
+        id:
+          type: integer
+          example: 1
+        full_name:
+          type: string
+          example: Alice Administrator
+        email:
+          type: string
+          format: email
+          example: admin@ravindu.bank
+        role:
+          type: string
+          enum: [agent, manager, higher_manager, admin]
+          example: admin
+        branch_id:
+          type: integer
+          nullable: true
+          example: 1
+        status:
+          type: string
+          enum: [active, inactive]
+          example: active
+        created_at:
+          type: string
+          format: date-time
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: manager@ravindu.bank
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+          example: ManagerPass!123
+
+    LoginResponse:
+      type: object
+      required:
+        - requiresOtp
+        - challengeId
+        - user
+      properties:
+        requiresOtp:
+          type: boolean
+          example: true
+        challengeId:
+          type: string
+          example: a3f889ef01bc4d62
+        user:
+          type: object
+          properties:
+            id:
+              type: integer
+            full_name:
+              type: string
+            email:
+              type: string
+            role:
+              type: string
+
+    OtpVerifyRequest:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          example: '492817'
+        challengeId:
+          type: string
+          description: Optional if microbank_otp cookie is provided in the request.
+          example: a3f889ef01bc4d62
+
+    OtpVerifyResponse:
+      type: object
+      required:
+        - user
+        - dashboardUrl
+      properties:
+        user:
+          $ref: '#/components/schemas/PublicEmployee'
+        dashboardUrl:
+          type: string
+          example: /dashboard?tab=manager
+
+    PasswordResetRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: agent@ravindu.bank
+
+    PasswordResetRequestResponse:
+      type: object
+      required:
+        - accepted
+        - message
+      properties:
+        accepted:
+          type: boolean
+          example: true
+        challengeId:
+          type: string
+          nullable: true
+          example: b4e9a8f102c4
+        message:
+          type: string
+          example: If the provided email corresponds to an active account, a verification code has been dispatched.
+
+    PasswordResetConfirmRequest:
+      type: object
+      required:
+        - challengeId
+        - code
+        - password
+        - confirmPassword
+      properties:
+        challengeId:
+          type: string
+          example: b4e9a8f102c4
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          example: '839201'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          example: NewSecretPassword!456
+        confirmPassword:
+          type: string
+          example: NewSecretPassword!456
+
+    CreateEmployeeRequest:
+      type: object
+      required:
+        - full_name
+        - email
+        - role
+      properties:
+        full_name:
+          type: string
+          maxLength: 120
+          example: Arthur Agent
+        email:
+          type: string
+          format: email
+          example: arthur@ravindu.bank
+        role:
+          type: string
+          enum: [agent, manager, higher_manager, admin]
+          example: agent
+        branch_id:
+          type: integer
+          nullable: true
+          description: Mandatory for agent and manager roles.
+          example: 1
+        password:
+          type: string
+          nullable: true
+          description: Initial password. If omitted, a random secure temporary secret is generated.
+
+    PendingApprovalResponse:
+      type: object
+      required:
+        - pendingApproval
+        - challengeId
+        - hrManagerEmail
+        - message
+      properties:
+        pendingApproval:
+          type: boolean
+          example: true
+        challengeId:
+          type: string
+          example: c9e0481fab72
+        hrManagerEmail:
+          type: string
+          example: hr@ravindu.bank
+        message:
+          type: string
+
+    ConfirmApprovalRequest:
+      type: object
+      required:
+        - challengeId
+        - code
+      properties:
+        challengeId:
+          type: string
+          example: c9e0481fab72
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          example: '194820'
+
+paths:
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Step 1 - Validate credentials & dispatch 2FA OTP
+      description: >
+        Validates email and scryptSync password hash. Rate limited to 5 attempts per 15 minutes per IP and account.
+        Dispatches a 6-digit OTP to the employee's email and issues a temporary challenge cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '202':
+          description: First factor accepted. Second factor OTP required.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: microbank_otp=a3f889ef01bc4d62; HttpOnly; SameSite=Lax; Max-Age=300; Path=/
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Malformed payload or validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid email or password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Account locked or inactive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (too many login attempts).
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/otp:
+    post:
+      tags:
+        - Authentication
+      summary: Step 2 - Verify OTP & establish session
+      description: >
+        Verifies 6-digit code against single-use cryptographic challenge.
+        Rate limited to 5 attempts per 15 minutes.
+        Issues an 8-hour HttpOnly session cookie upon success.
+      security:
+        - otpCookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+      responses:
+        '200':
+          description: OTP verified successfully. Session established.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: microbank_session=8a7df...; HttpOnly; SameSite=Lax; Max-Age=28800; Path=/
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpVerifyResponse'
+        '401':
+          description: Invalid, expired, replayed, or max attempts exceeded OTP.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded.
+
+  /api/auth/session:
+    get:
+      tags:
+        - Authentication
+      summary: Validate active session and get authenticated user
+      description: Validates session cookie, checks 30-minute idle timeout and 8-hour TTL, and refreshes activity timestamp.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Active session found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/PublicEmployee'
+        '401':
+          description: Missing, expired, idle-timeout, or revoked session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Invalidate session and clear auth cookies
+      description: Atomically marks session as revoked in the database and clears the session cookie.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Session revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+
+  /api/auth/password-reset/request:
+    post:
+      tags:
+        - Authentication
+      summary: Request password reset OTP
+      description: Rate limited to 3 requests per 15 minutes. Returns identical message for known/unknown emails to prevent user enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetRequestResponse'
+        '429':
+          description: Rate limit exceeded.
+
+  /api/auth/password-reset/confirm:
+    post:
+      tags:
+        - Authentication
+      summary: Verify reset OTP and set new password
+      description: Verifies OTP code, updates password hash, and invalidates all existing employee sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+      responses:
+        '200':
+          description: Password updated and previous sessions revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '401':
+          description: Invalid OTP or expired challenge.
+
+  /api/users:
+    get:
+      tags:
+        - User Management
+      summary: List staff directory (Admin or Higher Manager)
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: role
+          schema:
+            type: string
+            enum: [agent, manager, higher_manager, admin]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, inactive]
+        - in: query
+          name: branch_id
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Staff list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PublicEmployee'
+        '401':
+          description: Unauthenticated.
+        '403':
+          description: Forbidden (agent or manager role).
+
+    post:
+      tags:
+        - User Management
+      summary: Initiate employee provisioning (Dual-Control Stage 1 - Admin only)
+      description: Initiates creation and sends approval OTP to Higher Management.
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEmployeeRequest'
+      responses:
+        '202':
+          description: Initiation accepted. Approval OTP sent to Higher Management.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingApprovalResponse'
+        '400':
+          description: Validation error or duplicate email.
+        '403':
+          description: Forbidden (non-admin caller).
+
+  /api/users/confirm-create:
+    post:
+      tags:
+        - User Management
+      summary: Confirm employee provisioning (Dual-Control Stage 2 - Higher Manager approval)
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmApprovalRequest'
+      responses:
+        '201':
+          description: Employee created and activated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/PublicEmployee'
+                  message:
+                    type: string
+        '401':
+          description: Invalid approval OTP.
+        '403':
+          description: Forbidden.
+
+  /api/users/{id}:
+    get:
+      tags:
+        - User Management
+      summary: Get employee by ID (Admin or Higher Manager)
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Employee record.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/PublicEmployee'
+        '404':
+          description: User not found.
+
+    patch:
+      tags:
+        - User Management
+      summary: Update employee details (Admin only)
+      description: Allows administrator to update name, role, email, branch, or status. Hierarchy rules prevent modifying higher roles or self-role escalations.
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                email:
+                  type: string
+                role:
+                  type: string
+                  enum: [agent, manager, higher_manager, admin]
+                branch_id:
+                  type: integer
+                  nullable: true
+                status:
+                  type: string
+                  enum: [active, inactive]
+      responses:
+        '200':
+          description: Updated employee record.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/PublicEmployee'
+        '403':
+          description: Unauthorized role change.
+
+    delete:
+      tags:
+        - User Management
+      summary: Initiate employee deactivation (Dual-Control Stage 1 - Admin only)
+      description: Initiates deactivation and dispatches approval OTP to Higher Management. Staff records are never hard-deleted.
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Deactivation initiated. Approval OTP dispatched.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingApprovalResponse'
+
+  /api/users/{id}/confirm-deactivate:
+    post:
+      tags:
+        - User Management
+      summary: Confirm employee deactivation (Dual-Control Stage 2 - Higher Manager approval)
+      description: Confirms deactivation, sets status to inactive, and immediately revokes all active sessions for that employee.
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmApprovalRequest'
+      responses:
+        '200':
+          description: Employee deactivated and sessions revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
