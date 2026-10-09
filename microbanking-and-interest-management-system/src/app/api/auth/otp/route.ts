@@ -5,7 +5,9 @@ import {
   getClientIp,
   getClientUserAgent,
   jsonError,
+  NO_CACHE_HEADERS,
   sessionCookie,
+  verifyCsrf,
 } from '@/lib/server/api';
 import { validateOtpPayload } from '@/lib/server/validation';
 
@@ -13,6 +15,8 @@ export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
+    verifyCsrf(request);
+
     const rawBody = await request.json().catch(() => null);
     const { code, challengeId: bodyChallenge } = validateOtpPayload(rawBody);
 
@@ -24,7 +28,7 @@ export async function POST(request: NextRequest) {
           error: 'Verification challenge is missing or expired. Please sign in again.',
           code: 'CHALLENGE_MISSING',
         },
-        { status: 401 }
+        { status: 401, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -39,10 +43,13 @@ export async function POST(request: NextRequest) {
       user_agent: userAgent,
     });
 
-    const response = NextResponse.json({
-      user: employee,
-      dashboardUrl,
-    });
+    const response = NextResponse.json(
+      {
+        user: employee,
+        dashboardUrl,
+      },
+      { headers: NO_CACHE_HEADERS }
+    );
 
     response.cookies.delete(authCookies.OTP_COOKIE);
     sessionCookie(response, sessionToken);

@@ -389,16 +389,21 @@ function EmployeeManagerView({ currentUser }: { currentUser: PublicEmployee | nu
     setEditSubmitting(true);
 
     try {
+      const updatePayload: Record<string, unknown> = {
+        full_name: editFullName,
+        email: editEmail,
+        role: editRole,
+        branch_id: editBranch ? Number(editBranch) : null,
+      };
+      // Only include status if reactivating an inactive employee
+      if (editEmployee.status === 'inactive' && editStatus === 'active') {
+        updatePayload.status = 'active';
+      }
+
       const res = await fetch(`/api/users/${editEmployee.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: editFullName,
-          email: editEmail,
-          role: editRole,
-          branch_id: editBranch ? Number(editBranch) : null,
-          status: editStatus,
-        }),
+        body: JSON.stringify(updatePayload),
       });
 
       const data = (await res.json()) as { user?: PublicEmployee; error?: string };

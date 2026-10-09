@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initiateEmployeeCreation, roleFromInput } from '@/lib/server/auth';
-import { getClientIp, getClientUserAgent, jsonError, requireUser } from '@/lib/server/api';
+import {
+  getClientIp,
+  getClientUserAgent,
+  jsonError,
+  NO_CACHE_HEADERS,
+  requireUser,
+  verifyCsrf,
+} from '@/lib/server/api';
 import { listEmployees } from '@/lib/server/db';
 import { validateCreateEmployeePayload } from '@/lib/server/validation';
 
@@ -19,7 +26,7 @@ export async function GET(request: NextRequest) {
     const branch = branchParam ? Number(branchParam) : undefined;
 
     const users = await listEmployees({ role, status, branch_id: branch });
-    return NextResponse.json({ users });
+    return NextResponse.json({ users }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     return jsonError(error);
   }
@@ -27,6 +34,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    verifyCsrf(request);
     const { user: actor } = await requireUser(request, ['admin']);
     const rawBody = await request.json().catch(() => null);
     const payload = validateCreateEmployeePayload(rawBody);
@@ -50,7 +58,7 @@ export async function POST(request: NextRequest) {
         hrManagerEmail: result.hrManagerEmail,
         message: `Employee creation request recorded. An approval OTP has been dispatched to Higher Management (${result.hrManagerEmail}). Enter the approval OTP to complete account activation.`,
       },
-      { status: 202 }
+      { status: 202, headers: NO_CACHE_HEADERS }
     );
   } catch (error) {
     return jsonError(error);
