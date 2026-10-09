@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Employee, Customer, EmployeeRole } from '@/types';
 import {
   getEmployees,
@@ -40,7 +40,16 @@ import {
 
 // Administrator user management portal with separate Employee and Customer account tabs
 export default function UserManagementView() {
-  const branches = getBranches();
+  const [branches, setBranches] = useState<Awaited<ReturnType<typeof getBranches>>['branches']>([]);
+
+  useEffect(() => {
+    const loadBranches = async () => {
+      const result = await getBranches(1, 100);
+      setBranches(result.branches);
+    };
+
+    loadBranches();
+  }, []);
 
   // Active sub-tab: 'employees' or 'customers'
   const [activeAccountType, setActiveAccountType] = useState<'employees' | 'customers'>('employees');

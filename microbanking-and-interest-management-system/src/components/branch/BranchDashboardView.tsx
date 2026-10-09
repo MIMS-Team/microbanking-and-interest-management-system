@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { getBranches } from '@/services/branchService';
 import { getTransactions } from '@/services/transactionService';
@@ -29,7 +29,16 @@ interface BranchDashboardViewProps {
 // Branch Management executive dashboard matching the photo layout
 export default function BranchDashboardView({ onNavigateTab }: BranchDashboardViewProps) {
   const { currentBranchId, setCurrentBranchId } = useSession();
-  const branches = getBranches();
+  const [branches, setBranches] = useState<Awaited<ReturnType<typeof getBranches>>['branches']>([]);
+
+  useEffect(() => {
+    const loadBranches = async () => {
+      const result = await getBranches(1, 100);
+      setBranches(result.branches);
+    };
+
+    loadBranches();
+  }, []);
 
   // Branch-specific transactions and approvals
   const [transactions] = useState(getTransactions(currentBranchId).slice(0, 4));

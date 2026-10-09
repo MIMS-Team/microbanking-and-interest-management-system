@@ -26,17 +26,22 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, address, phone, email, otpCode } = body;
+    const { name, address, phone, email, otpCode, otpId, employeeId } = body;
 
     // Validate that required fields are present
-    if (!name || !otpCode) {
+    if (!name || !otpCode || otpId === undefined || employeeId === undefined) {
       return NextResponse.json(
-        { success: false, message: 'Branch name and OTP code are required.' },
+        { success: false, message: 'Branch name, OTP code, OTP ID, and employee ID are required.' },
         { status: 400 }
       );
     }
 
-    const result = await createBranch({ name, address, phone, email }, otpCode);
+    const result = await createBranch(
+      { name, address, phone, email },
+      otpCode,
+      Number(otpId),
+      Number(employeeId)
+    );
 
     if (!result.success) {
       return NextResponse.json(result, { status: 403 });
@@ -56,16 +61,22 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { branchId, name, address, phone, email, otpCode } = body;
+    const { branchId, name, address, phone, email, otpCode, otpId, employeeId } = body;
 
-    if (!branchId || !otpCode) {
+    if (!branchId || !otpCode || otpId === undefined || employeeId === undefined) {
       return NextResponse.json(
-        { success: false, message: 'Branch ID and OTP code are required.' },
+        { success: false, message: 'Branch ID, OTP code, OTP ID, and employee ID are required.' },
         { status: 400 }
       );
     }
 
-    const result = await updateBranch(branchId, { name, address, phone, email }, otpCode);
+    const result = await updateBranch(
+      branchId,
+      { name, address, phone, email },
+      otpCode,
+      Number(otpId),
+      Number(employeeId)
+    );
 
     if (!result.success) {
       return NextResponse.json(result, { status: 403 });
@@ -85,16 +96,21 @@ export async function PUT(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { branchId, otpCode } = body;
+    const { branchId, otpCode, otpId, employeeId } = body;
 
-    if (!branchId || !otpCode) {
+    if (!branchId || !otpCode || otpId === undefined || employeeId === undefined) {
       return NextResponse.json(
-        { success: false, message: 'Branch ID and OTP code are required.' },
+        { success: false, message: 'Branch ID, OTP code, OTP ID, and employee ID are required.' },
         { status: 400 }
       );
     }
 
-    const result = await toggleBranchStatus(branchId, otpCode);
+    const result = await toggleBranchStatus(
+      branchId,
+      otpCode,
+      Number(otpId),
+      Number(employeeId)
+    );
 
     if (!result.success) {
       return NextResponse.json(result, { status: 403 });
@@ -109,3 +125,4 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+

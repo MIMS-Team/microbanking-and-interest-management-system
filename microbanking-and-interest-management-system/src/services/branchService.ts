@@ -2,6 +2,7 @@
 
 import { Branch } from '@/types';
 import sql from '@/lib/db';
+import { validateOtp } from '@/services/otpService';
 
 // Retrieve paginated branch records from the database with optional search filtering
 export async function getBranches(
@@ -9,10 +10,10 @@ export async function getBranches(
   pageSize: number,
   search: string = '',
   searchColumn: string = 'name'
-) {
+): Promise<{ branches: Branch[]; total: number }> {
   const offset = (page - 1) * pageSize;
-  let rows: any[] = [];
-  let countResult: any[] = [];
+  let rows: Record<string, unknown>[] = [];
+  let countResult: Record<string, unknown>[] = [];
 
   search = search.trim();
 
@@ -32,15 +33,24 @@ export async function getBranches(
   }
 
   // Map database column names to frontend Branch interface fields to loose the coupling between Table names and keys
-  const branches: Branch[] = rows.map((row) => ({
-    id: String(row.branch_id),
-    name: row.name,
-    address: row.address ?? '',
-    phone: row.phone_no ?? '',
-    email: row.email ?? '',
-    status: row.is_active,
-    openedDate: String(row.opened_date),
-  }));
+  const branches: Branch[] = rows.map((row) => {
+    const openedDateValue = row.opened_date;
+    const openedDate = openedDateValue instanceof Date
+      ? openedDateValue.toISOString()
+      : typeof openedDateValue === 'string' || typeof openedDateValue === 'number'
+        ? new Date(openedDateValue).toISOString()
+        : '';
+
+    return {
+      id: String(row.branch_id ?? ''),
+      name: typeof row.name === 'string' ? row.name : '',
+      address: typeof row.address === 'string' ? row.address : '',
+      phone: typeof row.phone_no === 'string' ? row.phone_no : '',
+      email: typeof row.email === 'string' ? row.email : '',
+      status: Boolean(row.is_active),
+      openedDate,
+    };
+  });
 
   return {
     branches,
@@ -51,16 +61,26 @@ export async function getBranches(
 // Insert a new branch record into the database after OTP authorization
 export async function createBranch(
   data: { name: string; address: string; phone: string; email: string },
-  otpCode: string
+  otpCode: string,
+  otpId: number,
+  employeeId: number
 ): Promise<{ success: boolean; message: string; branch?: Branch }> {
   // Validate OTP before allowing creation
-  const otpValid = await validateOtp(otpCode);
+  const otpValid = await validateOtp(
+    otpCode,
+    otpId,
+    employeeId,
+    'BC'
+  );
+
   if (!otpValid) {
     return {
       success: false,
-      message: 'Invalid or expired Higher Management OTP. Authorization rejected.',
+      message:
+        'Invalid or expired Higher Management OTP. Authorization rejected.',
     };
   }
+
 
   try {
     // Insert and return the newly created branch record
@@ -96,13 +116,20 @@ export async function createBranch(
 export async function updateBranch(
   branchId: string,
   data: { name: string; address: string; phone: string; email: string },
-  otpCode: string
+  otpCode: string,
+  otpId: number,
+  employeeId: number
 ): Promise<{ success: boolean; message: string }> {
-  const otpValid = await validateOtp(otpCode);
+  const otpValid = await validateOtp(
+    otpCode,
+    otpId,
+    employeeId,
+    'BU'
+  );
   if (!otpValid) {
     return {
       success: false,
-      message: 'Invalid Higher Management OTP. Unauthorized branch modification.',
+      message: 'Invalid or expired Higher Management OTP. Unauthorized branch modification.',
     };
   }
 
@@ -123,9 +150,16 @@ export async function updateBranch(
 // Toggle a branch's active/inactive status in the database after OTP authorization
 export async function toggleBranchStatus(
   branchId: string,
-  otpCode: string
+  otpCode: string,
+  otpId: number,
+  employeeId: number
 ): Promise<{ success: boolean; message: string }> {
-  const otpValid = await validateOtp(otpCode);
+  const otpValid = await validateOtp(
+    otpCode,
+    otpId,
+    employeeId,
+    'BT'
+  );
   if (!otpValid) {
     return {
       success: false,
@@ -152,9 +186,3 @@ export async function toggleBranchStatus(
   }
 }
 
-// Validate the OTP code against known valid codes
-// This is a placeholder — replace with real OTP verification in production
-async function validateOtp(otpCode: string): Promise<boolean> {
-  const validOtpCodes = new Set(['849201', '731904', '123456']);
-  return validOtpCodes.has(otpCode.trim());
-}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   generateRegulatoryReport,
   exportReportToCsv,
@@ -32,9 +32,18 @@ import {
 // Regulatory Financial Reports hub adhering to the SRS and photo layout
 export default function ReportsView() {
   const { currentRole, currentBranchId, currentUser } = useSession();
-  const branches = getBranches();
+  const [branches, setBranches] = useState<Awaited<ReturnType<typeof getBranches>>['branches']>([]);
   const employees = getEmployees('Field Agent');
   const customers = getCustomers();
+
+  useEffect(() => {
+    const loadBranches = async () => {
+      const result = await getBranches(1, 100);
+      setBranches(result.branches);
+    };
+
+    loadBranches();
+  }, []);
 
   // Selected Report (1 to 5)
   const [selectedReportId, setSelectedReportId] = useState<number>(1);

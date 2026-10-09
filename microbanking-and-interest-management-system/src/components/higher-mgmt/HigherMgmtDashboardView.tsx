@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { getBranchMetrics } from '@/services/branchService';
+import { getBranchMetrics } from '@/data/branchMetrics';
 import StatCard from '@/components/common/StatCard';
 import LineChartWithAxes from '@/components/common/LineChartWithAxes';
 import {

@@ -8,10 +8,13 @@ export type EmployeeRole = 'Higher Management' | 'HRM' | 'Branch Manager' | 'Fie
 export interface Branch {
   id: string;
   name: string;
+  code?: string;
   address: string;
   phone: string;
   email: string;
-  status: boolean;
+  managerId?: string;
+  managerName?: string;
+  status: boolean | 'Active' | 'Inactive';
   openedDate: string;
 }
 
@@ -27,6 +30,7 @@ export interface Employee {
   status: 'Active' | 'Suspended';
   createdAt: string;
 }
+
 
 // Customer entity
 export interface Customer {
