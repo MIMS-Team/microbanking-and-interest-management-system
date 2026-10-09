@@ -200,7 +200,14 @@ export function validateUpdateEmployeePayload(body: unknown): {
     updates.branch_id = branchId(record.branch_id);
   }
   if (record.status !== undefined) {
-    if (record.status !== 'active' && record.status !== 'inactive') {
+    if (record.status === 'inactive') {
+      throw new ApiError(
+        'Direct deactivation is not permitted. Please initiate deactivation via DELETE /api/users/[id] to complete Higher Management dual-control approval.',
+        400,
+        'DEACTIVATION_REQUIRES_APPROVAL'
+      );
+    }
+    if (record.status !== 'active') {
       throw new ApiError('Status must be either "active" or "inactive".', 400, 'VALIDATION_ERROR');
     }
     updates.status = record.status;

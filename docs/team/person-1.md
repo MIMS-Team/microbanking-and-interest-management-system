@@ -27,8 +27,11 @@ needs the entire repository to run the app; the list below is the code you maint
 - `microbanking-and-interest-management-system/src/app/api/users/[id]/route.ts`
 - `microbanking-and-interest-management-system/src/app/api/users/confirm-create/route.ts`
 - `microbanking-and-interest-management-system/src/app/_components.tsx`
-- `microbanking-and-interest-management-system/src/middleware.ts`
-- `microbanking-and-interest-management-system/src/lib/server/frontend-logout.test.ts`
+- `microbanking-and-interest-management-system/src/lib/server/email.ts`
+- `microbanking-and-interest-management-system/src/lib/server/auth-improvements.test.ts`
+- `microbanking-and-interest-management-system/src/app/api/auth/otp/resend/route.ts`
+- `microbanking-and-interest-management-system/scripts/migrate-auth-mysql.mjs`
+- `microbanking-and-interest-management-system/.env.example`
 - `.github/workflows/ci.yml`
 
 ## Frontend Logout Integration & Session Revocation
@@ -38,7 +41,7 @@ needs the entire repository to run the app; the list below is the code you maint
 - **Frontend State Clearing**: `performClientLogout()` immediately purges `localStorage` (`mims-user-session`) via `clearSession()`, wipes `sessionStorage`, and resets React session state (`setSession(null)`). In case of network outage or server 500 error, local state is still guaranteed wiped in the `finally` block to prevent leaving the UI in a misleading authenticated state.
 - **User Redirection & Route Guarding**: The user is redirected to `/login?status=logged_out` via `router.replace()`, preventing browser Back button re-entry into protected history. Protected routes (`/dashboard`, `/profile`, `/savings`, `/fixed-deposits`) are guarded both at the server/edge level ([`src/middleware.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/middleware.ts)) and client level (`RequireSession`), redirecting unauthenticated users to `/login`. The login page displays an accessible "You have been successfully logged out" banner.
 - **Backend Session Revocation**: In [`src/lib/server/auth.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/auth.ts), `logoutSession` hashes the raw token with SHA-256, sets `revoked_at` in the database, expires session cookies (`Max-Age=0, path=/`), emits `Cache-Control: no-store` headers, and logs an audit record to `authentication_audit`. Revoked sessions return `401 Unauthorized` on `/api/auth/session` and all protected endpoints.
-- **Automated Verification Tests**: Verified by 13 dedicated integration tests in [`src/lib/server/frontend-logout.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/frontend-logout.test.ts), as well as [`src/lib/server/api.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/api.test.ts) and [`src/lib/server/auth.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/auth.test.ts) (72 total tests).
+- **Automated Verification Tests**: Verified by 13 dedicated integration tests in [`src/lib/server/frontend-logout.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/frontend-logout.test.ts), 14 regression improvement tests in [`src/lib/server/auth-improvements.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/auth-improvements.test.ts), 14 route tests in [`src/lib/server/api.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/api.test.ts), and 45 tests in [`src/lib/server/auth.test.ts`](file:///c:/Users/Home/Documents/microbanking-and-interest-management-system/microbanking-and-interest-management-system/src/lib/server/auth.test.ts) (**86 total tests**).
 
 ## Database Responsibility
 

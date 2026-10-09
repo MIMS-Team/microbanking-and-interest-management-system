@@ -5,7 +5,9 @@ import {
   getClientIp,
   getClientUserAgent,
   jsonError,
+  NO_CACHE_HEADERS,
   otpCookie,
+  verifyCsrf,
 } from '@/lib/server/api';
 import { validateLoginPayload } from '@/lib/server/validation';
 
@@ -13,6 +15,8 @@ export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
+    verifyCsrf(request);
+
     const rawBody = await request.json().catch(() => null);
     const { email, password } = validateLoginPayload(rawBody);
 
@@ -38,7 +42,7 @@ export async function POST(request: NextRequest) {
           role: employee.role,
         },
       },
-      { status: 202 }
+      { status: 202, headers: NO_CACHE_HEADERS }
     );
 
     otpCookie(response, challengeId);

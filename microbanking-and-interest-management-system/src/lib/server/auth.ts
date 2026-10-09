@@ -1,6 +1,4 @@
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
-import { existsSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import {
   clearFailedLoginAttempts,
@@ -32,6 +30,7 @@ import {
   type Role,
   findSessionByHash,
 } from './db';
+import { sendOtpEmail } from './email';
 
 export type { Role, EmployeeStatus, PublicEmployee, AuditEventType };
 
@@ -78,22 +77,19 @@ export function dispatchOtp(email: string, purpose: OtpPurpose, code: string): v
   if (testOtpHandler) {
     testOtpHandler({ email, purpose, code });
   }
-  // In non-production development, print OTP to server console and write to latest_otp.txt
-  if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
-    console.info(`[MIMS-DEV-OTP] Code for ${email} (${purpose}): ${code}`);
-    try {
-      const dataDir = join(process.cwd(), '.data');
-      if (existsSync(dataDir)) {
-        writeFileSync(
-          join(dataDir, 'latest_otp.txt'),
-          `=========================================\n  LATEST OTP CODE: ${code}\n  Account: ${email}\n  Purpose: ${purpose}\n  Generated at: ${new Date().toLocaleTimeString()}\n=========================================\n`,
-          'utf8'
-        );
-      }
-    } catch {
-      // ignore in development
+
+  // Delegate delivery to configurable server-side email delivery adapter
+  sendOtpEmail({
+    to: email,
+    purpose,
+    otpCode: code,
+    subject: `MIMS Microbanking: Your ${purpose.replace('_', ' ').toUpperCase()} Verification Code`,
+    text: `Your one-time verification code is: ${code}. It expires in 5 minutes. Do not share this code.`,
+  }).catch((err) => {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[MIMS-AUTH] Email dispatch error:', err instanceof Error ? err.message : String(err));
     }
-  }
+  });
 }
 
 export function passwordHash(password: string, salt = randomBytes(16).toString('hex')): string {
@@ -316,19 +312,23 @@ export async function verifyLoginOtpChallenge(
     throw new AuthError('Invalid verification code.', 401);
   }
 
-  // Atomically consume challenge
-  await consumeOtpChallenge(challengeId);
+  // Atomically consume challenge to prevent race conditions
+  const consumed = await consumeOtpChallenge(challengeId);
+  if (!consumed) {
+    throw new AuthError('This verification code has already been used.', 401);
+  }
+
   await updateLastLogin(employee.id);
 
-  // Generate random raw session token
+  // Generate 256-bit cryptographically secure raw session token
   const rawSessionToken = randomBytes(32).toString('hex');
   const tokenHash = hashSessionToken(rawSessionToken);
-  const sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
   await dbCreateSession({
     token_hash: tokenHash,
     employee_id: employee.id,
-    expires_at: sessionExpiresAt,
+    expires_at: expiresAt,
     ip_address: meta?.ip_address,
     user_agent: meta?.user_agent,
   });
@@ -339,9 +339,10 @@ export async function verifyLoginOtpChallenge(
     event_type: 'login_success',
     ip_address: meta?.ip_address,
     user_agent: meta?.user_agent,
+    details: { role: employee.role, branch_id: employee.branch_id },
   });
 
-  const dashboardUrl = getDashboardForRole(employee.role);
+  const dashboardUrl = getDashboardUrlForRole(employee.role);
 
   return {
     employee: publicUser(employee),
@@ -350,7 +351,76 @@ export async function verifyLoginOtpChallenge(
   };
 }
 
-export function getDashboardForRole(role: Role): string {
+export async function resendOtp(
+  challengeId: string,
+  meta?: { ip_address?: string | null; user_agent?: string | null }
+): Promise<{ challengeId: string; email: string; cooldownSeconds: number }> {
+  let challenge = null;
+  const purposes: OtpPurpose[] = ['login', 'password_reset', 'employee_creation', 'employee_deactivation'];
+  for (const p of purposes) {
+    challenge = await findOtpChallenge(challengeId, p);
+    if (challenge) break;
+  }
+
+  if (!challenge) {
+    throw new AuthError('Verification challenge not found or has expired.', 404, 'CHALLENGE_NOT_FOUND');
+  }
+
+  if (challenge.consumed_at) {
+    throw new AuthError('This verification code has already been confirmed.', 400, 'ALREADY_CONSUMED');
+  }
+
+  // Enforce cooldown (30 seconds between dispatches)
+  const createdAtMs = parseDateSafe(challenge.created_at).getTime();
+  const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
+  if (elapsedSeconds < 30) {
+    const wait = 30 - elapsedSeconds;
+    throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
+  }
+
+  const employee = await findEmployeeById(challenge.employee_id);
+  if (!employee) {
+    throw new AuthError('Associated employee record not found.', 404);
+  }
+
+  // Invalidate old challenge
+  await consumeOtpChallenge(challengeId);
+
+  // Generate fresh challenge
+  const rawOtp = generateSecureOtp();
+  const newChallengeId = randomBytes(24).toString('hex');
+  const codeHash = hashOtp(rawOtp);
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+  await dbCreateOtpChallenge({
+    id: newChallengeId,
+    employee_id: employee.id,
+    purpose: challenge.purpose,
+    code_hash: codeHash,
+    max_attempts: MAX_OTP_ATTEMPTS,
+    expires_at: expiresAt,
+    metadata: challenge.metadata ? JSON.parse(challenge.metadata) : null,
+  });
+
+  dispatchOtp(employee.email, challenge.purpose, rawOtp);
+
+  await recordAuthenticationAttempt({
+    employee_id: employee.id,
+    email: employee.email,
+    event_type: 'otp_resent',
+    ip_address: meta?.ip_address,
+    user_agent: meta?.user_agent,
+    details: { purpose: challenge.purpose, action: 'resend' },
+  });
+
+  return {
+    challengeId: newChallengeId,
+    email: employee.email,
+    cooldownSeconds: 30,
+  };
+}
+
+export function getDashboardUrlForRole(role: Role): string {
   switch (role) {
     case 'admin':
       return '/dashboard?tab=admin';
@@ -359,63 +429,111 @@ export function getDashboardForRole(role: Role): string {
     case 'manager':
       return '/dashboard?tab=manager';
     case 'agent':
-      return '/dashboard?tab=agent';
     default:
-      return '/dashboard';
+      return '/dashboard?tab=agent';
   }
 }
 
-export function parseDateSafe(dateInput: string | Date): Date {
-  if (dateInput instanceof Date) return dateInput;
-  if (!dateInput) return new Date();
-  if (dateInput.includes('T') && (dateInput.endsWith('Z') || dateInput.includes('+'))) {
-    return new Date(dateInput);
-  }
-  const normalized = dateInput.replace(' ', 'T') + 'Z';
-  return new Date(normalized);
-}
+export const getDashboardForRole = getDashboardUrlForRole;
 
-// --- Session Verification ---
+// --- Session Verification & Lifecycle ---
 
 export async function validateSessionToken(
-  rawToken: string | undefined
-): Promise<{ employee: PublicEmployee; tokenHash: string } | null> {
-  if (!rawToken || typeof rawToken !== 'string') return null;
+  rawToken: string | undefined,
+  meta?: { ip_address?: string | null; user_agent?: string | null }
+): Promise<{ employee: PublicEmployee } | null> {
+  if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
+    return null;
+  }
 
   const tokenHash = hashSessionToken(rawToken);
   const sessionWithEmp = await findSessionByHash(tokenHash);
 
   if (!sessionWithEmp) return null;
 
-  // Check revocation status
-  if (sessionWithEmp.revoked_at !== null) {
-    return null;
-  }
+  // Check if session has been revoked
+  if (sessionWithEmp.revoked_at) return null;
+
+  // Check if employee account is active
+  if (sessionWithEmp.employee.status !== 'active') return null;
 
   const now = new Date();
 
-  // Check absolute expiration
-  if (parseDateSafe(sessionWithEmp.expires_at) <= now) {
+  // Check absolute expiration (8 hours)
+  if (parseDateSafe(sessionWithEmp.expires_at) < now) {
     await dbRevokeSession(tokenHash);
     return null;
   }
 
-  // Check idle timeout (NFR-SE-005)
+  // Check sliding idle timeout (30 minutes)
   const lastActivity = parseDateSafe(sessionWithEmp.last_activity_at);
   if (now.getTime() - lastActivity.getTime() > IDLE_TIMEOUT_MS) {
     await dbRevokeSession(tokenHash);
+    if (meta?.ip_address) {
+      await recordAuthenticationAttempt({
+        employee_id: sessionWithEmp.employee.id,
+        email: sessionWithEmp.employee.email,
+        event_type: 'session_revoked',
+        ip_address: meta.ip_address,
+        user_agent: meta.user_agent,
+        details: { reason: 'idle_timeout' },
+      });
+    }
     return null;
   }
 
-  // Check employee status
-  if (sessionWithEmp.employee.status !== 'active') {
-    await dbRevokeSession(tokenHash);
-    return null;
-  }
-
-  // Update last activity
+  // Sliding idle timeout extension: record activity
   await updateSessionActivity(tokenHash);
 
+  const employee = publicUser(sessionWithEmp.employee);
+  return { employee };
+}
+
+export async function requireSession(
+  request: NextRequest,
+  allowedRoles?: Role[]
+): Promise<{ user: PublicEmployee; token: string }> {
+  // Extract token from Cookie or Authorization: Bearer
+  let rawToken = request.cookies.get(SESSION_COOKIE)?.value;
+  if (!rawToken) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      rawToken = authHeader.substring(7).trim();
+    }
+  }
+
+  if (!rawToken) {
+    throw new AuthError('Authentication is required. No active session token found.', 401, 'UNAUTHORIZED');
+  }
+
+  const session = await validateSessionToken(rawToken, {
+    ip_address: request.headers.get('x-forwarded-for') ?? null,
+    user_agent: request.headers.get('user-agent') ?? null,
+  });
+
+  if (!session) {
+    throw new AuthError('Session is invalid or has expired. Please sign in again.', 401, 'UNAUTHORIZED');
+  }
+
+  const user = session.employee;
+
+  if (allowedRoles && allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
+    throw new AuthError(
+      `Access denied. Role "${user.role}" does not have permission for this resource.`,
+      403,
+      'FORBIDDEN'
+    );
+  }
+
+  return { user, token: rawToken };
+}
+
+export async function getSessionEmployeeWithToken(
+  rawToken: string
+): Promise<{ employee: PublicEmployee; tokenHash: string } | null> {
+  const tokenHash = hashSessionToken(rawToken);
+  const sessionWithEmp = await findSessionByHash(tokenHash);
+  if (!sessionWithEmp || sessionWithEmp.revoked_at) return null;
   return {
     employee: sessionWithEmp.employee,
     tokenHash,
@@ -448,7 +566,7 @@ export async function logoutSession(
 
 export async function requestPasswordReset(
   email: string,
-  meta?: { ip_address?: string | null; user_agent?: string | null }
+  meta?: { ip_address?: string | null; user_agent?: string | null; antiEnumeration?: boolean }
 ): Promise<{ challengeId: string | null }> {
   const normalizedEmail = email.trim().toLowerCase();
   const employee = await findEmployeeByEmail(normalizedEmail);
@@ -461,7 +579,14 @@ export async function requestPasswordReset(
     user_agent: meta?.user_agent,
   });
 
+  const shouldMaskEnumeration = meta?.antiEnumeration ?? (process.env.ANTI_ENUMERATION === 'true');
+
   if (!employee || employee.status !== 'active') {
+    if (shouldMaskEnumeration) {
+      const dummyChallengeId = randomBytes(24).toString('hex');
+      scryptSync('dummy', '0000000000000000', 32);
+      return { challengeId: dummyChallengeId };
+    }
     return { challengeId: null };
   }
 
@@ -487,18 +612,14 @@ export async function requestPasswordReset(
 export async function confirmPasswordReset(
   challengeId: string,
   rawOtp: string,
-  newPassword: string,
+  newPasswordInput: string,
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<boolean> {
   const challenge = await findOtpChallenge(challengeId, 'password_reset');
 
   if (!challenge) {
-    throw new AuthError('Invalid or expired password reset challenge.', 401);
-  }
-
-  const employee = await findEmployeeById(challenge.employee_id);
-  if (!employee || employee.status !== 'active') {
-    throw new AuthError('Account is not active.', 403);
+    scryptSync('dummy', '0000000000000000', 32);
+    throw new AuthError('The reset code is invalid or has expired.', 401);
   }
 
   if (challenge.consumed_at) {
@@ -506,11 +627,11 @@ export async function confirmPasswordReset(
   }
 
   if (parseDateSafe(challenge.expires_at) < new Date()) {
-    throw new AuthError('This reset code has expired.', 401);
+    throw new AuthError('This reset code has expired. Please request a new one.', 401);
   }
 
   if (challenge.attempts >= challenge.max_attempts) {
-    throw new AuthError('Maximum attempts exceeded for this reset request.', 401);
+    throw new AuthError('Maximum verification attempts exceeded. Please request a new reset code.', 401);
   }
 
   await incrementOtpAttempts(challengeId);
@@ -518,8 +639,8 @@ export async function confirmPasswordReset(
   const actualHash = hashOtp(rawOtp);
   if (actualHash !== challenge.code_hash) {
     await recordAuthenticationAttempt({
-      employee_id: employee.id,
-      email: employee.email,
+      employee_id: challenge.employee_id,
+      email: 'reset@system',
       event_type: 'wrong_otp',
       ip_address: meta?.ip_address,
       user_agent: meta?.user_agent,
@@ -528,23 +649,27 @@ export async function confirmPasswordReset(
     throw new AuthError('Invalid verification code.', 401);
   }
 
-  await consumeOtpChallenge(challengeId);
+  // Atomically consume challenge
+  const consumed = await consumeOtpChallenge(challengeId);
+  if (!consumed) {
+    throw new AuthError('This reset request has already been used.', 401);
+  }
 
-  // Update password hash and atomically revoke all sessions
-  const newHash = passwordHash(newPassword);
-  await dbUpdatePasswordHash(employee.id, newHash);
+  // Hash new password and revoke all active sessions immediately
+  const newHash = passwordHash(newPasswordInput);
+  await dbUpdatePasswordHash(challenge.employee_id, newHash);
 
   await recordAuthenticationAttempt({
-    employee_id: employee.id,
-    email: employee.email,
+    employee_id: challenge.employee_id,
+    email: 'reset@system',
     event_type: 'password_reset_completed',
     ip_address: meta?.ip_address,
     user_agent: meta?.user_agent,
   });
 
   await recordAuthenticationAttempt({
-    employee_id: employee.id,
-    email: employee.email,
+    employee_id: challenge.employee_id,
+    email: 'reset@system',
     event_type: 'session_revoked',
     ip_address: meta?.ip_address,
     user_agent: meta?.user_agent,
@@ -554,52 +679,47 @@ export async function confirmPasswordReset(
   return true;
 }
 
-// --- Employee Management Workflows ---
+// --- Dual-Control Employee Provisioning (Maker-Checker) ---
 
 export async function initiateEmployeeCreation(
   adminActor: PublicEmployee,
-  input: {
+  employeeData: {
     full_name: string;
     email: string;
-    password?: string;
     role: Role;
     branch_id: number | null;
+    password?: string;
   },
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<{ challengeId: string; hrManagerEmail: string }> {
   requireAdministrator(adminActor);
 
-  const normalizedEmail = input.email.trim().toLowerCase();
+  // Validate hierarchy & privilege boundaries
+  if (ROLE_HIERARCHY[adminActor.role] < ROLE_HIERARCHY[employeeData.role]) {
+    throw new AuthError('You do not have permission to create an employee with privileges higher than your own role.', 403, 'PRIVILEGE_ESCALATION');
+  }
+
+  const normalizedEmail = employeeData.email.trim().toLowerCase();
   const existing = await findEmployeeByEmail(normalizedEmail);
   if (existing) {
-    throw new AuthError('A user with this email address already exists.', 400);
+    throw new AuthError('An employee with this email already exists.', 400);
   }
 
-  // Branch assignment validation
-  if ((input.role === 'agent' || input.role === 'manager') && (!input.branch_id || input.branch_id < 1)) {
-    throw new AuthError('Branch assignment is required for agents and managers.', 400);
+  if ((employeeData.role === 'agent' || employeeData.role === 'manager') && (!employeeData.branch_id || employeeData.branch_id < 1)) {
+    throw new AuthError('Branch assignment is required for agents and branch managers.', 400);
   }
 
-  // Find HR manager / Higher Management approver
+  // Dual-control routing: Find Higher Management approver
   const higherManagers = await dbListEmployees({ role: 'higher_manager', status: 'active' });
-  const hrApprover = higherManagers[0] ?? adminActor; // fallback to admin if none yet in setup
+  const hrApprover = higherManagers.find((m) => m.id !== adminActor.id) ?? higherManagers[0] ?? adminActor;
+
+  const rawPassword = employeeData.password ?? `TempPass!${randomBytes(4).toString('hex')}`;
+  const pwdHash = passwordHash(rawPassword);
 
   const rawOtp = generateSecureOtp();
   const challengeId = randomBytes(24).toString('hex');
   const codeHash = hashOtp(rawOtp);
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
-
-  const initialPassword = input.password ?? randomBytes(16).toString('hex');
-  const initialHash = passwordHash(initialPassword);
-
-  const payload = {
-    full_name: input.full_name.trim(),
-    email: normalizedEmail,
-    password_hash: initialHash,
-    role: input.role,
-    branch_id: input.branch_id,
-    createdByAdminId: adminActor.id,
-  };
 
   await dbCreateOtpChallenge({
     id: challengeId,
@@ -608,18 +728,27 @@ export async function initiateEmployeeCreation(
     code_hash: codeHash,
     max_attempts: MAX_OTP_ATTEMPTS,
     expires_at: expiresAt,
-    metadata: payload,
+    metadata: {
+      operation: 'employee_creation',
+      full_name: employeeData.full_name,
+      email: normalizedEmail,
+      password_hash: pwdHash,
+      role: employeeData.role,
+      branch_id: employeeData.branch_id,
+      createdByAdminId: adminActor.id,
+      intendedApproverId: hrApprover.id,
+    },
   });
 
   dispatchOtp(hrApprover.email, 'employee_creation', rawOtp);
 
   await recordAuthenticationAttempt({
     employee_id: adminActor.id,
-    email: adminActor.email,
+    email: normalizedEmail,
     event_type: 'employee_creation_requested',
     ip_address: meta?.ip_address,
     user_agent: meta?.user_agent,
-    details: { target_email: normalizedEmail, target_role: input.role, approver_id: hrApprover.id },
+    details: { requested_by: adminActor.id, approver_id: hrApprover.id },
   });
 
   return {
@@ -631,6 +760,7 @@ export async function initiateEmployeeCreation(
 export async function confirmEmployeeCreation(
   challengeId: string,
   rawOtp: string,
+  approverActor?: PublicEmployee,
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<PublicEmployee> {
   const challenge = await findOtpChallenge(challengeId, 'employee_creation');
@@ -666,8 +796,6 @@ export async function confirmEmployeeCreation(
     throw new AuthError('Invalid HR manager approval code.', 401);
   }
 
-  await consumeOtpChallenge(challengeId);
-
   const payload = JSON.parse(challenge.metadata ?? '{}') as {
     full_name: string;
     email: string;
@@ -675,7 +803,33 @@ export async function confirmEmployeeCreation(
     role: Role;
     branch_id: number | null;
     createdByAdminId: number;
+    intendedApproverId?: number;
   };
+
+  // Dual Control enforcement: Requester cannot approve their own creation request
+  if (approverActor) {
+    if (approverActor.id === payload.createdByAdminId) {
+      throw new AuthError('Dual control violation: Requester cannot approve their own creation request.', 403, 'SELF_APPROVAL_PROHIBITED');
+    }
+    if (approverActor.status !== 'active') {
+      throw new AuthError('Approver account is inactive.', 403);
+    }
+    if (approverActor.role !== 'higher_manager' && approverActor.role !== 'admin') {
+      throw new AuthError('Approver is not authorized to approve employee creation.', 403);
+    }
+  }
+
+  // Atomically consume challenge
+  const consumed = await consumeOtpChallenge(challengeId);
+  if (!consumed) {
+    throw new AuthError('This creation approval has already been confirmed or invalidated.', 401);
+  }
+
+  // Re-check email uniqueness at confirmation time
+  const existing = await findEmployeeByEmail(payload.email);
+  if (existing) {
+    throw new AuthError('A user with this email has already been registered.', 409);
+  }
 
   const newEmployee = await dbCreateEmployee({
     full_name: payload.full_name,
@@ -694,7 +848,7 @@ export async function confirmEmployeeCreation(
     user_agent: meta?.user_agent,
     details: {
       requesting_admin: payload.createdByAdminId,
-      approver_id: challenge.employee_id,
+      approver_id: approverActor?.id ?? challenge.employee_id,
       role: newEmployee.role,
     },
   });
@@ -721,7 +875,35 @@ export async function updateEmployeeDetails(
     throw new AuthError('Employee not found.', 404);
   }
 
-  // Hierarchy check: Lower cannot modify higher
+  // Direct deactivation is strictly prohibited; must use approval workflow
+  if (updates.status === 'inactive') {
+    throw new AuthError(
+      'Direct deactivation is not permitted. Please initiate deactivation via the deactivation workflow to require Higher Management approval.',
+      400,
+      'DEACTIVATION_REQUIRES_APPROVAL'
+    );
+  }
+
+  // Reactivation Policy: Only authorized admin/higher_manager can reactivate inactive employees
+  if (updates.status === 'active' && target.status === 'inactive') {
+    if (adminActor.id === targetId) {
+      throw new AuthError('Self-reactivation is not permitted.', 403, 'SELF_REACTIVATION_PROHIBITED');
+    }
+    if (ROLE_HIERARCHY[adminActor.role] < ROLE_HIERARCHY[target.role]) {
+      throw new AuthError('You do not have permission to reactivate this user.', 403);
+    }
+    await clearFailedLoginAttempts(targetId);
+    await recordAuthenticationAttempt({
+      employee_id: targetId,
+      email: target.email,
+      event_type: 'employee_reactivated',
+      ip_address: meta?.ip_address,
+      user_agent: meta?.user_agent,
+      details: { reactivated_by: adminActor.id },
+    });
+  }
+
+  // Hierarchy check on target: Lower cannot modify higher
   if (ROLE_HIERARCHY[adminActor.role] < ROLE_HIERARCHY[target.role]) {
     await recordAuthenticationAttempt({
       employee_id: adminActor.id,
@@ -730,6 +912,11 @@ export async function updateEmployeeDetails(
       details: { action: 'update_higher_level_user', target_id: targetId },
     });
     throw new AuthError('You do not have permission to modify a user with a higher role.', 403);
+  }
+
+  // Privilege escalation check: Cannot assign role above actor's authority
+  if (updates.role !== undefined && ROLE_HIERARCHY[adminActor.role] < ROLE_HIERARCHY[updates.role]) {
+    throw new AuthError('You do not have permission to assign privileges higher than your own role.', 403, 'PRIVILEGE_ESCALATION');
   }
 
   // Self-role escalation check: Users cannot change or escalate their own role
@@ -816,7 +1003,7 @@ export async function initiateEmployeeDeactivation(
   }
 
   const higherManagers = await dbListEmployees({ role: 'higher_manager', status: 'active' });
-  const hrApprover = higherManagers[0] ?? adminActor;
+  const hrApprover = higherManagers.find((m) => m.id !== adminActor.id) ?? higherManagers[0] ?? adminActor;
 
   const rawOtp = generateSecureOtp();
   const challengeId = randomBytes(24).toString('hex');
@@ -831,9 +1018,11 @@ export async function initiateEmployeeDeactivation(
     max_attempts: MAX_OTP_ATTEMPTS,
     expires_at: expiresAt,
     metadata: {
+      operation: 'employee_deactivation',
       targetId,
       targetEmail: target.email,
       requestedByAdminId: adminActor.id,
+      intendedApproverId: hrApprover.id,
     },
   });
 
@@ -857,6 +1046,7 @@ export async function initiateEmployeeDeactivation(
 export async function confirmEmployeeDeactivation(
   challengeId: string,
   rawOtp: string,
+  approverActor?: PublicEmployee,
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<boolean> {
   const challenge = await findOtpChallenge(challengeId, 'employee_deactivation');
@@ -892,20 +1082,48 @@ export async function confirmEmployeeDeactivation(
     throw new AuthError('Invalid HR manager approval code.', 401);
   }
 
-  await consumeOtpChallenge(challengeId);
-
   const payload = JSON.parse(challenge.metadata ?? '{}') as {
     targetId: number;
     targetEmail: string;
     requestedByAdminId: number;
+    intendedApproverId?: number;
   };
 
+  // Dual Control enforcement: Requester CANNOT approve their own request
+  if (approverActor) {
+    if (approverActor.id === payload.requestedByAdminId) {
+      throw new AuthError('Dual control violation: Requester cannot approve their own deactivation request.', 403, 'SELF_APPROVAL_PROHIBITED');
+    }
+    if (approverActor.id === payload.targetId) {
+      throw new AuthError('Self-deactivation approval is prohibited.', 403, 'SELF_DEACTIVATION_PROHIBITED');
+    }
+    if (approverActor.status !== 'active') {
+      throw new AuthError('Approver account is inactive.', 403);
+    }
+    if (approverActor.role !== 'higher_manager' && approverActor.role !== 'admin') {
+      throw new AuthError('Approver is not authorized to approve employee deactivation.', 403);
+    }
+  }
+
+  // Re-check target employee and active admin count at confirmation time
   const target = await findEmployeeById(payload.targetId);
-  if (target?.role === 'admin') {
+  if (!target) {
+    throw new AuthError('Target employee record no longer exists.', 404);
+  }
+  if (target.status === 'inactive') {
+    throw new AuthError('Employee is already inactive.', 400);
+  }
+  if (target.role === 'admin') {
     const activeAdmins = await countActiveAdmins();
     if (activeAdmins <= 1) {
       throw new AuthError('Cannot deactivate the last active Administrator.', 400);
     }
+  }
+
+  // Atomically consume challenge
+  const consumed = await consumeOtpChallenge(challengeId);
+  if (!consumed) {
+    throw new AuthError('This deactivation approval has already been confirmed or invalidated.', 401);
   }
 
   // Deactivate record (BR-013: Record is deactivated, NOT deleted!)
@@ -922,7 +1140,7 @@ export async function confirmEmployeeDeactivation(
     user_agent: meta?.user_agent,
     details: {
       requested_by: payload.requestedByAdminId,
-      approver_id: challenge.employee_id,
+      approver_id: approverActor?.id ?? challenge.employee_id,
     },
   });
 
@@ -938,62 +1156,33 @@ export async function confirmEmployeeDeactivation(
   return true;
 }
 
-// --- Server-side Authorization Helpers ---
+// --- Helpers & Guards ---
 
-export function requireRole(employee: PublicEmployee, allowedRoles: Role[]): void {
-  if (!allowedRoles.includes(employee.role)) {
-    recordAuthenticationAttempt({
-      employee_id: employee.id,
-      email: employee.email,
-      event_type: 'unauthorized',
-      details: { required_roles: allowedRoles, current_role: employee.role },
-    }).catch(() => {});
-    throw new AuthError('You do not have permission to perform this action.', 403);
+export function requireAdministrator(actor: PublicEmployee): void {
+  if (actor.role !== 'admin' && actor.role !== 'higher_manager') {
+    throw new AuthError('You do not have permission to perform this action. Only Administrators can perform employee administrative functions.', 403);
   }
 }
 
-export function requireAdministrator(employee: PublicEmployee): void {
-  requireRole(employee, ['admin']);
-}
-
-export function requireHrManagerApproval(employee: PublicEmployee): void {
-  requireRole(employee, ['higher_manager']);
-}
-
-export function requireBranchAccess(employee: PublicEmployee, targetBranchId: number | null): void {
-  // Admin and higher_manager have bank-wide access
-  if (employee.role === 'admin' || employee.role === 'higher_manager') {
-    return;
+export function requireBranchAccess(user: PublicEmployee, branchId: number | null): void {
+  if (user.role === 'admin' || user.role === 'higher_manager') {
+    return; // Global authority
   }
-  // Agent and manager are restricted to their assigned branch
-  if (!employee.branch_id || employee.branch_id !== targetBranchId) {
-    recordAuthenticationAttempt({
-      employee_id: employee.id,
-      email: employee.email,
-      event_type: 'unauthorized',
-      details: { reason: 'branch_mismatch', employee_branch: employee.branch_id, target_branch: targetBranchId },
-    }).catch(() => {});
-    throw new AuthError('Access denied: You can only perform operations within your assigned branch.', 403);
+  if (!branchId || user.branch_id !== branchId) {
+    throw new AuthError(
+      'Access denied. You do not have permission to access resources outside your assigned branch.',
+      403,
+      'FORBIDDEN'
+    );
   }
 }
 
-export async function requireSession(
-  request: NextRequest,
-  allowedRoles?: Role[]
-): Promise<{ user: PublicEmployee; token: string }> {
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
-  if (!token) {
-    throw new AuthError('Authentication is required.', 401);
+function parseDateSafe(dateString: string): Date {
+  const d = new Date(dateString);
+  if (isNaN(d.getTime())) {
+    // Attempt parsing SQLite 'YYYY-MM-DD HH:MM:SS' format
+    const isoLike = dateString.replace(' ', 'T') + 'Z';
+    return new Date(isoLike);
   }
-
-  const result = await validateSessionToken(token);
-  if (!result) {
-    throw new AuthError('Session is invalid or has expired.', 401);
-  }
-
-  if (allowedRoles) {
-    requireRole(result.employee, allowedRoles);
-  }
-
-  return { user: result.employee, token };
+  return d;
 }

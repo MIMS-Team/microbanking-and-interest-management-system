@@ -39,14 +39,28 @@ This upgrade establishes an enterprise-grade banking security architecture:
    - Staff records are never deleted (`status = 'inactive'`) to maintain financial audit integrity.
 
 4. **Automated Testing & GitHub Actions CI**:
-   - Built a comprehensive test suite of **72 automated unit and integration tests** in Vitest across 3 test suites.
-   - Configured `.github/workflows/ci.yml` to automatically execute ESLint, TypeScript compilation (`tsc --noEmit`), Vitest suite, and build checks on every push and pull request.
+   - Built an exhaustive test suite of **86 automated unit, security regression, and route integration tests** in Vitest across 4 test suites (`auth.test.ts`, `api.test.ts`, `frontend-logout.test.ts`, `auth-improvements.test.ts`).
+   - Configured `.github/workflows/ci.yml` to automatically execute ESLint, TypeScript static analysis (`tsc --noEmit`), the 86-test Vitest suite, and a Next.js production build (`npm run build`).
 
 5. **Frontend Logout Integration & Full Session Revocation**:
    - Integrated keyboard-accessible, loading-aware `LogoutButton` into authenticated navigation layouts.
    - Calls backend `POST /api/auth/logout` with credentials, immediately clearing `localStorage` and `sessionStorage`.
    - Protects protected routes (`/dashboard`, `/profile`, `/savings`, `/fixed-deposits`) via Next.js route middleware (`src/middleware.ts`) and client-side `RequireSession` guards.
    - Revokes session records in the database, expires session cookies, and emits anti-caching HTTP headers.
+
+6. **Hardened Authorization & Dual-Control Integrity**:
+   - Blocked direct `PATCH /api/users/[id]` deactivation bypass (`DEACTIVATION_REQUIRES_APPROVAL`).
+   - Self-deactivation prohibition (`SELF_DEACTIVATION_PROHIBITED`) and last-active-admin preservation (`LAST_ADMIN_CANNOT_BE_DEACTIVATED`).
+   - Dual-control self-approval prohibition (`DUAL_CONTROL_SELF_APPROVAL_PROHIBITED`: requester cannot approve own request).
+   - Strict privilege-escalation prevention and role hierarchy enforcement.
+   - Reactivation policy explicitly restricted to `admin` / `higher_manager`.
+
+7. **Production OTP & Shared Database Integration**:
+   - Configurable production email delivery adapter (`smtp` / `webhook`) with honest failure reporting.
+   - Atomic single-use OTP challenge consumption to eliminate race conditions and double-use attacks.
+   - OTP resend route (`POST /api/auth/otp/resend`) with 30s cooldown and challenge supersession.
+   - Password-reset anti-enumeration mode returning uniform challenge lengths and responses.
+   - Dual-database adapter supporting shared MySQL 8.0 backend in production with strict error throwing on failure, and lightweight SQLite adapter for isolated unit testing.
 
 ---
 
@@ -56,17 +70,18 @@ This upgrade establishes an enterprise-grade banking security architecture:
 |---|---|---|---|
 | `/api/auth/login` | `POST` | Public | First factor login; validates credentials, enforces rate limiting, returns challenge ID & cookie |
 | `/api/auth/otp` | `POST` | Public | Second factor OTP verification; issues 8-hour HttpOnly session cookie |
+| `/api/auth/otp/resend` | `POST` | Public | Resends OTP challenge with 30s cooldown and old challenge invalidation |
 | `/api/auth/session` | `GET` | Authenticated | Validates session token, checks 30m idle timeout, returns employee profile |
 | `/api/auth/logout` | `POST` | Authenticated | Revokes session in database and clears session cookies |
-| `/api/auth/password-reset/request` | `POST` | Public | Dispatches reset OTP with uniform anti-enumeration message |
+| `/api/auth/password-reset/request` | `POST` | Public | Dispatches reset OTP with uniform anti-enumeration message and timing mitigation |
 | `/api/auth/password-reset/confirm` | `POST` | Public | Verifies OTP, updates password hash, revokes all existing sessions |
 | `/api/users` | `GET` | Admin / Higher Mgr | Lists employee directory with optional filters (`role`, `status`, `branch_id`) |
 | `/api/users` | `POST` | Admin | Initiates employee creation (Dual Control Stage 1) |
-| `/api/users/confirm-create` | `POST` | Higher Mgr | Approves employee creation with OTP (Dual Control Stage 2) |
+| `/api/users/confirm-create` | `POST` | Higher Mgr | Approves employee creation with OTP (Dual Control Stage 2; requester cannot self-approve) |
 | `/api/users/{id}` | `GET` | Admin / Higher Mgr | Retrieves single employee record |
-| `/api/users/{id}` | `PATCH` | Admin | Updates employee details with role-hierarchy safeguards |
-| `/api/users/{id}` | `DELETE` | Admin | Initiates employee deactivation (Dual Control Stage 1) |
-| `/api/users/{id}/confirm-deactivate` | `POST` | Higher Mgr | Confirms deactivation with OTP and revokes all active sessions |
+| `/api/users/{id}` | `PATCH` | Admin | Updates employee details with role-hierarchy safeguards (deactivation strictly rejected) |
+| `/api/users/{id}` | `DELETE` | Admin | Initiates employee deactivation (Dual Control Stage 1; self-deactivation blocked) |
+| `/api/users/{id}` | `confirm-deactivate` | `POST` | Higher Mgr | Confirms deactivation with OTP, revokes all active sessions |
 
 ---
 

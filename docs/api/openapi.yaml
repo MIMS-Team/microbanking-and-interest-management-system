@@ -358,6 +358,49 @@ paths:
         '429':
           description: Rate limit exceeded.
 
+  /api/auth/otp/resend:
+    post:
+      tags:
+        - Authentication
+      summary: Resend OTP verification code with cooldown
+      description: >
+        Invalidates current challenge and dispatches a fresh 6-digit OTP code to the registered email.
+        Enforces a 30-second cooldown period between successive dispatches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challengeId
+              properties:
+                challengeId:
+                  type: string
+                  example: 6a82a0b12fe0...
+      responses:
+        '200':
+          description: Fresh OTP dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  challengeId:
+                    type: string
+                  cooldownSeconds:
+                    type: integer
+                    example: 30
+                  message:
+                    type: string
+        '400':
+          description: Missing challengeId or challenge already confirmed.
+        '429':
+          description: Resend cooldown active (wait 30 seconds).
+
   /api/auth/session:
     get:
       tags:

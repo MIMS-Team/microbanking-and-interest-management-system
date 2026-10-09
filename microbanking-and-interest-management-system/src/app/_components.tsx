@@ -639,11 +639,23 @@ export function OtpForm() {
   const router = useRouter();
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
+    setSuccessMsg('');
     setSubmitting(true);
 
     try {
@@ -676,6 +688,43 @@ export function OtpForm() {
     }
   };
 
+  const handleResend = async () => {
+    if (cooldown > 0 || resending) return;
+    setError('');
+    setSuccessMsg('');
+    setResending(true);
+
+    try {
+      const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const challengeId = urlParams?.get('challenge') ?? undefined;
+
+      const response = await fetch('/api/auth/otp/resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId }),
+      });
+
+      const body = (await response.json()) as {
+        error?: string;
+        success?: boolean;
+        message?: string;
+        cooldownSeconds?: number;
+      };
+
+      if (!response.ok) {
+        setError(body.error ?? 'Failed to resend verification code.');
+        return;
+      }
+
+      setSuccessMsg(body.message ?? 'A fresh verification code has been dispatched.');
+      setCooldown(body.cooldownSeconds ?? 30);
+    } catch {
+      setError('Network failure attempting to resend code.');
+    } finally {
+      setResending(false);
+    }
+  };
+
   return (
     <form onSubmit={submit} className="space-y-5">
       <div className="flex items-start gap-3 rounded-xl bg-[#e9eff5] p-4 text-xs leading-relaxed text-[#52606d]">
@@ -684,6 +733,13 @@ export function OtpForm() {
           A temporary 6-digit verification code has been dispatched to your authorized contact channel. Codes expire in 5 minutes.
         </span>
       </div>
+
+      {successMsg && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span>{successMsg}</span>
+        </div>
+      )}
 
       <Field
         label="One-Time Password (OTP)"
@@ -718,6 +774,20 @@ export function OtpForm() {
           </>
         )}
       </button>
+
+      <div className="flex items-center justify-between pt-1 text-xs">
+        <button
+          type="button"
+          disabled={cooldown > 0 || resending}
+          onClick={handleResend}
+          className="font-bold text-[#b65f45] hover:underline disabled:opacity-50"
+        >
+          {resending ? 'Sending...' : cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend verification code'}
+        </button>
+        <Link href="/login" className="font-semibold text-[#627d98] hover:text-[#102a43]">
+          Cancel
+        </Link>
+      </div>
     </form>
   );
 }
