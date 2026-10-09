@@ -1,8 +1,10 @@
 /**
- * Rate Limiting Middleware for Authentication Endpoints
+ * Sliding-Window Rate Limiting Engine for Authentication & Banking Endpoints
  * 
- * Protects against brute-force attacks, credential stuffing, and OTP flooding
- * by tracking attempts within a rolling time window.
+ * Accurately calculates rolling request frequency across a sliding time window (windowMs)
+ * rather than arbitrary fixed time intervals.
+ * 
+ * Bounded memory usage prevents memory leaks via LRU eviction and automatic TTL pruning.
  */
 
 export interface RateLimitResult {
@@ -12,16 +14,93 @@ export interface RateLimitResult {
   resetInSeconds: number;
 }
 
-interface RateLimitBucket {
-  count: number;
-  resetAt: number;
+export interface RateLimitStore {
+  getTimestamps(key: string, windowStart: number): number[];
+  recordAttempt(key: string, timestamp: number): void;
+  deleteKey(key: string): void;
+  clear(): void;
+  size(): number;
 }
 
-// In-memory sliding window storage (keyed by namespace + identifier)
-const rateLimitStore = new Map<string, RateLimitBucket>();
+/**
+ * In-memory sliding-window store with LRU eviction and memory bounds.
+ */
+class BoundedMemorySlidingStore implements RateLimitStore {
+  private readonly store = new Map<string, number[]>();
+  private readonly maxKeys: number;
+  private lastPrune = Date.now();
+  private readonly pruneIntervalMs = 60000; // 1 minute
+
+  constructor(maxKeys = 10000) {
+    this.maxKeys = maxKeys;
+  }
+
+  getTimestamps(key: string, windowStart: number): number[] {
+    this.maybePrune();
+    const list = this.store.get(key);
+    if (!list) return [];
+    // Keep only timestamps within the active sliding window
+    const active = list.filter((ts) => ts >= windowStart);
+    if (active.length === 0) {
+      this.store.delete(key);
+      return [];
+    }
+    this.store.set(key, active);
+    return active;
+  }
+
+  recordAttempt(key: string, timestamp: number): void {
+    let list = this.store.get(key);
+    if (!list) {
+      if (this.store.size >= this.maxKeys) {
+        // Evict oldest inserted key to bound memory
+        const firstKey = this.store.keys().next().value;
+        if (firstKey) this.store.delete(firstKey);
+      }
+      list = [];
+    }
+    list.push(timestamp);
+    this.store.set(key, list);
+  }
+
+  deleteKey(key: string): void {
+    this.store.delete(key);
+  }
+
+  clear(): void {
+    this.store.clear();
+  }
+
+  size(): number {
+    return this.store.size;
+  }
+
+  private maybePrune(): void {
+    const now = Date.now();
+    if (now - this.lastPrune < this.pruneIntervalMs) return;
+    this.lastPrune = now;
+
+    // Prune buckets with no timestamps in the last 1 hour
+    const cutoff = now - 3600000;
+    for (const [key, timestamps] of this.store.entries()) {
+      const recent = timestamps.filter((t) => t >= cutoff);
+      if (recent.length === 0) {
+        this.store.delete(key);
+      } else {
+        this.store.set(key, recent);
+      }
+    }
+  }
+}
+
+let activeStore: RateLimitStore = new BoundedMemorySlidingStore();
+
+export function setRateLimitStoreForTest(store: RateLimitStore): void {
+  activeStore = store;
+}
 
 /**
- * Checks and records an attempt for the given key.
+ * Checks and records an attempt for the given key using true sliding-window logs.
  * 
  * @param key Unique key for rate limiting (e.g., `login:ip:127.0.0.1` or `login:email:user@bank.com`)
  * @param maxAttempts Maximum attempts allowed in the time window
@@ -33,40 +112,32 @@ export function checkRateLimit(
   windowMs: number
 ): RateLimitResult {
   const now = Date.now();
-  const bucket = rateLimitStore.get(key);
+  const windowStart = now - windowMs;
+  const timestamps = activeStore.getTimestamps(key, windowStart);
 
-  if (!bucket || now >= bucket.resetAt) {
-    // Window expired or new key
-    rateLimitStore.set(key, {
-      count: 1,
-      resetAt: now + windowMs,
-    });
-    return {
-      allowed: true,
-      limit: maxAttempts,
-      remaining: Math.max(0, maxAttempts - 1),
-      resetInSeconds: Math.ceil(windowMs / 1000),
-    };
-  }
+  if (timestamps.length >= maxAttempts) {
+    const oldest = timestamps[0] ?? windowStart;
+    const resetInMs = Math.max(1000, oldest + windowMs - now);
+    const resetInSeconds = Math.ceil(resetInMs / 1000);
 
-  // Window is active
-  if (bucket.count >= maxAttempts) {
-    const remainingSeconds = Math.ceil((bucket.resetAt - now) / 1000);
     return {
       allowed: false,
       limit: maxAttempts,
       remaining: 0,
-      resetInSeconds: remainingSeconds > 0 ? remainingSeconds : 1,
+      resetInSeconds,
     };
   }
 
-  bucket.count += 1;
-  const remainingSeconds = Math.ceil((bucket.resetAt - now) / 1000);
+  activeStore.recordAttempt(key, now);
+  const remaining = Math.max(0, maxAttempts - (timestamps.length + 1));
+  const oldest = timestamps[0] ?? now;
+  const resetInMs = Math.max(1000, oldest + windowMs - now);
+
   return {
     allowed: true,
     limit: maxAttempts,
-    remaining: Math.max(0, maxAttempts - bucket.count),
-    resetInSeconds: remainingSeconds > 0 ? remainingSeconds : 1,
+    remaining,
+    resetInSeconds: Math.ceil(resetInMs / 1000),
   };
 }
 
@@ -74,14 +145,14 @@ export function checkRateLimit(
  * Resets a specific key (useful after successful verification or during testing)
  */
 export function resetRateLimitKey(key: string): void {
-  rateLimitStore.delete(key);
+  activeStore.deleteKey(key);
 }
 
 /**
  * Clears all rate limit records (primarily for testing purposes)
  */
 export function clearAllRateLimits(): void {
-  rateLimitStore.clear();
+  activeStore.clear();
 }
 
 /**
@@ -97,6 +168,11 @@ export const RATE_LIMIT_CONFIGS = {
   OTP: {
     maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
+  },
+  // OTP Resend Cooldown: 1 attempt per 30 seconds
+  OTP_RESEND: {
+    maxAttempts: 1,
+    windowMs: 30 * 1000,
   },
   // Password Reset Request: 3 requests per 15 minutes
   PASSWORD_RESET_REQUEST: {

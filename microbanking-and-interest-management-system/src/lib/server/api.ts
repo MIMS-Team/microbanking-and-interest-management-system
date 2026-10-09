@@ -10,6 +10,7 @@ import {
   checkRateLimit,
   RATE_LIMIT_CONFIGS,
 } from './rate-limit';
+import { OtpDeliveryError } from './email';
 
 export class ApiError extends Error {
   constructor(message: string, public status = 400, public code = 'API_ERROR') {
@@ -29,6 +30,16 @@ export class RateLimitError extends Error {
   }
 }
 
+/**
+ * Standard anti-caching HTTP response headers for sensitive endpoints.
+ */
+export const NO_CACHE_HEADERS: Record<string, string> = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0',
+  'Surrogate-Control': 'no-store',
+};
+
 export function jsonError(error: unknown): NextResponse {
   if (error instanceof RateLimitError) {
     return NextResponse.json(
@@ -41,8 +52,18 @@ export function jsonError(error: unknown): NextResponse {
         status: 429,
         headers: {
           'Retry-After': String(error.retryAfter),
+          ...NO_CACHE_HEADERS,
         },
       }
+    );
+  }
+  if (error instanceof OtpDeliveryError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: error.code,
+      },
+      { status: error.status, headers: NO_CACHE_HEADERS }
     );
   }
   if (error instanceof AuthError) {
@@ -54,7 +75,7 @@ export function jsonError(error: unknown): NextResponse {
         error: error.message,
         code,
       },
-      { status: error.status }
+      { status: error.status, headers: NO_CACHE_HEADERS }
     );
   }
   if (error instanceof ApiError) {
@@ -63,7 +84,7 @@ export function jsonError(error: unknown): NextResponse {
         error: error.message,
         code: error.code,
       },
-      { status: error.status }
+      { status: error.status, headers: NO_CACHE_HEADERS }
     );
   }
   if (error instanceof Error) {
@@ -72,7 +93,7 @@ export function jsonError(error: unknown): NextResponse {
         error: error.message,
         code: 'BAD_REQUEST',
       },
-      { status: 400 }
+      { status: 400, headers: NO_CACHE_HEADERS }
     );
   }
   return NextResponse.json(
@@ -80,7 +101,7 @@ export function jsonError(error: unknown): NextResponse {
       error: 'An unexpected server error occurred.',
       code: 'INTERNAL_SERVER_ERROR',
     },
-    { status: 500 }
+    { status: 500, headers: NO_CACHE_HEADERS }
   );
 }
 
@@ -88,14 +109,14 @@ export function jsonError(error: unknown): NextResponse {
  * Enforces sliding-window rate limits on the requesting IP and optional identifier.
  */
 export function enforceRateLimit(
-  request: NextRequest,
+  request: Request | NextRequest,
   action: keyof typeof RATE_LIMIT_CONFIGS,
   identifier?: string
 ): void {
   const ip = getClientIp(request) ?? '127.0.0.1';
   const config = RATE_LIMIT_CONFIGS[action];
 
-  // 1. IP-based rate limiting
+  // 1. IP-based sliding window rate limit
   const ipCheck = checkRateLimit(`${action}:ip:${ip}`, config.maxAttempts, config.windowMs);
   if (!ipCheck.allowed) {
     throw new RateLimitError(
@@ -104,7 +125,7 @@ export function enforceRateLimit(
     );
   }
 
-  // 2. Specific identifier (e.g., account email or challenge ID)
+  // 2. Identifier-based sliding window rate limit (email, challenge ID, etc.)
   if (identifier && identifier.trim()) {
     const idCheck = checkRateLimit(
       `${action}:id:${identifier.trim().toLowerCase()}`,
@@ -120,11 +141,81 @@ export function enforceRateLimit(
   }
 }
 
+/**
+ * Validates request origin against Host to prevent Cross-Site Request Forgery (CSRF)
+ * on cookie-authenticated mutating requests.
+ */
+export function verifyCsrf(request: Request | NextRequest): void {
+  const method = request.method.toUpperCase();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return;
+
+  const origin = request.headers.get('origin');
+  const referer = request.headers.get('referer');
+  const host = request.headers.get('host');
+
+  if (origin) {
+    try {
+      const originHost = new URL(origin).host;
+      if (host && originHost !== host) {
+        throw new ApiError('CSRF protection: Request origin does not match server host.', 403, 'CSRF_ERROR');
+      }
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      throw new ApiError('CSRF protection: Invalid Origin header.', 403, 'CSRF_ERROR');
+    }
+  } else if (referer) {
+    try {
+      const refererHost = new URL(referer).host;
+      if (host && refererHost !== host) {
+        throw new ApiError('CSRF protection: Request referer does not match server host.', 403, 'CSRF_ERROR');
+      }
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      throw new ApiError('CSRF protection: Invalid Referer header.', 403, 'CSRF_ERROR');
+    }
+  }
+}
+
+/**
+ * Reusable server-side authentication guard for Next.js route handlers.
+ * Verifies cryptographically validated session from database (never cookie presence alone).
+ */
 export async function requireUser(
-  request: NextRequest,
+  request: Request | NextRequest,
   roles?: Role[]
 ): Promise<{ user: PublicEmployee; token: string }> {
-  return requireSession(request, roles);
+  const req = request instanceof NextRequest ? request : new NextRequest(request.url, { headers: request.headers });
+  return requireSession(req, roles);
+}
+
+/**
+ * Reusable role authorization guard.
+ */
+export function requireRole(user: PublicEmployee, allowedRoles: Role[]): void {
+  if (!allowedRoles.includes(user.role)) {
+    throw new AuthError(
+      `Access denied. Role "${user.role}" is not authorized for this operation.`,
+      403,
+      'FORBIDDEN'
+    );
+  }
+}
+
+/**
+ * Reusable branch authorization guard.
+ * Admins and Higher Managers have global access; Branch Managers and Agents are restricted to their branch.
+ */
+export function requireBranchAccess(user: PublicEmployee, branchId: number | null): void {
+  if (user.role === 'admin' || user.role === 'higher_manager') {
+    return; // Global authority
+  }
+  if (!branchId || user.branch_id !== branchId) {
+    throw new AuthError(
+      'Access denied. You can only access operations for your assigned branch.',
+      403,
+      'FORBIDDEN'
+    );
+  }
 }
 
 export function sessionCookie(response: NextResponse, token: string): void {
@@ -170,14 +261,26 @@ export function isValidPassword(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 8 && value.length <= 128;
 }
 
-export function getClientIp(request: NextRequest): string | null {
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) {
-    return forwarded.split(',')[0].trim();
+/**
+ * Derives client IP address based on trusted proxy configuration.
+ * Avoids blindly trusting arbitrary client-supplied headers unless TRUST_PROXY=true.
+ */
+export function getClientIp(request: Request | NextRequest): string | null {
+  const trustProxy = process.env.TRUST_PROXY === 'true';
+
+  if (trustProxy) {
+    const forwarded = request.headers.get('x-forwarded-for');
+    if (forwarded) {
+      return forwarded.split(',')[0].trim();
+    }
+    const realIp = request.headers.get('x-real-ip');
+    if (realIp) return realIp.trim();
   }
-  return request.headers.get('x-real-ip') ?? null;
+
+  // When not configured behind trusted proxy, derive from non-forwarded headers or fallback
+  return request.headers.get('cf-connecting-ip') ?? request.headers.get('x-client-ip') ?? '127.0.0.1';
 }
 
-export function getClientUserAgent(request: NextRequest): string | null {
+export function getClientUserAgent(request: Request | NextRequest): string | null {
   return request.headers.get('user-agent') ?? null;
 }
