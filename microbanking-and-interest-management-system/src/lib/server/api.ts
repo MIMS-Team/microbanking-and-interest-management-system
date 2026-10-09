@@ -6,25 +6,118 @@ import {
   type PublicEmployee,
   type Role,
 } from './auth';
+import {
+  checkRateLimit,
+  RATE_LIMIT_CONFIGS,
+} from './rate-limit';
 
 export class ApiError extends Error {
-  constructor(message: string, public status = 400) {
+  constructor(message: string, public status = 400, public code = 'API_ERROR') {
     super(message);
     this.name = 'ApiError';
   }
 }
 
+export class RateLimitError extends Error {
+  constructor(
+    message = 'Too many requests. Please wait before trying again.',
+    public retryAfter = 60,
+    public code = 'RATE_LIMIT_EXCEEDED'
+  ) {
+    super(message);
+    this.name = 'RateLimitError';
+  }
+}
+
 export function jsonError(error: unknown): NextResponse {
+  if (error instanceof RateLimitError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: error.code,
+        retryAfter: error.retryAfter,
+      },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(error.retryAfter),
+        },
+      }
+    );
+  }
   if (error instanceof AuthError) {
-    return NextResponse.json({ error: error.message }, { status: error.status });
+    const code = (error.code && error.code !== 'AUTH_ERROR')
+      ? error.code
+      : (error.status === 401 ? 'UNAUTHORIZED' : error.status === 403 ? 'FORBIDDEN' : 'AUTH_ERROR');
+    return NextResponse.json(
+      {
+        error: error.message,
+        code,
+      },
+      { status: error.status }
+    );
   }
   if (error instanceof ApiError) {
-    return NextResponse.json({ error: error.message }, { status: error.status });
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: error.code,
+      },
+      { status: error.status }
+    );
   }
   if (error instanceof Error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: 'BAD_REQUEST',
+      },
+      { status: 400 }
+    );
   }
-  return NextResponse.json({ error: 'An unexpected server error occurred.' }, { status: 500 });
+  return NextResponse.json(
+    {
+      error: 'An unexpected server error occurred.',
+      code: 'INTERNAL_SERVER_ERROR',
+    },
+    { status: 500 }
+  );
+}
+
+/**
+ * Enforces sliding-window rate limits on the requesting IP and optional identifier.
+ */
+export function enforceRateLimit(
+  request: NextRequest,
+  action: keyof typeof RATE_LIMIT_CONFIGS,
+  identifier?: string
+): void {
+  const ip = getClientIp(request) ?? '127.0.0.1';
+  const config = RATE_LIMIT_CONFIGS[action];
+
+  // 1. IP-based rate limiting
+  const ipCheck = checkRateLimit(`${action}:ip:${ip}`, config.maxAttempts, config.windowMs);
+  if (!ipCheck.allowed) {
+    throw new RateLimitError(
+      `Too many requests from this IP address. Please retry in ${ipCheck.resetInSeconds} seconds.`,
+      ipCheck.resetInSeconds
+    );
+  }
+
+  // 2. Specific identifier (e.g., account email or challenge ID)
+  if (identifier && identifier.trim()) {
+    const idCheck = checkRateLimit(
+      `${action}:id:${identifier.trim().toLowerCase()}`,
+      config.maxAttempts,
+      config.windowMs
+    );
+    if (!idCheck.allowed) {
+      throw new RateLimitError(
+        `Too many attempts for this account/request. Please retry in ${idCheck.resetInSeconds} seconds.`,
+        idCheck.resetInSeconds
+      );
+    }
+  }
 }
 
 export async function requireUser(

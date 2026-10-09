@@ -4,27 +4,28 @@ import { Search, FileText, CheckCircle } from 'lucide-react';
 import { RequireSession, RavinduShell, getStoredSession } from '../_components';
 import { useEffect, useState } from 'react';
 
+interface SavingsAccount {
+  account_number?: string;
+  customer_name?: string;
+  balance?: string | number;
+  status?: string;
+}
+
 function SavingsAccountsContent() { 
-  const [accounts, setAccounts] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Real user role state
-  const [currentUserRole, setCurrentUserRole] = useState<string>('');
+  // Initialise role directly from stored session — avoids setState-in-effect
+  const currentUserRole = getStoredSession()?.role ?? '';
   
   // Determine if the user has the right to approve based on actual login roles
   const canApprove = ['Branch Manager', 'Higher Management'].includes(currentUserRole);
 
   useEffect(() => {
-    // Get the real session from local storage on load
-    const session = getStoredSession();
-    if (session) {
-      setCurrentUserRole(session.role);
-    }
-
     async function fetchSavingsAccounts() {
       try {
         const response = await fetch('/api/savings');
-        const result = await response.json();
+        const result = await response.json() as { data?: SavingsAccount[] };
         if (result.data) {
           setAccounts(result.data);
         }
@@ -51,7 +52,7 @@ function SavingsAccountsContent() {
         alert("Approved successfully!");
         window.location.reload(); 
       } else {
-        const data = await response.json();
+        const data = await response.json() as { error?: string };
         alert(data.error || "Approval failed.");
       }
     } catch (error) {
@@ -110,26 +111,26 @@ function SavingsAccountsContent() {
                       </div>
                     </td>
                     <td className="px-6 py-4 font-bold text-[#102a43]">
-                      {account.customer_name || 'N/A'}
+                      {account.customer_name ?? 'N/A'}
                     </td>
                     <td className="px-6 py-4 text-right font-black text-[#102a43]">
-                      {parseFloat(account.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {parseFloat(String(account.balance ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${
-                        (account.status || 'pending').toLowerCase() === 'active' 
+                        (account.status ?? 'pending').toLowerCase() === 'active' 
                           ? 'bg-[#e8f7f2] text-[#216e61]' 
                           : 'bg-[#fff1ed] text-[#b65f45]'
                       }`}>
-                        {(account.status || 'PENDING').toUpperCase()}
+                        {(account.status ?? 'PENDING').toUpperCase()}
                       </span>
                     </td>
                     
                     {canApprove && (
                       <td className="px-6 py-4 text-center">
-                        {(account.status || 'pending').toLowerCase() === 'pending' && (
+                        {(account.status ?? 'pending').toLowerCase() === 'pending' && (
                           <button 
-                            onClick={() => handleApprove(account.account_number)}
+                            onClick={() => handleApprove(account.account_number ?? '')}
                             className="inline-flex items-center gap-1 rounded-md bg-[#216e61] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#164e44]"
                           >
                             <CheckCircle className="h-3 w-3" />

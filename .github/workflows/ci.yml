@@ -1,0 +1,48 @@
+name: CI - Automated Testing & Verification
+
+on:
+  push:
+    branches:
+      - main
+      - Ravindu-feature/auth
+      - '**'
+  pull_request:
+    branches:
+      - main
+      - Ravindu-feature/auth
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  auth-and-backend-checks:
+    name: Lint, Typecheck & Automated Test Suite
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./microbanking-and-interest-management-system
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'microbanking-and-interest-management-system/package-lock.json'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Code Quality & Linting Check
+        run: npm run lint
+
+      - name: Run Automated Vitest Test Suite (59+ Integration & Unit Tests)
+        run: npm test
+
+      - name: TypeScript Static Type Checking
+        run: npx tsc --noEmit --skipLibCheck

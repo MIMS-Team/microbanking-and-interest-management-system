@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 
 export async function POST() {
   const connection = await pool.getConnection();
@@ -8,7 +9,7 @@ export async function POST() {
     await connection.beginTransaction();
 
     // 1. Fetch all FDs that have matured today or earlier
-    const [maturedFDs]: any = await connection.execute(`
+    const [maturedFDs] = await connection.execute<RowDataPacket[]>(`
       SELECT * FROM fixed_deposits 
       WHERE maturity_date <= CURRENT_DATE 
       AND status IN ('active', 'pending')
@@ -30,9 +31,10 @@ export async function POST() {
         // --- AUTO RENEW SCENARIO ---
         
         // 1. Deposit ONLY the interest into the linked savings account
-        await connection.execute(`
-          UPDATE savings_accounts SET balance = balance + ? WHERE id = ?
-        `, [interestAmount, fd.source_account_id]);
+        await connection.execute(
+          `UPDATE savings_accounts SET balance = balance + ? WHERE id = ?`,
+          [interestAmount, fd.source_account_id]
+        );
 
         // 2. Generate a new FD number (appending -R to the old number)
         const newFdNumber = `${fd.fd_number}-R${Math.floor(Math.random() * 1000)}`;
@@ -52,15 +54,17 @@ export async function POST() {
         const totalAmount = principal + interestAmount;
         
         // Deposit the total amount (Principal + Interest) into the linked savings account
-        await connection.execute(`
-          UPDATE savings_accounts SET balance = balance + ? WHERE id = ?
-        `, [totalAmount, fd.source_account_id]);
+        await connection.execute(
+          `UPDATE savings_accounts SET balance = balance + ? WHERE id = ?`,
+          [totalAmount, fd.source_account_id]
+        );
       }
 
       // Mark the old FD as 'closed' (Common for both scenarios)
-      await connection.execute(`
-        UPDATE fixed_deposits SET status = 'closed' WHERE id = ?
-      `, [fd.id]);
+      await connection.execute(
+        `UPDATE fixed_deposits SET status = 'closed' WHERE id = ?`,
+        [fd.id]
+      );
 
       processedCount++;
     }
@@ -73,10 +77,25 @@ export async function POST() {
       processedFDs: processedCount 
     }, { status: 200 });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     await connection.rollback();
     connection.release();
     console.error("Interest Calculation Error:", error);
     return NextResponse.json({ error: "Failed to calculate interest." }, { status: 500 });
   }
 }
+
+export async function GET() {
+  try {
+    const [rows] = await pool.execute<RowDataPacket[]>(`
+      SELECT id, amount, status FROM fixed_deposits ORDER BY id DESC LIMIT 100
+    `);
+    return NextResponse.json({ data: rows }, { status: 200 });
+  } catch (error: unknown) {
+    console.error("GET Interest Error:", error);
+    return NextResponse.json({ error: "Failed to fetch interest data." }, { status: 500 });
+  }
+}
+
+// Needed so TypeScript treats this as ESM module
+export type { ResultSetHeader };

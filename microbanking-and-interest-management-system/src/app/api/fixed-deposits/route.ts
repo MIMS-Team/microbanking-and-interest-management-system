@@ -1,9 +1,18 @@
 import { NextResponse } from 'next/server';
-import pool from '@/lib/db'; 
+import pool from '@/lib/db';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await request.json() as {
+      fdNumber?: string;
+      sourceAccountId?: number;
+      rateId?: number;
+      principal?: number;
+      annualRate?: number;
+      termMonths?: number;
+      autoRenew?: boolean;
+    };
     const { fdNumber, sourceAccountId, rateId, principal, annualRate, termMonths, autoRenew } = body;
 
     // 1. Validate required fields from the request body
@@ -19,7 +28,7 @@ export async function POST(request: Request) {
 
     try {
       // 2. Fetch the status of the source savings account from the database
-      const [accountCheck]: any = await connection.execute(
+      const [accountCheck] = await connection.execute<RowDataPacket[]>(
         `SELECT status FROM savings_accounts WHERE id = ?`,
         [sourceAccountId] 
       );
@@ -37,13 +46,13 @@ export async function POST(request: Request) {
 
       // 5. Check if the savings account has enough balance to fund the FD
       // FOR UPDATE locks the row to prevent concurrent modifications during this transaction
-      const [accounts]: any = await connection.execute(
+      const [accounts] = await connection.execute<RowDataPacket[]>(
         'SELECT balance FROM savings_accounts WHERE id = ? FOR UPDATE',
         [sourceAccountId]
       );
 
       const currentBalance = parseFloat(accounts[0].balance);
-      const fdAmount = parseFloat(principal);
+      const fdAmount = parseFloat(String(principal));
 
       if (currentBalance < fdAmount) {
         throw new Error(`Insufficient balance. Account only has ${currentBalance}`);
@@ -63,7 +72,7 @@ export async function POST(request: Request) {
         VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_DATE, INTERVAL ? MONTH))
       `;
       
-      const [fdResult]: any = await connection.execute(insertFdQuery, [
+      const [fdResult] = await connection.execute<ResultSetHeader>(insertFdQuery, [
         fdNumber, 
         sourceAccountId, 
         rateId, 
@@ -83,12 +92,12 @@ export async function POST(request: Request) {
         { status: 201 }
       );
 
-    } catch (dbError: any) {
+    } catch (dbError: unknown) {
       // Rollback the transaction if any database operation fails
       await connection.rollback();
       connection.release();
-      // Send the specific error message to the frontend (e.g., "Insufficient balance" or "Validation Error")
-      return NextResponse.json({ error: dbError.message || "Database transaction failed." }, { status: 400 });
+      const msg = dbError instanceof Error ? dbError.message : "Database transaction failed.";
+      return NextResponse.json({ error: msg }, { status: 400 });
     }
 
   } catch (error) {
@@ -105,7 +114,7 @@ export async function GET() {
     const connection = await pool.getConnection();
     
     // Fetch all fixed deposits with joined customer details
-    const [rows]: any = await connection.execute(`
+    const [rows] = await connection.execute<RowDataPacket[]>(`
       SELECT 
         fd.fd_number, 
         c.full_name AS customer_name, 

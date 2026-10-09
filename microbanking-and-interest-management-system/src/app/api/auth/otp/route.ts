@@ -1,25 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authCookies, verifyLoginOtpChallenge } from '@/lib/server/auth';
-import { getClientIp, getClientUserAgent, jsonError, sessionCookie } from '@/lib/server/api';
+import {
+  enforceRateLimit,
+  getClientIp,
+  getClientUserAgent,
+  jsonError,
+  sessionCookie,
+} from '@/lib/server/api';
+import { validateOtpPayload } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    const rawBody = await request.json().catch(() => null);
+    const { code, challengeId: bodyChallenge } = validateOtpPayload(rawBody);
 
-    if (!code) {
-      return NextResponse.json({ error: 'Verification code is required.' }, { status: 400 });
-    }
-
-    const challenge =
-      (typeof body.challengeId === 'string' && body.challengeId.trim()) ||
-      request.cookies.get(authCookies.OTP_COOKIE)?.value;
+    const challenge = bodyChallenge || request.cookies.get(authCookies.OTP_COOKIE)?.value;
 
     if (!challenge) {
-      return NextResponse.json({ error: 'Verification challenge is missing or expired. Please sign in again.' }, { status: 401 });
+      return NextResponse.json(
+        {
+          error: 'Verification challenge is missing or expired. Please sign in again.',
+          code: 'CHALLENGE_MISSING',
+        },
+        { status: 401 }
+      );
     }
+
+    // Enforce rate limit per IP and per challenge ID to prevent OTP brute-forcing
+    enforceRateLimit(request, 'OTP', challenge);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

@@ -646,3 +646,25 @@ export async function countActiveAdmins(): Promise<number> {
   const row = stmt.get() as unknown as { count: number } | undefined;
   return row?.count ?? 0;
 }
+
+export async function getAuditLogsForTest(
+  email?: string
+): Promise<Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>> {
+  const db = getSqliteDb();
+  if (email) {
+    const rows = db.prepare(`
+      SELECT id, employee_id, email, event_type, created_at
+      FROM authentication_audit
+      WHERE email = lower(?)
+      ORDER BY id DESC
+    `).all(email.trim());
+    return rows as unknown as Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>;
+  }
+  const rows = db.prepare(`
+    SELECT id, employee_id, email, event_type, created_at
+    FROM authentication_audit
+    ORDER BY id DESC
+  `).all();
+  return rows as unknown as Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>;
+}
+

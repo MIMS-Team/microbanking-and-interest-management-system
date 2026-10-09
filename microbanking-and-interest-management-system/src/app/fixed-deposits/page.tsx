@@ -4,27 +4,32 @@ import { Search, FileText, CheckCircle } from 'lucide-react';
 import { RequireSession, RavinduShell, getStoredSession } from '../_components';
 import { useEffect, useState } from 'react';
 
+interface FixedDeposit {
+  fd_number?: string;
+  account_number?: string;
+  customer_name?: string;
+  principal_amount?: string | number;
+  amount?: string | number;
+  term_months?: number;
+  interest_rate?: string | number;
+  status?: string;
+}
+
 function FixedDepositsContent() { 
-  const [deposits, setDeposits] = useState<any[]>([]);
+  const [deposits, setDeposits] = useState<FixedDeposit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Real user role state
-  const [currentUserRole, setCurrentUserRole] = useState<string>('');
+  // Initialise role directly from stored session — avoids setState-in-effect
+  const currentUserRole = getStoredSession()?.role ?? '';
   
   // Determine if the user has the right to approve based on actual login roles
   const canApprove = ['Branch Manager', 'Higher Management'].includes(currentUserRole);
 
   useEffect(() => {
-    // Get the real session from local storage on load
-    const session = getStoredSession();
-    if (session) {
-      setCurrentUserRole(session.role);
-    }
-
     async function fetchFixedDeposits() {
       try {
         const response = await fetch('/api/fixed-deposits');
-        const result = await response.json();
+        const result = await response.json() as { data?: FixedDeposit[] };
         if (result.data) {
           setDeposits(result.data);
         }
@@ -51,7 +56,7 @@ function FixedDepositsContent() {
         alert("Approved successfully!");
         window.location.reload(); 
       } else {
-        const data = await response.json();
+        const data = await response.json() as { error?: string };
         alert(data.error || "Approval failed.");
       }
     } catch (error) {
@@ -107,14 +112,14 @@ function FixedDepositsContent() {
                     <td className="px-6 py-4 font-black text-[#102a43]">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-[#627d98]" />
-                        {deposit.account_number || deposit.fd_number}
+                        {deposit.account_number ?? deposit.fd_number}
                       </div>
                     </td>
                     <td className="px-6 py-4 font-bold text-[#102a43]">
                       {deposit.customer_name}
                     </td>
                     <td className="px-6 py-4 text-right font-black text-[#102a43]">
-                      {parseFloat(deposit.principal_amount || deposit.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {parseFloat(String(deposit.principal_amount ?? deposit.amount ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 text-center font-bold text-[#102a43]">
                       {deposit.term_months} Months
@@ -124,19 +129,19 @@ function FixedDepositsContent() {
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${
-                        (deposit.status || 'pending').toLowerCase() === 'active' 
+                        (deposit.status ?? 'pending').toLowerCase() === 'active' 
                           ? 'bg-[#e8f7f2] text-[#216e61]' 
                           : 'bg-[#fff1ed] text-[#b65f45]'
                       }`}>
-                        {(deposit.status || 'PENDING').toUpperCase()}
+                        {(deposit.status ?? 'PENDING').toUpperCase()}
                       </span>
                     </td>
                     
                     {canApprove && (
                       <td className="px-6 py-4 text-center">
-                        {(deposit.status || 'pending').toLowerCase() === 'pending' && (
+                        {(deposit.status ?? 'pending').toLowerCase() === 'pending' && (
                           <button 
-                            onClick={() => handleApprove(deposit.fd_number)}
+                            onClick={() => handleApprove(deposit.fd_number ?? '')}
                             className="inline-flex items-center gap-1 rounded-md bg-[#216e61] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#164e44]"
                           >
                             <CheckCircle className="h-3 w-3" />

@@ -1,29 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { confirmPasswordReset } from '@/lib/server/auth';
-import { getClientIp, getClientUserAgent, isValidPassword, jsonError } from '@/lib/server/api';
+import {
+  enforceRateLimit,
+  getClientIp,
+  getClientUserAgent,
+  jsonError,
+} from '@/lib/server/api';
+import { validatePasswordResetConfirmPayload } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const challengeId = typeof body.challengeId === 'string' ? body.challengeId.trim() : (typeof body.token === 'string' ? body.token.trim() : '');
-    const code = typeof body.code === 'string' ? body.code.trim() : (typeof body.otp === 'string' ? body.otp.trim() : '');
-    const newPassword = typeof body.password === 'string' ? body.password : '';
-    const confirmPassword = typeof body.confirmPassword === 'string' ? body.confirmPassword : '';
+    const rawBody = await request.json().catch(() => null);
+    const { challengeId, code, newPassword } = validatePasswordResetConfirmPayload(rawBody);
 
-    if (!challengeId) {
-      return NextResponse.json({ error: 'Reset challenge ID is required.' }, { status: 400 });
-    }
-    if (!code) {
-      return NextResponse.json({ error: 'Verification code is required.' }, { status: 400 });
-    }
-    if (!isValidPassword(newPassword)) {
-      return NextResponse.json({ error: 'Password must be between 8 and 128 characters.' }, { status: 400 });
-    }
-    if (newPassword !== confirmPassword) {
-      return NextResponse.json({ error: 'New password and confirmation do not match.' }, { status: 400 });
-    }
+    // Enforce rate limiting per IP and per reset challenge ID
+    enforceRateLimit(request, 'PASSWORD_RESET_CONFIRM', challengeId);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

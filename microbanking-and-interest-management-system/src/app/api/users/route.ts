@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initiateEmployeeCreation, roleFromInput, type Role } from '@/lib/server/auth';
+import { initiateEmployeeCreation, roleFromInput } from '@/lib/server/auth';
 import { getClientIp, getClientUserAgent, jsonError, requireUser } from '@/lib/server/api';
 import { listEmployees } from '@/lib/server/db';
-import { branchId, emailAddress, requiredText, userRole } from '@/lib/server/validation';
+import { validateCreateEmployeePayload } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
@@ -28,24 +28,15 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const { user: actor } = await requireUser(request, ['admin']);
-    const body = await request.json();
-    const role: Role = userRole(body.role);
-    const fullName = requiredText(body.full_name, 'Full name');
-    const email = emailAddress(body.email);
-    const assignedBranch = branchId(body.branch_id);
+    const rawBody = await request.json().catch(() => null);
+    const payload = validateCreateEmployeePayload(rawBody);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);
 
     const result = await initiateEmployeeCreation(
       actor,
-      {
-        full_name: fullName,
-        email,
-        role,
-        branch_id: assignedBranch,
-        password: typeof body.password === 'string' && body.password ? body.password : undefined,
-      },
+      payload,
       {
         ip_address: ipAddress,
         user_agent: userAgent,

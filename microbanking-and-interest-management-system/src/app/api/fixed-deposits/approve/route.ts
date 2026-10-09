@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import type { ResultSetHeader } from 'mysql2';
 
 export async function PUT(request: Request) {
   try {
-    const body = await request.json();
+    const body = await request.json() as { fdNumber?: string; userRole?: string };
     const { fdNumber, userRole } = body; 
 
     // Validate permissions with actual system roles
     const allowedRoles = ['Branch Manager', 'Higher Management'];
-    if (!allowedRoles.includes(userRole)) {
+    if (!allowedRoles.includes(userRole ?? '')) {
       return NextResponse.json(
         { error: "Unauthorized: You do not have permission to approve FDs." },
         { status: 403 }
@@ -24,7 +25,7 @@ export async function PUT(request: Request) {
 
     const connection = await pool.getConnection();
 
-    const [result]: any = await connection.execute(
+    const [result] = await connection.execute<ResultSetHeader>(
       `UPDATE fixed_deposits SET status = 'active' WHERE fd_number = ? AND status = 'pending'`,
       [fdNumber]
     );

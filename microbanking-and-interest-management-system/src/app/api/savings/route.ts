@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
-import pool from '@/lib/db'; // Import the database connection
+import pool from '@/lib/db';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 
 export async function POST(request: Request) {
   try {
     // 1. Extract all required data sent from the frontend
-    const body = await request.json();
+    const body = await request.json() as {
+      accountNumber?: string;
+      branchId?: number;
+      agentId?: number;
+      rateId?: number;
+      customerId?: number;
+      balance?: number;
+    };
     const { accountNumber, branchId, agentId, rateId, customerId, balance } = body;
 
     // 2. Validate that all mandatory fields are provided
@@ -27,12 +35,12 @@ export async function POST(request: Request) {
         INSERT INTO savings_accounts (account_number, branch_id, agent_id, rate_id, balance) 
         VALUES (?, ?, ?, ?, ?)
       `;
-      const [accountResult]: any = await connection.execute(insertAccountQuery, [
+      const [accountResult] = await connection.execute<ResultSetHeader>(insertAccountQuery, [
         accountNumber, 
         branchId, 
         agentId, 
         rateId, 
-        balance || 0 // Default to 0 if no balance is provided
+        balance ?? 0 // Default to 0 if no balance is provided
       ]);
 
       // Get the ID of the newly created savings account
@@ -72,6 +80,7 @@ export async function POST(request: Request) {
     );
   }
 }
+
 // GET API - To fetch all savings accounts and their owners
 export async function GET() {
   try {
@@ -90,7 +99,7 @@ export async function GET() {
     `;
 
     // Execute the query using our connection pool
-    const [rows] = await pool.execute(query);
+    const [rows] = await pool.execute<RowDataPacket[]>(query);
 
     // Send the fetched data back to the frontend
     return NextResponse.json(

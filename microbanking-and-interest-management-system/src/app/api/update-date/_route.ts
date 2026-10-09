@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import type { ResultSetHeader } from 'mysql2';
 
 export async function POST() {
   try {
@@ -11,14 +12,14 @@ export async function POST() {
       WHERE status = 'pending' OR status = 'active'
     `;
     
-    const [result]: any = await pool.execute(query);
+    const [result] = await pool.execute<ResultSetHeader>(query);
     
     return NextResponse.json({ 
       message: "Dates updated to past successfully!", 
       changedRows: result.affectedRows 
     }, { status: 200 });
 
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Update Error:", error);
     return NextResponse.json({ error: "Failed to update dates." }, { status: 500 });
   }
