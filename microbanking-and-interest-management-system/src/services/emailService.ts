@@ -14,7 +14,7 @@ function decodePurpose(purpose: string, details?: string): string {
     case "BT": {
       if (details) {
         if (/deactivate/i.test(details)) return "Deactivate Branch";
-        if (/activate/i.test(details)) return "Activate Branch";
+        else  return "Activate Branch";
       }
       return "Toggle Branch Operational Status";
     }
@@ -26,8 +26,9 @@ function decodePurpose(purpose: string, details?: string): string {
       return "Update Employee";
 
     case "ET":
-      if (details && /suspend/i.test(details)) return "Suspend Employee";
-      if (details && /reactivate/i.test(details)) return "Reactivate Employee";
+      if (details)
+        if(/suspend/i.test(details)) return "Suspend Employee";
+        else return "Reactivate Employee";
       return "Toggle Employee Status";
 
     default:

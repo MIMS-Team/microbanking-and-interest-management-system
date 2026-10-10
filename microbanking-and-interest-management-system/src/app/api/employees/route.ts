@@ -7,6 +7,7 @@ import {
   toggleEmployeeStatus,
   updateEmployee,
 } from '@/services/employeeService';
+import { sendEmployeePasswordResetEmail } from '@/services/passwordEmailService';
 
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
@@ -228,7 +229,14 @@ export async function PATCH(request: NextRequest) {
     if (typeof body !== 'object' || body === null) {
       return NextResponse.json({ message: 'An employee action is required.' }, { status: 400 });
     }
-    const { employeeId, action, otpCode, otpId, otpEmployeeId } = body as Record<string, unknown>;
+    const {
+      employeeId,
+      action,
+      otpCode,
+      otpId,
+      otpEmployeeId,
+      requestingEmployeeId,
+    } = body as Record<string, unknown>;
 
     if (!isPositiveInteger(employeeId)) {
       return NextResponse.json({ message: 'A valid employee ID is required.' }, { status: 400 });
@@ -299,14 +307,34 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (action === 'reset-password') {
-      const result = await renewEmployeePassword(employeeId);
-      if (!result) {
+      if (!isPositiveInteger(requestingEmployeeId)) {
+        return NextResponse.json(
+          { message: 'A valid requesting employee ID is required.' },
+          { status: 400 }
+        );
+      }
+
+      const reset = await renewEmployeePassword(employeeId, requestingEmployeeId);
+      if (!reset) {
         return NextResponse.json({ message: 'Employee not found.' }, { status: 404 });
       }
+
+      const emailResult = await sendEmployeePasswordResetEmail({
+        recipientEmail: reset.recipientEmail,
+        recipientName: reset.recipientName,
+        temporaryPassword: reset.temporaryPassword,
+        requestingEmployee: reset.requestingEmployee,
+      });
+      if (!emailResult.success) {
+        return NextResponse.json(
+          { message: 'The password was reset, but the email could not be sent. Contact system administration.' },
+          { status: 502 }
+        );
+      }
+
       return NextResponse.json({
         success: true,
-        temporaryPassword: result.temporaryPassword,
-        message: `Temporary password generated for ${result.email}.`,
+        message: `A new password was emailed to ${reset.recipientName} at ${reset.recipientEmail}.`,
       });
     }
 

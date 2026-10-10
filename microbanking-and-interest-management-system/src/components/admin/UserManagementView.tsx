@@ -563,29 +563,54 @@ export default function UserManagementView() {
     setToggleOtpRequired(true);
   };
 
-  // Reset employee password
-  const handleRenewEmpPassword = async (emp: EmployeeRecord) => {
+  // Send an employee password reset request after explicit confirmation.
+  const confirmEmployeePasswordReset = async (emp: EmployeeRecord) => {
     try {
+      const storedSession = sessionStorage.getItem('btrust_session');
+      const session: { employeeId?: number } | null = storedSession
+        ? JSON.parse(storedSession)
+        : null;
+      const requestingEmployeeId = Number(session?.employeeId);
+      if (!Number.isInteger(requestingEmployeeId) || requestingEmployeeId <= 0) {
+        throw new Error('Your employee session could not be verified. Please sign in again.');
+      }
+
       const response = await fetch('/api/employees', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId: Number(emp.id), action: 'reset-password' }),
+        body: JSON.stringify({
+          employeeId: Number(emp.id),
+          requestingEmployeeId,
+          action: 'reset-password',
+        }),
       });
-      const result: { message?: string; temporaryPassword?: string } = await response.json();
-      if (!response.ok || !result.temporaryPassword) {
+      const result: { message?: string } = await response.json();
+      if (!response.ok) {
         throw new Error(result.message || 'Failed to reset employee password.');
       }
       setPasswordResetInfo({
         isOpen: true,
         name: emp.name,
-        tempPass: result.temporaryPassword,
-        message: result.message || `Temporary password generated for ${emp.email}.`,
+        tempPass: '',
+        message: result.message || `The new password was emailed to ${emp.email}.`,
         type: 'Employee',
       });
     } catch (error) {
       console.error('Error resetting employee password:', error);
       setEmployeeError(error instanceof Error ? error.message : 'Failed to reset employee password.');
     }
+  };
+
+  const handleRenewEmpPassword = (emp: EmployeeRecord) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Employee Password Reset',
+      message: `Reset the password for ${emp.name} (Employee ID: ${emp.id}) and email the new password to ${emp.email}?`,
+      onConfirm: () => {
+        setConfirmDialog((previous) => ({ ...previous, isOpen: false }));
+        void confirmEmployeePasswordReset(emp);
+      },
+    });
   };
 
   // Reset customer password
@@ -859,7 +884,7 @@ export default function UserManagementView() {
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={()=>null}//() => handleRenewEmpPassword(emp)}
+                            onClick={() => handleRenewEmpPassword(emp)}
                             className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                             title="Reset Password"
                           >
@@ -1472,17 +1497,24 @@ export default function UserManagementView() {
           <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
             <div className="flex items-center gap-2 text-xs font-bold text-blue-900">
               <CheckCircle className="w-4 h-4 text-blue-600" />
-              <span>Temporary credentials for {passwordResetInfo.name}</span>
+              <span>
+                {passwordResetInfo.type === 'Employee'
+                  ? 'Password reset email sent for'
+                  : 'Temporary credentials for'}{' '}
+                {passwordResetInfo.name}
+              </span>
             </div>
             <p className="text-xs text-blue-700 mt-1">{passwordResetInfo.message}</p>
           </div>
 
-          <div className="p-3 bg-slate-100 rounded-xl text-center">
-            <span className="text-[11px] text-slate-500 block">Temporary password:</span>
-            <span className="font-mono font-bold text-lg text-slate-900 tracking-wider">
-              {passwordResetInfo.tempPass}
-            </span>
-          </div>
+          {passwordResetInfo.tempPass && (
+            <div className="p-3 bg-slate-100 rounded-xl text-center">
+              <span className="text-[11px] text-slate-500 block">Temporary password:</span>
+              <span className="font-mono font-bold text-lg text-slate-900 tracking-wider">
+                {passwordResetInfo.tempPass}
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-end pt-2">
             <button

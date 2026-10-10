@@ -6,6 +6,7 @@ import { EmployeeRecord } from '@/types';
 import sql from '@/lib/db';
 import { validateOtp } from '@/services/otpService';
 
+
 function mapEmployee(row: Record<string, unknown>): EmployeeRecord {
   const openedDateValue = row.opened_date;
   const createdAt =
@@ -488,24 +489,54 @@ export async function toggleEmployeeStatus(
   return result.length > 0 ? Boolean(result[0].is_active) : null;
 }
 
+export type EmployeePasswordReset = {
+  recipientEmail: string;
+  recipientName: string;
+  temporaryPassword: string;
+  requestingEmployee: {
+    employeeId: number;
+    name: string;
+    email: string;
+  };
+};
+
 export async function renewEmployeePassword(
-  employeeId: number
-): Promise<{ temporaryPassword: string; email: string } | null> {
+  employeeId: number,
+  requestingEmployeeId: number
+): Promise<EmployeePasswordReset | null> {
+  const employees = await sql`
+    SELECT recipient.email AS recipient_email, recipient.name AS recipient_name,
+      requester.employee_id AS requester_id, requester.name AS requester_name,
+      requester.email AS requester_email
+    FROM employee recipient
+    JOIN employee requester
+      ON requester.employee_id = ${requestingEmployeeId}
+    WHERE recipient.employee_id = ${employeeId}
+  `;
+  if (employees.length === 0) {
+    return null;
+  }
+
   const temporaryPassword = randomBytes(12).toString('base64url');
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);
-  const result = await sql`
+  const updatedEmployees = await sql`
     UPDATE employee
     SET password = ${passwordHash}
     WHERE employee_id = ${employeeId}
-    RETURNING email
+    RETURNING employee_id
   `;
-
-  if (result.length === 0) {
+  if (updatedEmployees.length === 0) {
     return null;
   }
 
   return {
+    recipientEmail: String(employees[0].recipient_email),
+    recipientName: String(employees[0].recipient_name),
     temporaryPassword,
-    email: String(result[0].email),
+    requestingEmployee: {
+      employeeId: Number(employees[0].requester_id),
+      name: String(employees[0].requester_name),
+      email: String(employees[0].requester_email),
+    },
   };
 }

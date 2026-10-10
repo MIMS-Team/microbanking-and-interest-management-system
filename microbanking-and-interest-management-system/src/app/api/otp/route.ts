@@ -8,6 +8,7 @@ const otpPurposes: OtpPurpose[] = ['BC', 'BU', 'BT', 'EC', 'EU', 'ET'];
 // POST /api/otp — generate and send an OTP
 export async function POST(request: NextRequest) {
   try {
+
     // Read the request body
     const { purpose, details, requestingEmployeeId } = await request.json();
 
