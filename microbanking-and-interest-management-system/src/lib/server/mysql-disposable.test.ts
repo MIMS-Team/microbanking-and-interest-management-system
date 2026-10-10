@@ -3,19 +3,35 @@ import mysql from 'mysql2/promise';
 import type { Connection, RowDataPacket } from 'mysql2/promise';
 import { randomBytes } from 'node:crypto';
 import {
+  acquireOtpResendReservation,
   closePoolForTest,
-  consumeOtpChallenge,
   createEmployee,
   createOtpChallenge,
   createSession,
+  finalizeOtpResend,
   findEmployeeById,
   findOtpChallenge,
   findSessionByHash,
   setDbAdapterForTest,
+  setTransactionFailureHookForTest,
   withMySqlTransaction,
 } from './db';
 import { migrateAuthTables } from '../../../scripts/migrate-auth-mysql.mjs';
-import { hashOtp, hashSessionToken, passwordHash } from './auth';
+import {
+  AuthError,
+  confirmPasswordReset,
+  hashOtp,
+  hashSessionToken,
+  passwordHash,
+  passwordMatches,
+  resendOtp,
+  verifyLoginOtpChallenge,
+} from './auth';
+import {
+  clearDispatchedEmailsForTest,
+  getDispatchedEmailsForTest,
+  setMockDeliveryFailureForTest,
+} from './email';
 
 /**
  * Disposable MySQL Production Database Verification Suite
@@ -109,6 +125,8 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
   });
 
   afterAll(async () => {
+    setTransactionFailureHookForTest(null);
+    clearDispatchedEmailsForTest();
     await closePoolForTest();
     setDbAdapterForTest(null);
 
@@ -188,17 +206,17 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
     expect(rows.length).toBe(0);
   });
 
-  it('performs password reset transaction: updates password hash and revokes existing sessions', async () => {
+  it('exercises production confirmPasswordReset(): updates both hash locations, revokes sessions, and logs audit', async () => {
     const emp = await createEmployee({
       full_name: 'Reset Test Employee',
-      email: 'reset_test@ravindu.bank',
+      email: `reset_prod_${Date.now()}@ravindu.bank`,
       password_hash: passwordHash('OldPassword1!'),
       role: 'agent',
       branch_id: 1,
       status: 'active',
     });
 
-    const sessionHash = hashSessionToken('mysql_active_session_token');
+    const sessionHash = hashSessionToken(`mysql_active_session_${Date.now()}`);
     await createSession({
       token_hash: sessionHash,
       employee_id: emp.id,
@@ -217,37 +235,141 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
       expires_at: new Date(Date.now() + 300000),
     });
 
-    // Execute password reset with transaction
-    await withMySqlTransaction(async (conn) => {
-      const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-      await conn.execute('UPDATE otp_challenges SET consumed_at = ? WHERE id = ?', [now, challengeId]);
-      await conn.execute('UPDATE staff_authentication SET password_hash = ? WHERE employee_id = ?', [
-        passwordHash('NewPassword1!'),
-        emp.id,
-      ]);
-      await conn.execute('UPDATE employee_sessions SET revoked_at = ? WHERE employee_id = ?', [now, emp.id]);
-    });
+    // Invoke production reset function
+    const success = await confirmPasswordReset(challengeId, '123456', 'NewPassword1!');
+    expect(success).toBe(true);
 
-    // Check challenge consumed
+    // 1. Both password-hash locations in MySQL must be updated consistently
+    const [staffRows] = await testConn!.query<RowDataPacket[]>(
+      'SELECT password_hash FROM staff WHERE id = ?',
+      [emp.id]
+    );
+    const [authRows] = await testConn!.query<RowDataPacket[]>(
+      'SELECT password_hash FROM staff_authentication WHERE employee_id = ?',
+      [emp.id]
+    );
+
+    expect(staffRows.length).toBe(1);
+    expect(authRows.length).toBe(1);
+    expect(staffRows[0].password_hash).toBe(authRows[0].password_hash);
+
+    // 2. Old password is rejected and new password is accepted
+    expect(passwordMatches('NewPassword1!', staffRows[0].password_hash)).toBe(true);
+    expect(passwordMatches('OldPassword1!', staffRows[0].password_hash)).toBe(false);
+
+    // 3. Reset OTP is consumed and cannot be reused
     const challenge = await findOtpChallenge(challengeId, 'password_reset');
     expect(challenge?.consumed_at).not.toBeNull();
 
-    // Check session revoked
+    // 4. All previous sessions are revoked
     const revokedSession = await findSessionByHash(sessionHash);
     expect(revokedSession?.revoked_at).not.toBeNull();
+
+    // 5. Intended audit records exist
+    const [auditRows] = await testConn!.query<RowDataPacket[]>(
+      'SELECT event_type FROM authentication_audit WHERE employee_id = ? ORDER BY id ASC',
+      [emp.id]
+    );
+    const eventTypes = auditRows.map((r) => r.event_type);
+    expect(eventTypes).toContain('password_reset_completed');
+    expect(eventTypes).toContain('session_revoked');
   });
 
-  it('preserves unconsumed OTP challenge when a multi-step operation fails', async () => {
+  it('rejects wrong OTP during production password reset and preserves state', async () => {
     const emp = await createEmployee({
-      full_name: 'OTP Rollback Staff',
-      email: 'otp_rollback@ravindu.bank',
-      password_hash: passwordHash('Password123!'),
+      full_name: 'Wrong OTP Employee',
+      email: `wrong_otp_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('InitialPassword1!'),
       role: 'agent',
       branch_id: 1,
       status: 'active',
     });
 
-    const challengeId = `rollback_otp_${Date.now()}`;
+    const challengeId = `wrong_otp_chal_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'password_reset',
+      code_hash: hashOtp('456789'),
+      expires_at: new Date(Date.now() + 300000),
+    });
+
+    await expect(
+      confirmPasswordReset(challengeId, '000000', 'NewPassword1!')
+    ).rejects.toThrow(AuthError);
+
+    const challenge = await findOtpChallenge(challengeId, 'password_reset');
+    expect(challenge?.consumed_at).toBeNull();
+
+    const [staffRows] = await testConn!.query<RowDataPacket[]>(
+      'SELECT password_hash FROM staff WHERE id = ?',
+      [emp.id]
+    );
+    expect(passwordMatches('InitialPassword1!', staffRows[0].password_hash)).toBe(true);
+  });
+
+  it('rejects expired OTP during production password reset', async () => {
+    const emp = await createEmployee({
+      full_name: 'Expired OTP Employee',
+      email: `expired_otp_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('InitialPassword1!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const challengeId = `expired_otp_chal_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'password_reset',
+      code_hash: hashOtp('111222'),
+      expires_at: new Date(Date.now() - 5000), // Expired
+    });
+
+    await expect(
+      confirmPasswordReset(challengeId, '111222', 'NewPassword1!')
+    ).rejects.toThrow(/expired/i);
+  });
+
+  it('rejects reused OTP during production password reset', async () => {
+    const emp = await createEmployee({
+      full_name: 'Reused OTP Employee',
+      email: `reused_otp_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('InitialPassword1!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const challengeId = `reused_otp_chal_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'password_reset',
+      code_hash: hashOtp('777888'),
+      expires_at: new Date(Date.now() + 300000),
+    });
+
+    await confirmPasswordReset(challengeId, '777888', 'FirstNewPassword1!');
+
+    // Second attempt MUST be rejected
+    await expect(
+      confirmPasswordReset(challengeId, '777888', 'SecondNewPassword1!')
+    ).rejects.toThrow(/already been used/i);
+  });
+
+  it('guarantees single winner under concurrent production password reset confirmations', async () => {
+    const emp = await createEmployee({
+      full_name: 'Concurrent Reset Employee',
+      email: `concurrent_reset_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('StartPassword1!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const challengeId = `concurrent_reset_${Date.now()}`;
     await createOtpChallenge({
       id: challengeId,
       employee_id: emp.id,
@@ -256,49 +378,270 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
       expires_at: new Date(Date.now() + 300000),
     });
 
-    // Fail mid-transaction
-    await expect(
-      withMySqlTransaction(async (conn) => {
-        const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-        await conn.execute('UPDATE otp_challenges SET consumed_at = ? WHERE id = ?', [now, challengeId]);
-        throw new Error('Downstream financial ledger failure');
-      })
-    ).rejects.toThrow('Downstream financial ledger failure');
+    const results = await Promise.allSettled([
+      confirmPasswordReset(challengeId, '654321', 'WinningPassword1!'),
+      confirmPasswordReset(challengeId, '654321', 'WinningPassword1!'),
+      confirmPasswordReset(challengeId, '654321', 'WinningPassword1!'),
+      confirmPasswordReset(challengeId, '654321', 'WinningPassword1!'),
+      confirmPasswordReset(challengeId, '654321', 'WinningPassword1!'),
+    ]);
 
-    // Challenge MUST NOT be permanently consumed!
+    const successes = results.filter((r) => r.status === 'fulfilled');
+    const failures = results.filter((r) => r.status === 'rejected');
+
+    expect(successes.length).toBe(1);
+    expect(failures.length).toBe(4);
+  });
+
+  it('rolls back production password reset on mid-transaction failure via controlled hook', async () => {
+    const emp = await createEmployee({
+      full_name: 'Rollback Reset Employee',
+      email: `rollback_reset_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('InitialPassword1!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const sessionHash = hashSessionToken(`session_rollback_${Date.now()}`);
+    await createSession({
+      token_hash: sessionHash,
+      employee_id: emp.id,
+      expires_at: new Date(Date.now() + 8 * 3600 * 1000),
+    });
+
+    const challengeId = `rollback_challenge_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'password_reset',
+      code_hash: hashOtp('987654'),
+      expires_at: new Date(Date.now() + 300000),
+    });
+
+    // Inject controlled failure into the real production transaction helper
+    setTransactionFailureHookForTest((step) => {
+      if (step === 'after_staff_update') {
+        throw new Error('Controlled production transaction failure');
+      }
+    });
+
+    try {
+      await expect(
+        confirmPasswordReset(challengeId, '987654', 'AttemptedNewPassword1!')
+      ).rejects.toThrow('Controlled production transaction failure');
+    } finally {
+      setTransactionFailureHookForTest(null);
+    }
+
+    // Password must remain unchanged in both tables
+    const [staffRows] = await testConn!.query<RowDataPacket[]>(
+      'SELECT password_hash FROM staff WHERE id = ?',
+      [emp.id]
+    );
+    const [authRows] = await testConn!.query<RowDataPacket[]>(
+      'SELECT password_hash FROM staff_authentication WHERE employee_id = ?',
+      [emp.id]
+    );
+    expect(passwordMatches('InitialPassword1!', staffRows[0].password_hash)).toBe(true);
+    expect(passwordMatches('InitialPassword1!', authRows[0].password_hash)).toBe(true);
+
+    // Session must remain valid and unrevoked
+    const session = await findSessionByHash(sessionHash);
+    expect(session?.revoked_at).toBeNull();
+
+    // Challenge must remain unconsumed
     const challenge = await findOtpChallenge(challengeId, 'password_reset');
     expect(challenge?.consumed_at).toBeNull();
   });
 
-  it('guarantees single-use OTP verification under concurrent requests on MySQL', async () => {
+  // Repeat to exercise different lock interleavings between acquisition and finalization.
+  it.each(Array.from({ length: 10 }, (_, index) => index + 1))('guarantees atomic OTP resend under concurrent requests on MySQL (round %i)', async () => {
+    clearDispatchedEmailsForTest();
+
     const emp = await createEmployee({
-      full_name: 'Concurrent Staff',
-      email: 'concurrent@ravindu.bank',
+      full_name: 'Concurrent Resend Employee',
+      email: `concurrent_resend_${Date.now()}@ravindu.bank`,
       password_hash: passwordHash('Password123!'),
       role: 'agent',
       branch_id: 1,
       status: 'active',
     });
 
-    const challengeId = `concurrent_otp_${Date.now()}`;
+    const originalOtp = '333444';
+    const challengeId = `resend_concurrency_${Date.now()}`;
     await createOtpChallenge({
       id: challengeId,
       employee_id: emp.id,
       purpose: 'login',
-      code_hash: hashOtp('888999'),
+      code_hash: hashOtp(originalOtp),
       expires_at: new Date(Date.now() + 300000),
+      created_at: new Date(Date.now() - 35000),
     });
 
-    // Fire 5 simultaneous consumption attempts
-    const results = await Promise.all([
-      consumeOtpChallenge(challengeId),
-      consumeOtpChallenge(challengeId),
-      consumeOtpChallenge(challengeId),
-      consumeOtpChallenge(challengeId),
-      consumeOtpChallenge(challengeId),
+    // Dispatch 5 simultaneous resend requests for the exact same challenge
+    const results = await Promise.allSettled([
+      resendOtp(challengeId),
+      resendOtp(challengeId),
+      resendOtp(challengeId),
+      resendOtp(challengeId),
+      resendOtp(challengeId),
     ]);
 
-    const successes = results.filter((res) => res === true).length;
-    expect(successes).toBe(1);
+    const successes = results.filter((r) => r.status === 'fulfilled');
+    const failures = results.filter((r) => r.status === 'rejected');
+
+    // Exactly one must acquire the reservation and succeed. Include rejected
+    // errors in failures so database deadlocks are visible in CI diagnostics.
+    expect(successes.length, failures.map((result) => String(result.reason)).join('\n')).toBe(1);
+    expect(failures.length).toBe(4);
+
+    // Exactly one email must have been dispatched
+    const dispatched = getDispatchedEmailsForTest();
+    expect(dispatched.length).toBe(1);
+    const replacementOtp = dispatched[0].code;
+
+    const fulfilledResult = (successes[0] as PromiseFulfilledResult<{ challengeId: string }>).value;
+    const newChallengeId = fulfilledResult.challengeId;
+
+    // The replacement OTP must be valid and usable
+    const verifySuccess = await verifyLoginOtpChallenge(newChallengeId, replacementOtp);
+    expect(verifySuccess.employee.id).toBe(emp.id);
+
+    // The original OTP must stop working after successful finalization
+    await expect(verifyLoginOtpChallenge(challengeId, originalOtp)).rejects.toThrow(/already been (confirmed|used)/i);
+  });
+
+  it('preserves original challenge when OTP resend email dispatch fails on MySQL', async () => {
+    clearDispatchedEmailsForTest();
+
+    const emp = await createEmployee({
+      full_name: 'Resend Email Fail Employee',
+      email: `resend_fail_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('Password123!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const originalOtp = '555666';
+    const challengeId = `resend_email_fail_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'login',
+      code_hash: hashOtp(originalOtp),
+      expires_at: new Date(Date.now() + 300000),
+      created_at: new Date(Date.now() - 35000),
+    });
+
+    // Simulate email provider failure
+    setMockDeliveryFailureForTest(true);
+    try {
+      await expect(resendOtp(challengeId)).rejects.toThrow(/Email delivery service returned an error/i);
+    } finally {
+      setMockDeliveryFailureForTest(false);
+    }
+
+    // Original challenge remains valid and usable
+    const originalChallenge = await findOtpChallenge(challengeId, 'login');
+    expect(originalChallenge?.consumed_at).toBeNull();
+
+    const verifySuccess = await verifyLoginOtpChallenge(challengeId, originalOtp);
+    expect(verifySuccess.employee.id).toBe(emp.id);
+  });
+
+  it('handles verification of original OTP while resend is pending on MySQL', async () => {
+    clearDispatchedEmailsForTest();
+
+    const emp = await createEmployee({
+      full_name: 'Pending Resend Verification Employee',
+      email: `pending_resend_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('Password123!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const originalOtp = '777888';
+    const challengeId = `pending_resend_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'login',
+      code_hash: hashOtp(originalOtp),
+      expires_at: new Date(Date.now() + 300000),
+      created_at: new Date(Date.now() - 35000),
+    });
+
+    const replacementId = `rep_${Date.now()}`;
+    const reservation = await acquireOtpResendReservation(
+      challengeId,
+      {
+        id: replacementId,
+        employee_id: emp.id,
+        purpose: 'login',
+        code_hash: hashOtp('999000'),
+        expires_at: new Date(Date.now() + 300000),
+        is_pending: true,
+      },
+      30000
+    );
+
+    // Verify original code while resend is pending
+    const originalVerified = await verifyLoginOtpChallenge(challengeId, originalOtp);
+    expect(originalVerified.employee.id).toBe(emp.id);
+
+    // Attempting to finalize resend after original has been verified must abort
+    const finalization = await finalizeOtpResend(challengeId, replacementId, reservation.reservationToken);
+    expect(finalization.finalized).toBe(false);
+    expect(finalization.reason).toBe('ORIGINAL_ALREADY_CONSUMED');
+
+    // Replacement must not be usable
+    await expect(verifyLoginOtpChallenge(replacementId, '999000')).rejects.toThrow(/not found|expired/i);
+  });
+
+  it('recovers from abandoned resend reservation on MySQL', async () => {
+    clearDispatchedEmailsForTest();
+
+    const emp = await createEmployee({
+      full_name: 'Abandoned Lease Employee',
+      email: `abandoned_lease_${Date.now()}@ravindu.bank`,
+      password_hash: passwordHash('Password123!'),
+      role: 'agent',
+      branch_id: 1,
+      status: 'active',
+    });
+
+    const originalOtp = '123789';
+    const challengeId = `abandoned_resend_${Date.now()}`;
+    await createOtpChallenge({
+      id: challengeId,
+      employee_id: emp.id,
+      purpose: 'login',
+      code_hash: hashOtp(originalOtp),
+      expires_at: new Date(Date.now() + 300000),
+      created_at: new Date(Date.now() - 35000),
+    });
+
+    // Simulate dead worker process leaving expired reservation in database
+    const expiredLease = new Date(Date.now() - 10000).toISOString().slice(0, 19).replace('T', ' ');
+    await testConn!.query(
+      `INSERT INTO otp_resend_reservations (challenge_id, reservation_token, replacement_id, lease_expires_at)
+       VALUES (?, 'dead_worker_token', 'abandoned_pending_id', ?)`,
+      [challengeId, expiredLease]
+    );
+
+    // New resend request must detect expired reservation, clear it, and succeed
+    const resendResult = await resendOtp(challengeId);
+    expect(resendResult.challengeId).toBeTruthy();
+
+    const dispatched = getDispatchedEmailsForTest();
+    expect(dispatched.length).toBe(1);
+    const replacementOtp = dispatched[0].code;
+
+    // Replacement OTP works
+    const verifySuccess = await verifyLoginOtpChallenge(resendResult.challengeId, replacementOtp);
+    expect(verifySuccess.employee.id).toBe(emp.id);
   });
 });

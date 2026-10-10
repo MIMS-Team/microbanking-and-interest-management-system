@@ -66,10 +66,21 @@ CREATE TABLE IF NOT EXISTS `otp_challenges` (
   `expires_at` TIMESTAMP NOT NULL,
   `consumed_at` TIMESTAMP NULL DEFAULT NULL,
   `metadata` JSON DEFAULT NULL,
+  `is_pending` TINYINT(1) NOT NULL DEFAULT 0,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_otp_employee_purpose` (`employee_id`, `purpose`, `created_at`),
   CONSTRAINT `fk_otp_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `otp_resend_reservations` (
+  `challenge_id` VARCHAR(64) NOT NULL,
+  `reservation_token` VARCHAR(64) NOT NULL,
+  `replacement_id` VARCHAR(64) NOT NULL,
+  `lease_expires_at` TIMESTAMP NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`challenge_id`),
+  CONSTRAINT `fk_resend_challenge` FOREIGN KEY (`challenge_id`) REFERENCES `otp_challenges` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `authentication_audit` (
