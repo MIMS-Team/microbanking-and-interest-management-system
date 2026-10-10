@@ -423,7 +423,7 @@ export function RavinduShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [session, setSession] = useState<PublicEmployee | null>(() => getStoredSession());
+  const [session, setSession] = useState<PublicEmployee | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
@@ -684,20 +684,19 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [loggedOutNotice] = useState(() => {
-    if (typeof window !== 'undefined') {
+  const [loggedOutNotice, setLoggedOutNotice] = useState(false);
+  const [unconfirmedLogoutNotice, setUnconfirmedLogoutNotice] = useState(false);
+
+  useEffect(() => {
+    const updateNotices = () => {
       const params = new URLSearchParams(window.location.search);
-      return params.get('status') === 'logged_out' || params.get('message') === 'logged_out';
-    }
-    return false;
-  });
-  const [unconfirmedLogoutNotice] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('error') === 'unconfirmed_logout';
-    }
-    return false;
-  });
+      setLoggedOutNotice(params.get('status') === 'logged_out' || params.get('message') === 'logged_out');
+      setUnconfirmedLogoutNotice(params.get('error') === 'unconfirmed_logout');
+    };
+    updateNotices();
+    window.addEventListener('popstate', updateNotices);
+    return () => window.removeEventListener('popstate', updateNotices);
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -734,7 +733,7 @@ export function LoginForm() {
           if (body.challengeId) {
             window.sessionStorage.setItem('mims_otp_challenge_id', body.challengeId);
           }
-          const expMs = body.expiresAt ? new Date(body.expiresAt).getTime() : Date.now() + 5 * 60 * 1000;
+          const expMs = Date.parse(body.expiresAt ?? '') || 0;
           window.sessionStorage.setItem('mims_otp_expires_at', String(expMs));
           const cd = body.cooldownSeconds ?? 30;
           window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + cd * 1000));
@@ -829,62 +828,56 @@ export function OtpForm() {
   const [submitting, setSubmitting] = useState(false);
   const [resending, setResending] = useState(false);
 
-  // Authoritative current challenge ID throughout the OTP verification flow
-  const [currentChallengeId, setCurrentChallengeId] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    const urlParams = new URLSearchParams(window.location.search);
-    const fromUrl = urlParams.get('challenge');
-    if (fromUrl) {
-      window.sessionStorage.setItem('mims_otp_challenge_id', fromUrl);
-      return fromUrl;
-    }
-    return window.sessionStorage.getItem('mims_otp_challenge_id') ?? '';
-  });
-
-  const [cooldown, setCooldown] = useState<number>(() => {
-    if (typeof window === 'undefined') return 0;
-    const cooldownUntil = Number(window.sessionStorage.getItem('mims_otp_cooldown_until') || '0');
-    return cooldownUntil > Date.now() ? Math.ceil((cooldownUntil - Date.now()) / 1000) : 0;
-  });
-
-  const [maskedDestination] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    const storedEmail = window.sessionStorage.getItem('mims_otp_email');
-    if (storedEmail) {
-      const [local, domain] = storedEmail.split('@');
-      if (domain) {
-        return local.length <= 2 ? `${local[0] ?? ''}***@${domain}` : `${local[0]}***${local[local.length - 1]}@${domain}`;
-      }
-    }
-    return '';
-  });
-
-  const [expirySeconds, setExpirySeconds] = useState<number>(() => {
-    if (typeof window === 'undefined') return 0;
-    const rawExpiresAt = Number(window.sessionStorage.getItem('mims_otp_expires_at') || '0');
-    if (!rawExpiresAt) return 0;
-    // Server timestamp is authoritative; never extend validity on refresh
-    return Math.max(0, Math.floor((rawExpiresAt - Date.now()) / 1000));
-  });
+  // Server HTML and the first browser render share this initialization state.
+  const [initialized, setInitialized] = useState(false);
+  const [currentChallengeId, setCurrentChallengeId] = useState('');
+  const [cooldown, setCooldown] = useState(0);
+  const [maskedDestination, setMaskedDestination] = useState('');
+  const [expirySeconds, setExpirySeconds] = useState(0);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const interval = setInterval(() => {
+    const updateChallenge = () => {
+      const params = new URLSearchParams(window.location.search);
+      const storedId = window.sessionStorage.getItem('mims_otp_challenge_id') ?? '';
+      const id = params.get('challenge') || storedId;
+      // Never associate another challenge's expiry/destination with a URL ID.
+      if (storedId && id !== storedId) {
+        for (const key of ['mims_otp_expires_at', 'mims_otp_cooldown_until', 'mims_otp_email']) {
+          window.sessionStorage.removeItem(key);
+        }
+      }
+      if (id) {
+        window.sessionStorage.setItem('mims_otp_challenge_id', id);
+        if (!params.get('challenge')) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('challenge', id);
+          window.history.replaceState(null, '', url.toString());
+        }
+      }
+      setCurrentChallengeId(id);
+      const [local, domain] = (window.sessionStorage.getItem('mims_otp_email') ?? '').split('@');
+      setMaskedDestination(domain ? (local.length <= 2 ? `${local[0] ?? ''}***@${domain}` : `${local[0]}***${local[local.length - 1]}@${domain}`) : '');
+      setInitialized(true);
+    };
+    const updateCountdown = () => {
       const now = Date.now();
       const currentExpiry = Number(window.sessionStorage.getItem('mims_otp_expires_at') || '0');
-      if (currentExpiry) {
-        setExpirySeconds(Math.max(0, Math.floor((currentExpiry - now) / 1000)));
-      }
+      setExpirySeconds(Number.isFinite(currentExpiry) ? Math.max(0, Math.floor((currentExpiry - now) / 1000)) : 0);
       const currentCooldown = Number(window.sessionStorage.getItem('mims_otp_cooldown_until') || '0');
       if (currentCooldown > now) {
         setCooldown(Math.ceil((currentCooldown - now) / 1000));
       } else {
         setCooldown(0);
       }
-    }, 1000);
-
-    return () => clearInterval(interval);
+    };
+    const synchronize = () => { updateChallenge(); updateCountdown(); };
+    synchronize();
+    const interval = setInterval(updateCountdown, 1000);
+    window.addEventListener('popstate', synchronize);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('popstate', synchronize);
+    };
   }, []);
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -897,7 +890,7 @@ export function OtpForm() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting) return;
+    if (!initialized || !currentChallengeId || expirySeconds === 0 || submitting) return;
     setError('');
     setSuccessMsg('');
     setSubmitting(true);
@@ -946,7 +939,7 @@ export function OtpForm() {
   };
 
   const handleResend = async () => {
-    if (cooldown > 0 || resending) return;
+    if (!initialized || !currentChallengeId || cooldown > 0 || resending) return;
     setError('');
     setSuccessMsg('');
     setResending(true);
@@ -986,7 +979,7 @@ export function OtpForm() {
         setCooldown(cd);
         window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + cd * 1000));
 
-        const expMs = body.expiresAt ? new Date(body.expiresAt).getTime() : Date.now() + 5 * 60 * 1000;
+        const expMs = Date.parse(body.expiresAt ?? '') || 0;
         window.sessionStorage.setItem('mims_otp_expires_at', String(expMs));
         setExpirySeconds(Math.max(0, Math.floor((expMs - Date.now()) / 1000)));
       }
@@ -1016,7 +1009,7 @@ export function OtpForm() {
           </span>
           <div className="mt-1 flex items-center gap-1.5 font-semibold text-[#102a43]">
             <Clock3 className="h-3.5 w-3.5 text-[#b65f45]" />
-            {expirySeconds > 0 ? (
+            {!initialized ? <span>Loading verification details...</span> : expirySeconds > 0 ? (
               <span>Code expires in: <span className="font-mono text-[#b65f45]">{formatCountdown(expirySeconds)}</span></span>
             ) : (
               <span className="text-rose-600">Code has expired. Please request a new code.</span>
@@ -1054,7 +1047,7 @@ export function OtpForm() {
 
       <button
         type="submit"
-        disabled={submitting || code.length !== 6 || expirySeconds === 0}
+        disabled={!initialized || !currentChallengeId || submitting || code.length !== 6 || expirySeconds === 0}
         className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#1d3f5e] disabled:opacity-50"
       >
         {submitting ? (
@@ -1071,7 +1064,7 @@ export function OtpForm() {
       <div className="flex items-center justify-between pt-1 text-xs">
         <button
           type="button"
-          disabled={cooldown > 0 || resending}
+          disabled={!initialized || !currentChallengeId || cooldown > 0 || resending}
           onClick={handleResend}
           className="font-bold text-[#b65f45] hover:underline disabled:opacity-50"
         >

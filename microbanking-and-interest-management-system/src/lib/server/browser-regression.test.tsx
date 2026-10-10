@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
+import { renderToString } from 'react-dom/server';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
   LoginForm,
@@ -376,5 +377,37 @@ describe('Real Browser & Component Regression Test Suite', () => {
     const req = new NextRequest('http://localhost:3000/api/users');
     const res = await listUsersRoute(req);
     expect(res.status).toBe(401);
+  });
+
+  it('9. OTP initial markup is independent of browser storage and does not mutate it during render', () => {
+    const emptyMarkup = renderToString(<OtpForm />);
+    window.history.replaceState(null, '', '/otp?challenge=url-challenge');
+    window.sessionStorage.setItem('mims_otp_challenge_id', 'stored-challenge');
+    window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 300000));
+    window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + 30000));
+    window.sessionStorage.setItem('mims_otp_email', 'agent@example.test');
+    expect(renderToString(<OtpForm />)).toBe(emptyMarkup);
+    expect(window.sessionStorage.getItem('mims_otp_challenge_id')).toBe('stored-challenge');
+    expect(emptyMarkup).toContain('Loading verification details...');
+  });
+
+  it('10. Login initial markup is consistent for confirmed and unconfirmed logout URLs', () => {
+    const markup = renderToString(<LoginForm />);
+    window.history.replaceState(null, '', '/login?status=logged_out');
+    expect(renderToString(<LoginForm />)).toBe(markup);
+    window.history.replaceState(null, '', '/login?error=unconfirmed_logout');
+    expect(renderToString(<LoginForm />)).toBe(markup);
+  });
+
+  it('11. URL challenge changes never reuse another challenge expiry or destination', () => {
+    window.history.replaceState(null, '', '/otp?challenge=new-challenge');
+    window.sessionStorage.setItem('mims_otp_challenge_id', 'old-challenge');
+    window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 300000));
+    window.sessionStorage.setItem('mims_otp_email', 'old@example.test');
+    render(<OtpForm />);
+    expect(window.sessionStorage.getItem('mims_otp_challenge_id')).toBe('new-challenge');
+    expect(screen.getByText(/code has expired/i)).toBeTruthy();
+    expect(screen.queryByText('old@example.test')).toBeNull();
+    expect((screen.getByRole('button', { name: /verify & authorize/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
