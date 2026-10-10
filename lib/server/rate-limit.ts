@@ -158,32 +158,30 @@ export function clearAllRateLimits(): void {
 /**
  * Rate limit configuration profiles
  */
-const isE2E = process.env.E2E_TEST === 'true';
-
 export const RATE_LIMIT_CONFIGS = {
-  // Login: 5 attempts per 15 minutes per IP/email in production; generous in E2E test runs
+  // Normal protections are independent of headers and obsolete test flags.
   LOGIN: {
-    maxAttempts: isE2E ? 200 : 5,
+    maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
   },
   // OTP Verification: 5 attempts per 15 minutes
   OTP: {
-    maxAttempts: isE2E ? 200 : 5,
+    maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
   },
-  // OTP Resend Cooldown: 1 attempt per 30 seconds (overridden in E2E test runs)
+  // Resend cooldown is never relaxed, including browser tests.
   OTP_RESEND: {
-    maxAttempts: isE2E ? 200 : 1,
+    maxAttempts: 1,
     windowMs: 30 * 1000,
   },
   // Password Reset Request: 3 requests per 15 minutes
   PASSWORD_RESET_REQUEST: {
-    maxAttempts: isE2E ? 200 : 3,
+    maxAttempts: 3,
     windowMs: 15 * 60 * 1000,
   },
   // Password Reset Confirm: 5 attempts per 15 minutes
   PASSWORD_RESET_CONFIRM: {
-    maxAttempts: isE2E ? 200 : 5,
+    maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
   },
 };

@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
+import { validateE2eEnvironment } from '../../scripts/e2e-environment.mjs';
 import { randomBytes } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import mysql from 'mysql2/promise';
@@ -201,7 +202,12 @@ export function getSqliteDb(): DatabaseSync {
   const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
   let dbPath = ':memory:';
 
-  if (!isTest) {
+  if (process.env.MIMS_E2E_DIR) validateE2eEnvironment();
+  if (process.env.MIMS_AUTH_DB_PATH) {
+    if (!isAbsolute(process.env.MIMS_AUTH_DB_PATH)) throw new Error('MIMS_AUTH_DB_PATH must be absolute.');
+    dbPath = process.env.MIMS_AUTH_DB_PATH;
+    mkdirSync(dirname(dbPath), { recursive: true });
+  } else if (!isTest) {
     const dataDir = join(process.cwd(), '.data');
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
@@ -926,8 +932,7 @@ export async function acquireOtpResendReservation(
       }
       const createdAtMs = parseDateSafe(String(row.created_at)).getTime();
       const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
-      const isE2E = process.env.E2E_TEST === 'true';
-      if (!isE2E && elapsedSeconds < 30) {
+      if (elapsedSeconds < 30) {
         const wait = 30 - elapsedSeconds;
         throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
       }
@@ -1033,8 +1038,7 @@ export async function acquireOtpResendReservation(
     }
     const createdAtMs = parseDateSafe(String(row.created_at)).getTime();
     const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
-    const isE2E = process.env.E2E_TEST === 'true';
-    if (!isE2E && elapsedSeconds < 30) {
+    if (elapsedSeconds < 30) {
       const wait = 30 - elapsedSeconds;
       throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
     }
