@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Search, FileText, CheckCircle } from 'lucide-react';
 import { RequireSession, RavinduShell, getStoredSession } from '../_components';
 import { useEffect, useState } from 'react';
@@ -104,12 +105,12 @@ function SavingsAccountsContent() {
                 placeholder="Search by name or account number..." 
               />
             </div>
-            <a 
+            <Link 
               href="/savings/new"
               className="inline-flex items-center justify-center whitespace-nowrap rounded-xl bg-[#216e61] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#164e44]"
             >
               + Create New
-            </a>
+            </Link>
           </div>
         </div>
 
