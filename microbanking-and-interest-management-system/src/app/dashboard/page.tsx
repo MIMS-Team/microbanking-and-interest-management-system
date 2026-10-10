@@ -161,7 +161,7 @@ function OverviewView({ currentUser }: { currentUser: PublicEmployee | null }) {
         </div>
       </div>
 
-      <div className="grid gap-6">
+      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <section className="rounded-2xl border border-[#d9e2ec] bg-[#fffdf9] p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -204,6 +204,16 @@ function OverviewView({ currentUser }: { currentUser: PublicEmployee | null }) {
                 </span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-[#d9e2ec] bg-[#fffdf9] p-6 shadow-sm">
+          <h2 className="text-sm font-black mb-3">Live Session Telemetry</h2>
+          <div>
+            <StatusRow icon={ShieldCheck} label="Authentication Scheme" value="2FA (Password + OTP)" />
+            <StatusRow icon={Clock3} label="Absolute Session Limit" value="8 Hours" />
+            <StatusRow icon={Lock} label="Inactivity Timeout" value="30 Minutes" />
+            <StatusRow icon={KeyRound} label="OTP Expiration Window" value="5 Minutes" />
           </div>
         </section>
       </div>
