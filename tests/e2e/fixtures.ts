@@ -1,4 +1,4 @@
-import { test as base, expect, type Page } from '@playwright/test';
+import { test as base, expect, type Page, type BrowserContext } from '@playwright/test';
 
 const expectedFailures = new WeakMap<Page, Array<{ path: string; status: number }>>();
 
@@ -10,9 +10,7 @@ export function expectHttpError(page: Page, path: string, status: number) {
   expectedFailures.set(page, allowed);
 }
 
-export const test = base.extend<{ browserErrors: void }>({
-  browserErrors: [async ({ context }, use) => {
-    const errors: string[] = [];
+function watchBrowserErrors(context: BrowserContext, errors: string[]) {
     const watch = (page: Page) => {
       page.on('pageerror', error => errors.push(`pageerror ${page.url()}: ${error.message}`));
       page.on('console', message => {
@@ -31,10 +29,31 @@ export const test = base.extend<{ browserErrors: void }>({
     };
     context.pages().forEach(watch);
     context.on('page', watch); // Includes both tabs in the cross-tab logout test.
+    return () => context.off('page', watch);
+}
+
+export const test = base.extend<{ browserErrors: void; newActorPage: () => Promise<Page> }>({
+  browserErrors: [async ({ context }, use) => {
+    const errors: string[] = [];
+    const stop = watchBrowserErrors(context, errors);
     await use();
-    context.off('page', watch);
+    stop();
     expect(errors, 'Unexpected browser errors (including hydration)').toEqual([]);
   }, { auto: true }],
+  // Independent cookies/storage for each employee, with the same error checks as
+  // the default page. Raw browser.newContext() would escape the automatic fixture.
+  newActorPage: async ({ browser, baseURL, ignoreHTTPSErrors }, provideActorPage) => {
+    const contexts: BrowserContext[] = [];
+    const errors: string[] = [];
+    await provideActorPage(async () => {
+      const context = await browser.newContext({ baseURL, ignoreHTTPSErrors });
+      contexts.push(context);
+      watchBrowserErrors(context, errors);
+      return context.newPage();
+    });
+    await Promise.all(contexts.map(context => context.close()));
+    expect(errors, 'Unexpected employee browser errors (including hydration)').toEqual([]);
+  },
 });
 
 export { expect };

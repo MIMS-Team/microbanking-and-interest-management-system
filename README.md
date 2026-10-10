@@ -34,6 +34,8 @@ Authentication uses MySQL in production and SQLite for local tests; the savings/
 
 ```powershell
 npm run test:auth       # Authentication, routes, logout and browser component regressions
+npm run test:e2e        # Isolated authentication and employee-management browsers
+npm run test:e2e:production # Disposable MySQL + SMTP + HTTPS; requires TEST_MYSQL_* and OpenSSL
 npm run test:banking    # Existing PostgreSQL report/maintenance tests
 npm test               # Both suites; incomplete banking integration will currently fail
 npm run typecheck
@@ -42,6 +44,9 @@ npm run build
 ```
 
 The disposable MySQL tests skip when `TEST_MYSQL_*` settings are absent. Configure their dedicated test database settings to exercise that suite; these are separate from a shared development database.
+
+See [authentication deployment and verification](docs/auth-deployment.md) for production browser setup, process-local rate-limit limitations, HTTPS and trusted-proxy configuration.
+The [local follow-up verification results](docs/auth-verification-results.md) report authentication, MySQL, browser and banking outcomes separately.
 
 ## Existing utilities
 
