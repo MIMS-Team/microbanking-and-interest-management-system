@@ -91,3 +91,100 @@ Automated GitHub Actions CI checks run these validations on every pull request.
 - **Person 3 (Approvals & Banking Operations)**: Shares the higher-management approval pattern and role hierarchy.
 - **Person 4 (Transactions & Ledger)**: Attributes financial transactions and maintenance jobs to verified employee sessions.
 - **Person 5 (Reports & Audit)**: Relies on `authentication_audit` to report staff sign-in activity and security events.
+
+## Teammate Integration Guide: Consuming Server Authorization Guards
+
+Teammates implementing banking modules (savings, fixed deposits, ledger, loans, etc.) should **NOT** reinvent session checking, cookie extraction, or role verification. The module exports reusable guards from `@/lib/server/api` and `@/lib/server/auth` designed for seamless drop-in consumption:
+
+### 1. Guarding Route Handlers with `requireUser`
+
+Every protected API route handler should begin by resolving the authenticated caller. Never read roles from request bodies or `localStorage`:
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server';
+import { requireUser, jsonError } from '@/lib/server/api';
+
+export async function POST(request: NextRequest) {
+  try {
+    // 1. Authenticate caller (validates session token against DB, checks expiry, idle timeout & active status)
+    const { user } = await requireUser(request);
+
+    // 2. Access caller identity and metadata
+    const callerId = user.id;
+    const callerRole = user.role; // 'admin' | 'higher_manager' | 'manager' | 'agent'
+    const callerBranch = user.branch_id;
+
+    // ... execute your banking operation ...
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    // Automatically returns appropriate 401 Unauthorized, 403 Forbidden, 429 Rate Limited, or 500 error
+    return jsonError(error);
+  }
+}
+```
+
+### 2. Enforcing Role Permissions with `requireRole`
+
+To restrict operations to specific staff tiers (e.g. manager approval, admin configuration):
+
+```typescript
+import { requireUser, requireRole, jsonError } from '@/lib/server/api';
+
+export async function POST(request: NextRequest) {
+  try {
+    const { user } = await requireUser(request);
+    
+    // Throws 403 Forbidden with standard code if user is not in the allowed list:
+    requireRole(user, ['higher_manager', 'admin']);
+
+    // ... proceed with manager approval logic ...
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+```
+
+### 3. Enforcing Multi-Branch Boundaries with `requireBranchAccess`
+
+Agents and branch managers must only view and modify records belonging to their assigned branch. Admins and higher managers operate globally:
+
+```typescript
+import { requireUser, requireBranchAccess, jsonError } from '@/lib/server/api';
+
+export async function GET(request: NextRequest, { params }: { params: { customerBranchId: string } }) {
+  try {
+    const { user } = await requireUser(request);
+    const targetBranchId = Number(params.customerBranchId);
+
+    // Bypassed for 'admin' and 'higher_manager'.
+    // Enforces user.branch_id === targetBranchId for 'manager' and 'agent', throwing 403 Forbidden otherwise.
+    requireBranchAccess(user, targetBranchId);
+
+    // ... query branch accounts ...
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+```
+
+### 4. Protecting High-Frequency Endpoints with `enforceRateLimit`
+
+For financial transaction execution or sensitive queries:
+
+```typescript
+import { enforceRateLimit, jsonError } from '@/lib/server/api';
+
+export async function POST(request: NextRequest) {
+  try {
+    // Sliding-window limiter on client IP and optional identifier
+    enforceRateLimit(request, 'login', userEmail);
+    // ...
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+```
+
+### 5. Standard Error Formatting with `jsonError`
+
+Passing caught exceptions to `jsonError(error)` ensures all client responses adhere to RFC 7807 problem details with consistent status codes (`401`, `403`, `429`, `502`, `500`) and anti-caching headers (`Cache-Control: no-store`).

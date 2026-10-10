@@ -2,12 +2,13 @@ import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 
 import { NextRequest } from 'next/server';
 import {
   clearFailedLoginAttempts,
+  confirmEmployeeCreationTransaction,
+  confirmEmployeeDeactivationTransaction,
+  confirmPasswordResetTransaction,
   consumeOtpChallenge,
   countActiveAdmins,
-  createEmployee as dbCreateEmployee,
   createOtpChallenge as dbCreateOtpChallenge,
   createSession as dbCreateSession,
-  deactivateEmployee as dbDeactivateEmployee,
   findEmployeeByEmail,
   findEmployeeById,
   findEmployeeWithAuthByEmail,
@@ -17,11 +18,9 @@ import {
   lockEmployee,
   recordAuthenticationAttempt,
   recordFailedLogin,
-  revokeAllEmployeeSessions as dbRevokeAllEmployeeSessions,
   revokeSession as dbRevokeSession,
   updateEmployee as dbUpdateEmployee,
   updateLastLogin,
-  updatePasswordHash as dbUpdatePasswordHash,
   updateSessionActivity,
   type AuditEventType,
   type EmployeeStatus,
@@ -649,15 +648,12 @@ export async function confirmPasswordReset(
     throw new AuthError('Invalid verification code.', 401);
   }
 
-  // Atomically consume challenge
-  const consumed = await consumeOtpChallenge(challengeId);
-  if (!consumed) {
+  // Atomically consume challenge, update password hashes, and revoke all sessions in a transaction
+  const newHash = passwordHash(newPasswordInput);
+  const success = await confirmPasswordResetTransaction(challengeId, challenge.employee_id, newHash);
+  if (!success) {
     throw new AuthError('This reset request has already been used.', 401);
   }
-
-  // Hash new password and revoke all active sessions immediately
-  const newHash = passwordHash(newPasswordInput);
-  await dbUpdatePasswordHash(challenge.employee_id, newHash);
 
   await recordAuthenticationAttempt({
     employee_id: challenge.employee_id,
@@ -819,19 +815,14 @@ export async function confirmEmployeeCreation(
     }
   }
 
-  // Atomically consume challenge
-  const consumed = await consumeOtpChallenge(challengeId);
-  if (!consumed) {
-    throw new AuthError('This creation approval has already been confirmed or invalidated.', 401);
-  }
-
   // Re-check email uniqueness at confirmation time
   const existing = await findEmployeeByEmail(payload.email);
   if (existing) {
     throw new AuthError('A user with this email has already been registered.', 409);
   }
 
-  const newEmployee = await dbCreateEmployee({
+  // Atomically consume challenge and create staff + auth records in a transaction
+  const newEmployee = await confirmEmployeeCreationTransaction(challengeId, {
     full_name: payload.full_name,
     email: payload.email,
     password_hash: payload.password_hash,
@@ -839,6 +830,10 @@ export async function confirmEmployeeCreation(
     branch_id: payload.branch_id,
     status: 'active',
   });
+
+  if (!newEmployee) {
+    throw new AuthError('This creation approval has already been confirmed or invalidated.', 401);
+  }
 
   await recordAuthenticationAttempt({
     employee_id: newEmployee.id,
@@ -1120,17 +1115,11 @@ export async function confirmEmployeeDeactivation(
     }
   }
 
-  // Atomically consume challenge
-  const consumed = await consumeOtpChallenge(challengeId);
-  if (!consumed) {
+  // Atomically consume challenge, deactivate staff, and revoke all sessions in a single transaction
+  const success = await confirmEmployeeDeactivationTransaction(challengeId, payload.targetId);
+  if (!success) {
     throw new AuthError('This deactivation approval has already been confirmed or invalidated.', 401);
   }
-
-  // Deactivate record (BR-013: Record is deactivated, NOT deleted!)
-  await dbDeactivateEmployee(payload.targetId);
-
-  // Revoke all sessions immediately
-  await dbRevokeAllEmployeeSessions(payload.targetId);
 
   await recordAuthenticationAttempt({
     employee_id: payload.targetId,

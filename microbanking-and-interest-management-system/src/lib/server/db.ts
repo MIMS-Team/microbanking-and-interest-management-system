@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Pool, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import mysql from 'mysql2/promise';
 
 export type Role = 'agent' | 'manager' | 'higher_manager' | 'admin';
@@ -147,11 +147,18 @@ function toIso(val: unknown): string {
 export function getMySqlPool(): Pool {
   if (mysqlPoolInstance) return mysqlPoolInstance;
 
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
+  const host = process.env.DB_HOST || process.env.MYSQL_HOST;
   const port = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
-  const user = process.env.DB_USER || process.env.MYSQL_USER || 'root';
-  const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : (process.env.MYSQL_PASSWORD ?? 'PSandDT@2004');
-  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'mims_dev_test';
+  const user = process.env.DB_USER || process.env.MYSQL_USER;
+  const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : process.env.MYSQL_PASSWORD;
+  const database = process.env.DB_NAME || process.env.MYSQL_DATABASE;
+
+  if (!host || !user || password === undefined || !database) {
+    throw new Error(
+      'Database configuration error: Missing required MySQL connection settings. ' +
+      'Please explicitly specify DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME environment variables.'
+    );
+  }
 
   mysqlPoolInstance = mysql.createPool({
     host,
@@ -172,7 +179,7 @@ export function getMySqlPool(): Pool {
 // SQLite Lightweight Test Adapter Implementation
 // ---------------------------------------------------------
 
-function getSqliteDb(): DatabaseSync {
+export function getSqliteDb(): DatabaseSync {
   if (sqliteDbInstance) return sqliteDbInstance;
 
   const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
@@ -271,6 +278,65 @@ function getSqliteDb(): DatabaseSync {
 
   sqliteDbInstance = db;
   return db;
+}
+
+// ---------------------------------------------------------
+// Transaction Management Helpers
+// ---------------------------------------------------------
+
+export async function closePoolForTest(): Promise<void> {
+  if (mysqlPoolInstance) {
+    await mysqlPoolInstance.end();
+    mysqlPoolInstance = null;
+  }
+}
+
+export async function withMySqlTransaction<T>(
+  callback: (conn: PoolConnection) => Promise<T>
+): Promise<T> {
+  const pool = getMySqlPool();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await callback(conn);
+    await conn.commit();
+    return result;
+  } catch (error) {
+    try {
+      await conn.rollback();
+    } catch {
+      // ignore rollback errors if connection closed
+    }
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+export function withSqliteTransaction<T>(callback: (db: DatabaseSync) => T): T {
+  const db = getSqliteDb();
+  db.exec('BEGIN IMMEDIATE;');
+  try {
+    const result = callback(db);
+    db.exec('COMMIT;');
+    return result;
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK;');
+    } catch {}
+    throw error;
+  }
+}
+
+export async function runInTransaction<T>(
+  mysqlCallback: (conn: PoolConnection) => Promise<T>,
+  sqliteCallback: (db: DatabaseSync) => T
+): Promise<T> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    return withMySqlTransaction(mysqlCallback);
+  }
+  return withSqliteTransaction(sqliteCallback);
 }
 
 // ---------------------------------------------------------
@@ -1033,61 +1099,72 @@ export async function listEmployees(filters?: {
 }
 
 export async function createEmployee(data: CreateEmployeeData): Promise<PublicEmployee> {
-  const adapter = getActiveDbAdapterName();
   const normalizedEmail = data.email.trim().toLowerCase();
+  return runInTransaction(
+    async (conn) => {
+      const [result] = await conn.execute<ResultSetHeader>(
+        `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          data.full_name.trim(),
+          normalizedEmail,
+          data.password_hash,
+          data.role,
+          data.branch_id ?? null,
+          data.status ?? 'active',
+        ]
+      );
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
-    const [result] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [
+      const newId = result.insertId;
+      await conn.execute(
+        `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+         VALUES (?, ?, 0, CURRENT_TIMESTAMP)`,
+        [newId, data.password_hash]
+      );
+
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ? LIMIT 1`,
+        [newId]
+      );
+      const row = rows[0] as (PublicEmployee & RowDataPacket) | undefined;
+      if (!row) throw new Error('Failed to retrieve newly created employee.');
+      return {
+        id: Number(row.id),
+        full_name: row.full_name,
+        email: row.email,
+        role: row.role as Role,
+        branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+        status: row.status as EmployeeStatus,
+        created_at: toIso(row.created_at),
+      };
+    },
+    (db) => {
+      db.prepare(`
+        INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(
         data.full_name.trim(),
         normalizedEmail,
         data.password_hash,
         data.role,
         data.branch_id ?? null,
-        data.status ?? 'active',
-      ]
-    );
+        data.status ?? 'active'
+      );
 
-    const newId = result.insertId;
-    await pool.execute(
-      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
-       VALUES (?, ?, 0, CURRENT_TIMESTAMP)`,
-      [newId, data.password_hash]
-    );
+      const row = db.prepare(`SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE email = ?`)
+        .get(normalizedEmail) as unknown as PublicEmployee;
 
-    const created = await findEmployeeById(newId);
-    if (!created) throw new Error('Failed to retrieve newly created employee.');
-    return created;
-  }
+      db.prepare(`
+        INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+        VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+      `).run(row.id, data.password_hash);
 
-  const db = getSqliteDb();
-  db.prepare(`
-    INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `).run(
-    data.full_name.trim(),
-    normalizedEmail,
-    data.password_hash,
-    data.role,
-    data.branch_id ?? null,
-    data.status ?? 'active'
+      return {
+        ...row,
+        created_at: toIso(row.created_at),
+      };
+    }
   );
-
-  const row = db.prepare(`SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE email = ?`)
-    .get(normalizedEmail) as unknown as PublicEmployee;
-
-  db.prepare(`
-    INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
-    VALUES (?, ?, 0, CURRENT_TIMESTAMP)
-  `).run(row.id, data.password_hash);
-
-  return {
-    ...row,
-    created_at: toIso(row.created_at),
-  };
 }
 
 export async function updateEmployee(id: number, data: UpdateEmployeeData): Promise<PublicEmployee | null> {
@@ -1100,108 +1177,377 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
   const nextBranch = data.branch_id !== undefined ? data.branch_id : current.branch_id;
   const nextStatus = data.status !== undefined ? data.status : current.status;
 
-  const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
-    await pool.execute(
-      `UPDATE staff SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ? WHERE id = ?`,
-      [nextName, nextEmail, nextRole, nextBranch, nextStatus, id]
-    );
-
-    if (data.password_hash) {
-      await pool.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [data.password_hash, id]);
-      await pool.execute(
-        `INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
-         VALUES (?, ?, CURRENT_TIMESTAMP)
-         ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), updated_at = CURRENT_TIMESTAMP`,
-        [id, data.password_hash]
+  return runInTransaction(
+    async (conn) => {
+      await conn.execute(
+        `UPDATE staff SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ? WHERE id = ?`,
+        [nextName, nextEmail, nextRole, nextBranch, nextStatus, id]
       );
+
+      if (data.password_hash) {
+        await conn.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [data.password_hash, id]);
+        await conn.execute(
+          `INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
+           VALUES (?, ?, CURRENT_TIMESTAMP)
+           ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), updated_at = CURRENT_TIMESTAMP`,
+          [id, data.password_hash]
+        );
+      }
+
+      if (nextStatus === 'inactive') {
+        await conn.execute(
+          `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+          [id]
+        );
+      }
+
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ? LIMIT 1`,
+        [id]
+      );
+      const row = rows[0] as (PublicEmployee & RowDataPacket) | undefined;
+      if (!row) return null;
+      return {
+        id: Number(row.id),
+        full_name: row.full_name,
+        email: row.email,
+        role: row.role as Role,
+        branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+        status: row.status as EmployeeStatus,
+        created_at: toIso(row.created_at),
+      };
+    },
+    (db) => {
+      db.prepare(`
+        UPDATE staff
+        SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ?
+        WHERE id = ?
+      `).run(nextName, nextEmail, nextRole, nextBranch, nextStatus, id);
+
+      if (data.password_hash) {
+        db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(data.password_hash, id);
+        db.prepare(`
+          INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
+          VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(employee_id) DO UPDATE SET
+            password_hash = ?,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(id, data.password_hash, data.password_hash);
+      }
+
+      if (nextStatus === 'inactive') {
+        db.prepare(`
+          UPDATE employee_sessions
+          SET revoked_at = ?
+          WHERE employee_id = ? AND revoked_at IS NULL
+        `).run(new Date().toISOString(), id);
+      }
+
+      const row = db.prepare(`SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ?`)
+        .get(id) as unknown as PublicEmployee | undefined;
+      if (!row) return null;
+      return {
+        ...row,
+        created_at: toIso(row.created_at),
+      };
     }
-
-    if (nextStatus === 'inactive') {
-      await revokeAllEmployeeSessions(id);
-    }
-
-    return findEmployeeById(id);
-  }
-
-  const db = getSqliteDb();
-  db.prepare(`
-    UPDATE staff
-    SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ?
-    WHERE id = ?
-  `).run(nextName, nextEmail, nextRole, nextBranch, nextStatus, id);
-
-  if (data.password_hash) {
-    db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(data.password_hash, id);
-    db.prepare(`
-      INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(employee_id) DO UPDATE SET
-        password_hash = ?,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(id, data.password_hash, data.password_hash);
-  }
-
-  if (nextStatus === 'inactive') {
-    await revokeAllEmployeeSessions(id);
-  }
-
-  return findEmployeeById(id);
+  );
 }
 
 export async function updatePasswordHash(employeeId: number, passwordHash: string): Promise<void> {
-  const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
-    await pool.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [passwordHash, employeeId]);
-    await pool.execute(
-      `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
-       VALUES (?, ?, 0, CURRENT_TIMESTAMP)
-       ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), failed_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP`,
-      [employeeId, passwordHash]
-    );
-    await revokeAllEmployeeSessions(employeeId);
-    return;
-  }
-
-  const db = getSqliteDb();
-  db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(passwordHash, employeeId);
-  db.prepare(`
-    INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
-    VALUES (?, ?, 0, CURRENT_TIMESTAMP)
-    ON CONFLICT(employee_id) DO UPDATE SET
-      password_hash = ?,
-      failed_attempts = 0,
-      locked_until = NULL,
-      updated_at = CURRENT_TIMESTAMP
-  `).run(employeeId, passwordHash, passwordHash);
-
-  await revokeAllEmployeeSessions(employeeId);
+  return runInTransaction(
+    async (conn) => {
+      await conn.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [passwordHash, employeeId]);
+      await conn.execute(
+        `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+         VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), failed_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP`,
+        [employeeId, passwordHash]
+      );
+      await conn.execute(
+        `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+        [employeeId]
+      );
+    },
+    (db) => {
+      db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(passwordHash, employeeId);
+      db.prepare(`
+        INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+        VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+        ON CONFLICT(employee_id) DO UPDATE SET
+          password_hash = ?,
+          failed_attempts = 0,
+          locked_until = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(employeeId, passwordHash, passwordHash);
+      db.prepare(`
+        UPDATE employee_sessions
+        SET revoked_at = ?
+        WHERE employee_id = ? AND revoked_at IS NULL
+      `).run(new Date().toISOString(), employeeId);
+    }
+  );
 }
 
 export async function deactivateEmployee(id: number): Promise<boolean> {
-  const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
-    const [result] = await pool.execute<ResultSetHeader>(
-      `UPDATE staff SET status = 'inactive' WHERE id = ?`,
-      [id]
-    );
-    if (result.affectedRows > 0) {
-      await revokeAllEmployeeSessions(id);
+  return runInTransaction(
+    async (conn) => {
+      const [result] = await conn.execute<ResultSetHeader>(
+        `UPDATE staff SET status = 'inactive' WHERE id = ?`,
+        [id]
+      );
+      if (result.affectedRows > 0) {
+        await conn.execute(
+          `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+          [id]
+        );
+        return true;
+      }
+      return false;
+    },
+    (db) => {
+      const result = db.prepare(`UPDATE staff SET status = 'inactive' WHERE id = ?`).run(id);
+      if (result.changes > 0) {
+        db.prepare(`
+          UPDATE employee_sessions
+          SET revoked_at = ?
+          WHERE employee_id = ? AND revoked_at IS NULL
+        `).run(new Date().toISOString(), id);
+        return true;
+      }
+      return false;
+    }
+  );
+}
+
+/**
+ * Atomically consumes password reset OTP challenge, updates staff and authentication password hashes,
+ * resets lockout/attempts, and revokes all active employee sessions in a single transaction.
+ * If any step fails or challenge was already consumed, transaction rolls back and returns false.
+ */
+export async function confirmPasswordResetTransaction(
+  challengeId: string,
+  employeeId: number,
+  newPasswordHash: string
+): Promise<boolean> {
+  return runInTransaction(
+    async (conn) => {
+      const [otpRes] = await conn.execute<ResultSetHeader>(
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
+        [challengeId]
+      );
+      if (otpRes.affectedRows === 0) {
+        return false;
+      }
+
+      await conn.execute(
+        `UPDATE staff SET password_hash = ? WHERE id = ?`,
+        [newPasswordHash, employeeId]
+      );
+
+      await conn.execute(
+        `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+         VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), failed_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP`,
+        [employeeId, newPasswordHash]
+      );
+
+      await conn.execute(
+        `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+        [employeeId]
+      );
+
+      return true;
+    },
+    (db) => {
+      const nowIso = new Date().toISOString();
+      const otpRes = db.prepare(`
+        UPDATE otp_challenges
+        SET consumed_at = ?
+        WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts
+      `).run(nowIso, challengeId);
+
+      if (otpRes.changes === 0) {
+        return false;
+      }
+
+      db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(newPasswordHash, employeeId);
+
+      db.prepare(`
+        INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+        VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+        ON CONFLICT(employee_id) DO UPDATE SET
+          password_hash = ?,
+          failed_attempts = 0,
+          locked_until = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(employeeId, newPasswordHash, newPasswordHash);
+
+      db.prepare(`
+        UPDATE employee_sessions
+        SET revoked_at = ?
+        WHERE employee_id = ? AND revoked_at IS NULL
+      `).run(nowIso, employeeId);
+
       return true;
     }
-    return false;
-  }
+  );
+}
 
-  const db = getSqliteDb();
-  const result = db.prepare(`UPDATE staff SET status = 'inactive' WHERE id = ?`).run(id);
-  if (result.changes > 0) {
-    await revokeAllEmployeeSessions(id);
-    return true;
-  }
-  return false;
+/**
+ * Atomically consumes employee creation OTP challenge and provisions both staff and
+ * staff_authentication records in a single transaction on the same connection.
+ */
+export async function confirmEmployeeCreationTransaction(
+  challengeId: string,
+  employeeData: CreateEmployeeData
+): Promise<PublicEmployee | null> {
+  const normalizedEmail = employeeData.email.trim().toLowerCase();
+  return runInTransaction(
+    async (conn) => {
+      const [otpRes] = await conn.execute<ResultSetHeader>(
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
+        [challengeId]
+      );
+      if (otpRes.affectedRows === 0) {
+        return null;
+      }
+
+      const [insertRes] = await conn.execute<ResultSetHeader>(
+        `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        [
+          employeeData.full_name.trim(),
+          normalizedEmail,
+          employeeData.password_hash,
+          employeeData.role,
+          employeeData.branch_id ?? null,
+          employeeData.status ?? 'active',
+        ]
+      );
+      const newId = insertRes.insertId;
+
+      await conn.execute(
+        `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+         VALUES (?, ?, 0, CURRENT_TIMESTAMP)`,
+        [newId, employeeData.password_hash]
+      );
+
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ? LIMIT 1`,
+        [newId]
+      );
+      const row = rows[0] as (PublicEmployee & RowDataPacket) | undefined;
+      if (!row) throw new Error('Failed to retrieve newly confirmed employee.');
+      return {
+        id: Number(row.id),
+        full_name: row.full_name,
+        email: row.email,
+        role: row.role as Role,
+        branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
+        status: row.status as EmployeeStatus,
+        created_at: toIso(row.created_at),
+      };
+    },
+    (db) => {
+      const nowIso = new Date().toISOString();
+      const otpRes = db.prepare(`
+        UPDATE otp_challenges
+        SET consumed_at = ?
+        WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts
+      `).run(nowIso, challengeId);
+
+      if (otpRes.changes === 0) {
+        return null;
+      }
+
+      db.prepare(`
+        INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(
+        employeeData.full_name.trim(),
+        normalizedEmail,
+        employeeData.password_hash,
+        employeeData.role,
+        employeeData.branch_id ?? null,
+        employeeData.status ?? 'active'
+      );
+
+      const row = db.prepare(`SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE email = ?`)
+        .get(normalizedEmail) as unknown as PublicEmployee;
+
+      db.prepare(`
+        INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
+        VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+      `).run(row.id, employeeData.password_hash);
+
+      return {
+        ...row,
+        created_at: toIso(row.created_at),
+      };
+    }
+  );
+}
+
+/**
+ * Atomically consumes employee deactivation OTP challenge, marks staff status inactive,
+ * and revokes all active employee sessions in a single transaction on the same connection.
+ */
+export async function confirmEmployeeDeactivationTransaction(
+  challengeId: string,
+  targetEmployeeId: number
+): Promise<boolean> {
+  return runInTransaction(
+    async (conn) => {
+      const [otpRes] = await conn.execute<ResultSetHeader>(
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
+        [challengeId]
+      );
+      if (otpRes.affectedRows === 0) {
+        return false;
+      }
+
+      const [updateRes] = await conn.execute<ResultSetHeader>(
+        `UPDATE staff SET status = 'inactive' WHERE id = ?`,
+        [targetEmployeeId]
+      );
+      if (updateRes.affectedRows === 0) {
+        throw new Error('Target employee record was not found to deactivate.');
+      }
+
+      await conn.execute(
+        `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+        [targetEmployeeId]
+      );
+
+      return true;
+    },
+    (db) => {
+      const nowIso = new Date().toISOString();
+      const otpRes = db.prepare(`
+        UPDATE otp_challenges
+        SET consumed_at = ?
+        WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts
+      `).run(nowIso, challengeId);
+
+      if (otpRes.changes === 0) {
+        return false;
+      }
+
+      const updateRes = db.prepare(`UPDATE staff SET status = 'inactive' WHERE id = ?`).run(targetEmployeeId);
+      if (updateRes.changes === 0) {
+        throw new Error('Target employee record was not found to deactivate.');
+      }
+
+      db.prepare(`
+        UPDATE employee_sessions
+        SET revoked_at = ?
+        WHERE employee_id = ? AND revoked_at IS NULL
+      `).run(nowIso, targetEmployeeId);
+
+      return true;
+    }
+  );
 }
 
 export async function countActiveAdmins(): Promise<number> {

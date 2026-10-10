@@ -6,11 +6,17 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-const host = process.env.DB_HOST || process.env.MYSQL_HOST || 'localhost';
+const host = process.env.DB_HOST || process.env.MYSQL_HOST;
 const port = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
-const user = process.env.DB_USER || process.env.MYSQL_USER || 'root';
-const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : (process.env.MYSQL_PASSWORD ?? 'PSandDT@2004');
-const database = process.env.DB_NAME || process.env.MYSQL_DATABASE || 'mims_dev_test';
+const user = process.env.DB_USER || process.env.MYSQL_USER;
+const password = process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : process.env.MYSQL_PASSWORD;
+const database = process.env.DB_NAME || process.env.MYSQL_DATABASE;
+
+if (!host || !user || password === undefined || !database) {
+  console.error('[MIGRATION-ERROR] Missing required database configuration.');
+  console.error('Please explicitly set DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME environment variables.');
+  process.exit(1);
+}
 
 console.log(`[MIGRATION] Connecting to MySQL at ${host}:${port}/${database} as ${user}...`);
 
