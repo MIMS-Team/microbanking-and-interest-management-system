@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import type { ReactNode } from 'react';
 import Modal from './Modal';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { AlertTriangle, Check } from 'lucide-react';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -13,7 +13,7 @@ interface ConfirmDialogProps {
   isDestructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
-  children?: React.ReactNode; // Optional slot for extra content like OTP inputs
+  children?: ReactNode; // Optional slot for extra content like OTP inputs
 }
 
 // Confirmation dialog requiring explicit verification before critical actions

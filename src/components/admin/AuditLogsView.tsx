@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { AuditLog } from '@/types';
 import { getAuditLogs } from '@/services/staffService';
 import Pagination from '@/components/common/Pagination';
-import { ShieldCheck, Search, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
+import { ShieldCheck, Search, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 // Security and administrative session audit trail
 export default function AuditLogsView() {

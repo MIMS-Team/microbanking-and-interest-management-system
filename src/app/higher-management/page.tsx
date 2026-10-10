@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
 import HigherMgmtDashboardView from '@/components/higher-mgmt/HigherMgmtDashboardView';
 import HrmApprovalsView from '@/components/higher-mgmt/HrmApprovalsView';

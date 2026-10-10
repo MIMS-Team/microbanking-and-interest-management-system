@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import Modal from './Modal';
 import { ComprehensiveReport, exportReportToCsv } from '@/services/reportService';
 import {
@@ -8,9 +8,6 @@ import {
   Download,
   Printer,
   FileSpreadsheet,
-  CheckCircle2,
-  Building2,
-  ShieldCheck,
 } from 'lucide-react';
 
 interface ReportPreviewModalProps {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ApprovalRequest } from '@/types';
 import { getApprovalRequests, approveRequest, rejectRequest } from '@/services/approvalService';
 import { useSession } from '@/context/SessionContext';
@@ -9,14 +9,8 @@ import Modal from '@/components/common/Modal';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import {
   CheckSquare,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Filter,
   Check,
   X,
-  AlertCircle,
-  FileCheck,
 } from 'lucide-react';
 
 // Branch Manager 2-tier operational approvals hub

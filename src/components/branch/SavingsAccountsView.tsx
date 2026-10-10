@@ -24,9 +24,6 @@ import {
   Power,
   User,
   Users,
-  Building2,
-  AlertCircle,
-  CheckCircle,
 } from 'lucide-react';
 
 // Savings accounts management portal scoped to branch operations

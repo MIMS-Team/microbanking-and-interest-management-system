@@ -20,13 +20,6 @@ import {
   Loader2,
 } from 'lucide-react';
 
-type BTrustSession = {
-  employeeId: number;
-  branchId: number;
-  name: string;
-  email: string;
-  roleId: string;
-};
 
 // Branch management component with OTP verification on administrative changes
 // All operations call /api/branches endpoints — no direct service imports

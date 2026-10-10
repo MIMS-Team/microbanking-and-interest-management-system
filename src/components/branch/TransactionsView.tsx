@@ -18,9 +18,6 @@ import {
   Search,
   Printer,
   Receipt,
-  CheckCircle,
-  AlertCircle,
-  Building2,
 } from 'lucide-react';
 
 // Counter and field agent transaction processing terminal

@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 
 // Account distribution breakdown card matching reference template
 export default function AccountDistributionCard() {

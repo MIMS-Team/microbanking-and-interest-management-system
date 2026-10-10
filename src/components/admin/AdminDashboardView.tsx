@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { getEmployees } from '@/services/staffService';
 import { getCustomers } from '@/services/customerService';
 import StatCard from '@/components/common/StatCard';
@@ -9,12 +9,10 @@ import {
   Users,
   Building2,
   KeyRound,
-  Server,
   Database,
   Lock,
   UserPlus,
   ArrowUpRight,
-  Activity,
 } from 'lucide-react';
 
 interface AdminDashboardViewProps {

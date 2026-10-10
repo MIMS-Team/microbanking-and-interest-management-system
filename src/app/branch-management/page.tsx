@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
 import BranchDashboardView from '@/components/branch/BranchDashboardView';
 import CustomersView from '@/components/branch/CustomersView';

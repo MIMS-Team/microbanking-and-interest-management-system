@@ -26,7 +26,6 @@ import {
   Mail,
   MapPin,
   CheckCircle,
-  Building2,
 } from 'lucide-react';
 
 // Customer management portal scoped to branch operations
@@ -64,7 +63,6 @@ export default function CustomersView() {
   const [formAddress, setFormAddress] = useState('');
   const [formDob, setFormDob] = useState('1990-01-01');
   const [formAgentId, setFormAgentId] = useState('');
-  const [formError, setFormError] = useState('');
 
   // Password renewal modal
   const [passwordRenewInfo, setPasswordRenewInfo] = useState<{
@@ -113,7 +111,6 @@ export default function CustomersView() {
     setFormAddress('');
     setFormDob('1990-01-01');
     setFormAgentId(agentOptions[0]?.value || '');
-    setFormError('');
   };
 
   const openAddModal = () => {
@@ -130,14 +127,12 @@ export default function CustomersView() {
     setFormAddress(c.address);
     setFormDob(c.dateOfBirth);
     setFormAgentId(c.assignedAgentId);
-    setFormError('');
     setIsEditModalOpen(true);
   };
 
   // Register new customer with confirmation
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError('');
 
     setConfirmDialog({
       isOpen: true,

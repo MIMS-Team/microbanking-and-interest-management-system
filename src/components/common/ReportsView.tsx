@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   generateRegulatoryReport,
   exportReportToCsv,
@@ -23,8 +23,6 @@ import {
   Coins,
   TrendingUp,
   BarChart3,
-  Filter,
-  CheckCircle2,
   Sparkles,
   ArrowRight,
 } from 'lucide-react';

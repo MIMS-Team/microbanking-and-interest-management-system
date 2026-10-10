@@ -21,10 +21,6 @@ import {
   Search,
   RefreshCw,
   Power,
-  Calendar,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
 } from 'lucide-react';
 
 // Fixed deposits management portal scoped to branch operations

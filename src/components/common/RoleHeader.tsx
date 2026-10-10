@@ -10,7 +10,6 @@ import {
   Eye,
   EyeOff,
   LogOut,
-  ShieldCheck,
   Check,
   LucideIcon,
 } from 'lucide-react';

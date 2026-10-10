@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { getBranches } from '@/services/branchService';
 import { getTransactions } from '@/services/transactionService';

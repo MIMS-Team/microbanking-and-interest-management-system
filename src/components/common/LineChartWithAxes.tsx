@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 
 // Monthly transaction volume line chart with explicitly marked numerical axes
 export default function LineChartWithAxes() {
