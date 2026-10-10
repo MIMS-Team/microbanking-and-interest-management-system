@@ -1,0 +1,1 @@
+export const createAccount = () => {}; export const updateAccount = () => {}; export const closeAccount = () => {}; export const accountStatus = () => {}; export const createFixedDeposit = () => {}; export const closeFixedDeposit = () => {};export const applyAccountApproval = () => {};
