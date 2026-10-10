@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export async function migrateAuthTables(connection) {
+export async function migrateAuthTables(connection, { importSqlite = true } = {}) {
   // 1. Ensure MySQL authentication and staff tables exist non-destructively
   console.log('[MIGRATION] Ensuring shared authentication tables exist in MySQL...');
   await connection.execute(`
@@ -139,7 +139,7 @@ export async function migrateAuthTables(connection) {
 
   // 2. Check if SQLite database exists to migrate records from
   const sqlitePath = join(process.cwd(), '.data', 'mims_auth.db');
-  if (existsSync(sqlitePath)) {
+  if (importSqlite && existsSync(sqlitePath)) {
     console.log('[MIGRATION] Migrating existing staff records from SQLite:', sqlitePath);
     const sqlite = new DatabaseSync(sqlitePath);
     const staffRows = sqlite.prepare('SELECT id, full_name, email, password_hash, role, branch_id, status FROM staff').all();

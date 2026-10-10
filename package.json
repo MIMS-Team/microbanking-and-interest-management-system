@@ -12,6 +12,7 @@
     "test": "npm run test:auth && npm run test:banking",
     "test:auth": "vitest run",
     "test:e2e": "node scripts/run-e2e.mjs",
+    "test:e2e:production": "node scripts/run-auth-production-e2e.mjs",
     "test:banking": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:reports": "tsx --test tests/reports.test.ts",
     "test:smoke": "node scripts/smoke.mjs",

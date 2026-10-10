@@ -147,7 +147,12 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
   it('executes real migration and establishes foreign key constraints on MySQL', async () => {
     expect(testConn).not.toBeNull();
     // Run the actual migration logic
-    await migrateAuthTables(testConn!);
+    await migrateAuthTables(testConn!, { importSqlite: false });
+
+    // A developer may have a populated .data/mims_auth.db. Disposable tests
+    // migrate the real schema but must never copy those employees into fixtures.
+    const [staff] = await testConn!.query<RowDataPacket[]>('SELECT COUNT(*) AS count FROM staff');
+    expect(Number(staff[0].count)).toBe(0);
 
     // Verify foreign key enforcement
     await expect(
@@ -156,7 +161,10 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
          VALUES ('Orphan Staff', 'orphan@bank.com', 'hash', 'agent', 99999)`
       )
     ).rejects.toThrow(/foreign key constraint fails/i);
-  });
+  // Cold MySQL DDL on Windows can contend with concurrent scrypt/PGlite suites.
+  // This bounds schema setup only; transaction tests and application limits keep
+  // their existing deadlines.
+  }, 60000);
 
   it('atomically creates employee and staff_authentication records on MySQL', async () => {
     const emp = await createEmployee({
