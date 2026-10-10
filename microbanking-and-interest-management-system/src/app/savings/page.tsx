@@ -1,6 +1,7 @@
 'use client';
 
-import { Search, FileText, CheckCircle } from 'lucide-react';
+import { Search, FileText, CheckCircle, Plus } from 'lucide-react';
+import Link from 'next/link';
 import { RequireSession, RavinduShell, getStoredSession } from '../_components';
 import { useEffect, useState } from 'react';
 
@@ -19,7 +20,10 @@ function SavingsAccountsContent() {
   const currentUserRole = getStoredSession()?.role ?? '';
   
   // Determine if the user has the right to approve based on actual login roles
-  const canApprove = ['Branch Manager', 'Higher Management'].includes(currentUserRole);
+  const canApprove = ['manager', 'higher_manager'].includes(currentUserRole);
+  
+  // Determine if the user has the right to create new accounts
+  const canCreate = ['admin', 'higher_manager', 'manager'].includes(currentUserRole);
 
   useEffect(() => {
     async function fetchSavingsAccounts() {
@@ -70,15 +74,26 @@ function SavingsAccountsContent() {
             <p className="text-xs font-bold uppercase tracking-[0.15em] text-[#b65f45]">Live Data</p>
             <h2 className="mt-2 text-xl font-black text-[#102a43]">Active Savings Accounts</h2>
           </div>
-          <div className="relative max-w-sm w-full">
-            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-              <Search className="h-4 w-4 text-[#627d98]" />
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+            <div className="relative w-full sm:w-72">
+              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Search className="h-4 w-4 text-[#627d98]" />
+              </div>
+              <input 
+                type="text" 
+                className="block w-full rounded-xl border border-[#d9e2ec] bg-white p-2.5 pl-10 text-sm font-medium text-[#102a43] outline-none transition-all focus:border-[#4f8a8b] focus:ring-1 focus:ring-[#4f8a8b]" 
+                placeholder="Search by name or account number..." 
+              />
             </div>
-            <input 
-              type="text" 
-              className="block w-full rounded-xl border border-[#d9e2ec] bg-white p-2.5 pl-10 text-sm font-medium text-[#102a43] outline-none transition-all focus:border-[#4f8a8b] focus:ring-1 focus:ring-[#4f8a8b]" 
-              placeholder="Search by name or account number..." 
-            />
+            
+            {canCreate && (
+              <Link 
+                href="/savings/new"
+                className="flex w-full sm:w-auto shrink-0 items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#243b53]"
+              >
+                <Plus className="h-4 w-4" /> New Account
+              </Link>
+            )}
           </div>
         </div>
 
