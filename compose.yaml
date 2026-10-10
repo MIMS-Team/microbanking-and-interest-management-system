@@ -1,19 +1,16 @@
-# Optional shared PostgreSQL server for your team. These are LOCAL demo credentials.
+# Optional isolated verification server. No volume from an existing database.
+# Supply a fresh password in the shell; this file is not started by the app.
 services:
-  postgres:
-    image: postgres:17
+  mysql-verification:
+    image: mysql:8.0
     environment:
-      POSTGRES_DB: mims
-      POSTGRES_USER: mims
-      POSTGRES_PASSWORD: mims_dev_password
+      MYSQL_ROOT_PASSWORD: ${TEST_MYSQL_PASSWORD:?Set a disposable MySQL password}
     ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - mims_postgres:/var/lib/postgresql/data
+      - "127.0.0.1:${TEST_MYSQL_PORT:-33307}:3306"
+    tmpfs:
+      - /var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mims -d mims"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
       interval: 5s
       timeout: 5s
-      retries: 10
-volumes:
-  mims_postgres:
+      retries: 30
