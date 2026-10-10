@@ -133,6 +133,14 @@ const devUsers = [
     role: 'agent',
     branchId: 1,
   },
+  {
+    name: 'Deactivated Loan Agent',
+    email: 'deactivated.agent@mims.bank',
+    password: 'Deactivated@2026!',
+    role: 'agent',
+    branchId: 1,
+    status: 'inactive',
+  },
 ];
 
 console.log('Seeding development database at:', dbPath);
@@ -140,13 +148,14 @@ console.log('Seeding development database at:', dbPath);
 for (const user of devUsers) {
   const existing = db.prepare('SELECT id FROM staff WHERE lower(email) = lower(?)').get(user.email);
   const pwdHash = hashPassword(user.password);
+  const status = user.status || 'active';
 
   if (!existing) {
     const insertStaff = db.prepare(`
       INSERT INTO staff (full_name, email, password_hash, role, branch_id, status)
-      VALUES (?, ?, ?, ?, ?, 'active')
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
-    const result = insertStaff.run(user.name, user.email, pwdHash, user.role, user.branchId);
+    const result = insertStaff.run(user.name, user.email, pwdHash, user.role, user.branchId, status);
     const staffId = Number(result.lastInsertRowid);
 
     const insertAuth = db.prepare(`
@@ -155,11 +164,11 @@ for (const user of devUsers) {
     `);
     insertAuth.run(staffId, pwdHash);
 
-    console.log(`[SEED] Created ${user.role}: ${user.email} (Password: ${user.password})`);
+    console.log(`[SEED] Created ${user.role}: ${user.email} (Status: ${status})`);
   } else {
     const staffId = Number(existing.id);
     db.prepare('UPDATE staff SET full_name = ?, role = ?, branch_id = ?, password_hash = ?, status = ? WHERE id = ?')
-      .run(user.name, user.role, user.branchId, pwdHash, 'active', staffId);
+      .run(user.name, user.role, user.branchId, pwdHash, status, staffId);
     db.prepare('INSERT OR REPLACE INTO staff_authentication (employee_id, password_hash, failed_attempts, locked_until) VALUES (?, ?, 0, NULL)')
       .run(staffId, pwdHash);
 

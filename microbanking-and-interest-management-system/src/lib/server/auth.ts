@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import {
+  acquireOtpResendReservation,
+  AuthError,
   clearFailedLoginAttempts,
   confirmEmployeeCreationTransaction,
   confirmEmployeeDeactivationTransaction,
@@ -10,6 +12,7 @@ import {
   createOtpChallenge as dbCreateOtpChallenge,
   createSession as dbCreateSession,
   deleteOtpChallenge,
+  finalizeOtpResend,
   findEmployeeByEmail,
   findEmployeeById,
   findEmployeeWithAuthByEmail,
@@ -19,6 +22,7 @@ import {
   lockEmployee,
   recordAuthenticationAttempt,
   recordFailedLogin,
+  releaseOtpResendReservation,
   revokeSession as dbRevokeSession,
   updateEmployee as dbUpdateEmployee,
   updateLastLogin,
@@ -52,12 +56,7 @@ export const authCookies = {
   OTP_TTL_MS,
 };
 
-export class AuthError extends Error {
-  constructor(message: string, public status = 400, public code = 'AUTH_ERROR') {
-    super(message);
-    this.name = 'AuthError';
-  }
-}
+export { AuthError };
 
 // Global OTP dispatcher hook for testing / development
 type OtpDeliveryHandler = (payload: { email: string; purpose: OtpPurpose; code: string }) => void;
@@ -373,46 +372,51 @@ export async function resendOtp(
     throw new AuthError('This verification code has already been confirmed.', 400, 'ALREADY_CONSUMED');
   }
 
-  // Enforce cooldown (30 seconds between dispatches)
-  const createdAtMs = parseDateSafe(challenge.created_at).getTime();
-  const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
-  if (elapsedSeconds < 30) {
-    const wait = 30 - elapsedSeconds;
-    throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
-  }
-
   const employee = await findEmployeeById(challenge.employee_id);
   if (!employee) {
     throw new AuthError('Associated employee record not found.', 404);
   }
 
-  // Generate fresh challenge without prematurely destroying the existing usable challenge
+  // Generate fresh replacement OTP and challenge identifier
   const rawOtp = generateSecureOtp();
   const newChallengeId = randomBytes(24).toString('hex');
   const codeHash = hashOtp(rawOtp);
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
-  await dbCreateOtpChallenge({
-    id: newChallengeId,
-    employee_id: employee.id,
-    purpose: challenge.purpose,
-    code_hash: codeHash,
-    max_attempts: MAX_OTP_ATTEMPTS,
-    expires_at: expiresAt,
-    metadata: challenge.metadata ? JSON.parse(challenge.metadata) : null,
-    invalidatePrevious: false,
-  });
+  // Atomically acquire database reservation and create replacement challenge in pending state
+  const reservation = await acquireOtpResendReservation(
+    challengeId,
+    {
+      id: newChallengeId,
+      employee_id: employee.id,
+      purpose: challenge.purpose,
+      code_hash: codeHash,
+      max_attempts: MAX_OTP_ATTEMPTS,
+      expires_at: expiresAt,
+      metadata: challenge.metadata ? JSON.parse(challenge.metadata) : null,
+      is_pending: true,
+      invalidatePrevious: false,
+    },
+    30000 // 30s bounded lease
+  );
 
+  // Dispatch email OUTSIDE the database transaction
   try {
     await dispatchOtp(employee.email, challenge.purpose, rawOtp);
   } catch (deliveryError) {
-    // If delivery fails, remove un-dispatched new challenge so old challenge remains valid
-    await deleteOtpChallenge(newChallengeId);
+    // If delivery fails, remove pending replacement and release reservation; original challenge remains intact!
+    await releaseOtpResendReservation(challengeId, newChallengeId, reservation.reservationToken);
     throw deliveryError;
   }
 
-  // Only after email dispatch succeeds do we consume the superseded challenge
-  await consumeOtpChallenge(challengeId);
+  // After email dispatch succeeds, atomically finalize replacement and invalidate original
+  const finalization = await finalizeOtpResend(challengeId, newChallengeId, reservation.reservationToken);
+  if (!finalization.finalized) {
+    if (finalization.reason === 'ORIGINAL_ALREADY_CONSUMED') {
+      throw new AuthError('Original verification code was confirmed during dispatch. Replacement has been cancelled.', 400, 'ALREADY_CONSUMED');
+    }
+    throw new AuthError('Failed to finalize replacement verification challenge.', 400, 'FINALIZATION_FAILED');
+  }
 
   await recordAuthenticationAttempt({
     employee_id: employee.id,
@@ -619,6 +623,11 @@ export async function requestPasswordReset(
     await dispatchOtp(employee.email, 'password_reset', rawOtp);
   } catch (deliveryError) {
     await deleteOtpChallenge(challengeId);
+    if (shouldMaskEnumeration) {
+      // In anti-enumeration mode, do not leak that this account exists via provider error!
+      // Return uniform masked dummy response so existing vs non-existent accounts remain indistinguishable.
+      return { challengeId: randomBytes(24).toString('hex') };
+    }
     throw deliveryError;
   }
 
@@ -1198,11 +1207,15 @@ export function requireBranchAccess(user: PublicEmployee, branchId: number | nul
 }
 
 function parseDateSafe(dateString: string): Date {
-  const d = new Date(dateString);
-  if (isNaN(d.getTime())) {
-    // Attempt parsing SQLite 'YYYY-MM-DD HH:MM:SS' format
-    const isoLike = dateString.replace(' ', 'T') + 'Z';
-    return new Date(isoLike);
+  if (!dateString) return new Date(0);
+  const trimmed = dateString.trim();
+  if (trimmed.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    return new Date(trimmed);
   }
-  return d;
+  const isoUtc = trimmed.replace(' ', 'T') + 'Z';
+  const d = new Date(isoUtc);
+  if (!isNaN(d.getTime())) {
+    return d;
+  }
+  return new Date(trimmed);
 }
