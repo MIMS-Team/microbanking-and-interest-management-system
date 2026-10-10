@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   BadgeCheck,
@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Eye,
+  EyeOff,
   KeyRound,
   Landmark,
   LockKeyhole,
@@ -101,14 +103,15 @@ export async function performClientLogout(): Promise<LogoutResult> {
         const body = (await res.json()) as { error?: string };
         if (body?.error) errMsg = body.error;
       } catch {}
+      clearSession();
       return { success: false, error: errMsg };
     }
 
+    clearSession();
     return { success: true };
   } catch {
-    return { success: false, error: 'Network failure during logout. Session cleared locally.' };
-  } finally {
     clearSession();
+    return { success: false, error: 'Network failure during logout. Session cleared locally.' };
   }
 }
 
@@ -138,11 +141,14 @@ export function LogoutButton({
 
     const result = await performClientLogout();
 
-    if (!result.success && result.error) {
-      setErrorMessage(result.error);
+    if (!result.success) {
+      setIsLoggingOut(false);
+      const err = result.error ?? 'Server revocation failed.';
+      setErrorMessage(err);
       if (onLogoutError) {
-        onLogoutError(result.error);
+        onLogoutError(err);
       }
+      return;
     }
 
     if (onLogoutSuccess) {
@@ -182,9 +188,21 @@ export function LogoutButton({
         )}
       </button>
       {errorMessage && (
-        <span role="alert" className="mt-1 block text-[11px] font-semibold text-rose-600">
-          {errorMessage}
-        </span>
+        <div role="alert" className="mt-1.5 max-w-xs rounded-lg border border-amber-300 bg-amber-50 p-2 text-left text-[11px] text-amber-900 shadow-sm">
+          <p className="font-semibold">{errorMessage}</p>
+          <p className="mt-0.5 text-[10px] text-amber-800">
+            Local session cleared. Server session revocation could not be confirmed.
+          </p>
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="mt-1.5 inline-flex items-center gap-1 rounded bg-amber-800 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-amber-900 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-2.5 w-2.5 ${isLoggingOut ? 'animate-spin' : ''}`} />
+            Retry Server Revocation
+          </button>
+        </div>
       )}
     </div>
   );
@@ -221,11 +239,13 @@ export function RavinduLogo({ compact = false }: { compact?: boolean }) {
 export function Field({
   label,
   icon: Icon,
+  rightElement,
   error,
   ...props
 }: {
   label: string;
   icon?: typeof Mail;
+  rightElement?: ReactNode;
   error?: string;
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -237,11 +257,69 @@ export function Field({
           {...props}
           className={`w-full rounded-xl border border-[#d9e2ec] bg-white px-4 py-3 text-sm text-[#102a43] outline-none transition placeholder:text-[#9fb3c8] focus:border-[#b65f45] focus:ring-4 focus:ring-[#b65f45]/10 ${
             Icon ? 'pl-11' : ''
-          } ${error ? 'border-rose-400 bg-rose-50/30' : ''} ${props.className ?? ''}`}
+          } ${rightElement ? 'pr-11' : ''} ${error ? 'border-rose-400 bg-rose-50/30' : ''} ${props.className ?? ''}`}
         />
+        {rightElement && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
+            {rightElement}
+          </span>
+        )}
       </span>
       {error && <span className="block text-xs font-semibold text-rose-600">{error}</span>}
     </label>
+  );
+}
+
+export function PasswordField({
+  label,
+  value,
+  onChange,
+  error,
+  placeholder = '••••••••',
+  autoComplete = 'current-password',
+  required = true,
+  name,
+  id,
+  minLength,
+}: {
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  error?: string;
+  placeholder?: string;
+  autoComplete?: string;
+  required?: boolean;
+  name?: string;
+  id?: string;
+  minLength?: number;
+}) {
+  const [showPassword, setShowPassword] = useState(false);
+
+  return (
+    <Field
+      label={label}
+      icon={LockKeyhole}
+      type={showPassword ? 'text' : 'password'}
+      value={value}
+      onChange={onChange}
+      error={error}
+      placeholder={placeholder}
+      autoComplete={autoComplete}
+      required={required}
+      name={name}
+      id={id}
+      minLength={minLength}
+      rightElement={
+        <button
+          type="button"
+          onClick={() => setShowPassword(!showPassword)}
+          aria-label={showPassword ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+          className="rounded-lg p-1 text-[#829ab1] hover:text-[#102a43] focus:outline-none focus:ring-2 focus:ring-[#b65f45]/20"
+        >
+          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      }
+    />
   );
 }
 
@@ -329,6 +407,15 @@ export function RavinduShell({
         clearSession();
         router.replace('/login');
       });
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === SESSION_KEY && !event.newValue) {
+        setSession(null);
+        router.replace('/login?status=logged_out');
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, [router]);
 
   const userRole = session?.role ?? 'agent';
@@ -485,8 +572,17 @@ export function RequireSession({
         }
       });
 
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === SESSION_KEY && !event.newValue) {
+        clearSession();
+        router.replace('/login?status=logged_out');
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
     return () => {
       mounted = false;
+      window.removeEventListener('storage', handleStorage);
     };
   }, [router, allowedRoles]);
 
@@ -543,6 +639,7 @@ export function LoginForm() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting) return;
     setError('');
     setSubmitting(true);
 
@@ -557,6 +654,7 @@ export function LoginForm() {
         error?: string;
         requiresOtp?: boolean;
         challengeId?: string;
+        user?: { email?: string };
       };
 
       if (!response.ok) {
@@ -565,7 +663,20 @@ export function LoginForm() {
       }
 
       if (body.requiresOtp) {
-        const query = body.challengeId ? `?challenge=${encodeURIComponent(body.challengeId)}` : '';
+        if (typeof window !== 'undefined') {
+          if (body.user?.email || email) {
+            window.sessionStorage.setItem('mims_otp_email', body.user?.email ?? email);
+          }
+          window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 5 * 60 * 1000));
+          window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + 30 * 1000));
+        }
+
+        const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+        const redirectParam = urlParams?.get('redirect');
+        const queryParams = new URLSearchParams();
+        if (body.challengeId) queryParams.set('challenge', body.challengeId);
+        if (redirectParam) queryParams.set('redirect', redirectParam);
+        const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
         router.push(`/otp${query}`);
       }
     } catch {
@@ -588,15 +699,15 @@ export function LoginForm() {
         icon={Mail}
         type="email"
         placeholder="e.g. employee@ravindu.bank"
+        autoComplete="username email"
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
       />
-      <Field
+      <PasswordField
         label="Password"
-        icon={LockKeyhole}
-        type="password"
         placeholder="Enter your confidential password"
+        autoComplete="current-password"
         required
         value={password}
         onChange={(e) => setPassword(e.target.value)}
@@ -642,18 +753,63 @@ export function OtpForm() {
   const [successMsg, setSuccessMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [resending, setResending] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  const [cooldown, setCooldown] = useState<number>(() => {
+    if (typeof window === 'undefined') return 0;
+    const cooldownUntil = Number(window.sessionStorage.getItem('mims_otp_cooldown_until') || '0');
+    return cooldownUntil > Date.now() ? Math.ceil((cooldownUntil - Date.now()) / 1000) : 0;
+  });
+  const [maskedDestination] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    const storedEmail = window.sessionStorage.getItem('mims_otp_email');
+    if (storedEmail) {
+      const [local, domain] = storedEmail.split('@');
+      if (domain) {
+        return local.length <= 2 ? `${local[0] ?? ''}***@${domain}` : `${local[0]}***${local[local.length - 1]}@${domain}`;
+      }
+    }
+    return '';
+  });
+  const [expirySeconds, setExpirySeconds] = useState<number>(() => {
+    if (typeof window === 'undefined') return 300;
+    let expiresAt = Number(window.sessionStorage.getItem('mims_otp_expires_at') || '0');
+    if (!expiresAt || expiresAt <= Date.now()) {
+      expiresAt = Date.now() + 5 * 60 * 1000;
+      window.sessionStorage.setItem('mims_otp_expires_at', String(expiresAt));
+    }
+    return Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  });
 
   useEffect(() => {
-    if (cooldown <= 0) return;
-    const timer = setInterval(() => {
-      setCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    if (typeof window === 'undefined') return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const currentExpiry = Number(window.sessionStorage.getItem('mims_otp_expires_at') || '0');
+      if (currentExpiry) {
+        setExpirySeconds(Math.max(0, Math.floor((currentExpiry - now) / 1000)));
+      }
+      const currentCooldown = Number(window.sessionStorage.getItem('mims_otp_cooldown_until') || '0');
+      if (currentCooldown > now) {
+        setCooldown(Math.ceil((currentCooldown - now) / 1000));
+      } else {
+        setCooldown(0);
+      }
     }, 1000);
-    return () => clearInterval(timer);
-  }, [cooldown]);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text').trim();
+    if (/^\d{6}$/.test(text)) {
+      e.preventDefault();
+      setCode(text);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting) return;
     setError('');
     setSuccessMsg('');
     setSubmitting(true);
@@ -680,7 +836,15 @@ export function OtpForm() {
       }
 
       saveSession(body.user);
-      router.push(body.dashboardUrl ?? '/dashboard');
+
+      // Safe local redirect to original requested route if valid, else default dashboard
+      const redirectParam = urlParams?.get('redirect');
+      let targetUrl = body.dashboardUrl ?? '/dashboard';
+      if (redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//') && !redirectParam.startsWith('/\\')) {
+        targetUrl = redirectParam;
+      }
+
+      router.push(targetUrl);
     } catch {
       setError('Unable to reach the authentication service.');
     } finally {
@@ -717,7 +881,13 @@ export function OtpForm() {
       }
 
       setSuccessMsg(body.message ?? 'A fresh verification code has been dispatched.');
-      setCooldown(body.cooldownSeconds ?? 30);
+      const cd = body.cooldownSeconds ?? 30;
+      setCooldown(cd);
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + cd * 1000));
+        window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 5 * 60 * 1000));
+      }
+      setExpirySeconds(300);
     } catch {
       setError('Network failure attempting to resend code.');
     } finally {
@@ -725,13 +895,30 @@ export function OtpForm() {
     }
   };
 
+  const formatCountdown = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
   return (
     <form onSubmit={submit} className="space-y-5">
       <div className="flex items-start gap-3 rounded-xl bg-[#e9eff5] p-4 text-xs leading-relaxed text-[#52606d]">
         <BadgeCheck className="h-5 w-5 shrink-0 text-[#4f8a8b] mt-0.5" />
-        <span>
-          A temporary 6-digit verification code has been dispatched to your authorized contact channel. Codes expire in 5 minutes.
-        </span>
+        <div>
+          <span>
+            A temporary 6-digit verification code has been dispatched
+            {maskedDestination ? <> to <strong className="text-[#102a43]">{maskedDestination}</strong></> : ' to your registered email'}.
+          </span>
+          <div className="mt-1 flex items-center gap-1.5 font-semibold text-[#102a43]">
+            <Clock3 className="h-3.5 w-3.5 text-[#b65f45]" />
+            {expirySeconds > 0 ? (
+              <span>Code expires in: <span className="font-mono text-[#b65f45]">{formatCountdown(expirySeconds)}</span></span>
+            ) : (
+              <span className="text-rose-600">Code has expired. Please request a new code.</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {successMsg && (
@@ -745,10 +932,12 @@ export function OtpForm() {
         label="One-Time Password (OTP)"
         icon={KeyRound}
         inputMode="numeric"
+        autoComplete="one-time-code"
         maxLength={6}
         placeholder="000000"
         required
         value={code}
+        onPaste={handlePaste}
         onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))}
       />
 
@@ -761,7 +950,7 @@ export function OtpForm() {
 
       <button
         type="submit"
-        disabled={submitting || code.length !== 6}
+        disabled={submitting || code.length !== 6 || expirySeconds === 0}
         className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#1d3f5e] disabled:opacity-50"
       >
         {submitting ? (
@@ -794,7 +983,7 @@ export function OtpForm() {
 
 export function ResetForm() {
   const router = useRouter();
-  const [step, setStep] = useState<'request' | 'confirm'>('request');
+  const [step, setStep] = useState<'request' | 'confirm' | 'success'>('request');
   const [email, setEmail] = useState('');
   const [challengeId, setChallengeId] = useState('');
   const [code, setCode] = useState('');
@@ -803,9 +992,19 @@ export function ResetForm() {
   const [statusMsg, setStatusMsg] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const redirectTimer = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimer.current) {
+        clearTimeout(redirectTimer.current);
+      }
+    };
+  }, []);
 
   const requestReset = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting) return;
     setError('');
     setStatusMsg('');
     setSubmitting(true);
@@ -837,8 +1036,8 @@ export function ResetForm() {
 
   const confirmReset = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting) return;
     setError('');
-    setStatusMsg('');
 
     if (password !== confirmPassword) {
       setError('New password and confirmation do not match.');
@@ -864,15 +1063,20 @@ export function ResetForm() {
       });
       const data = (await response.json()) as { success?: boolean; message?: string; error?: string };
 
-      if (!response.ok) {
+      if (!response.ok || data.success === false) {
         setError(data.error ?? 'Failed to update password.');
         return;
       }
 
       setStatusMsg(data.message ?? 'Password updated successfully! All prior sessions have been revoked.');
-      setTimeout(() => {
+      setStep('success');
+
+      if (redirectTimer.current) {
+        clearTimeout(redirectTimer.current);
+      }
+      redirectTimer.current = setTimeout(() => {
         router.push('/login');
-      }, 2000);
+      }, 2500);
     } catch {
       setError('Unable to contact authentication service.');
     } finally {
@@ -880,19 +1084,22 @@ export function ResetForm() {
     }
   };
 
-  if (statusMsg && !error && step === 'confirm' && password && confirmPassword) {
+  if (step === 'success') {
     return (
       <div className="space-y-5">
         <div className="rounded-2xl border border-[#b7e4d8] bg-[#e8f7f2] p-5 text-xs text-[#216e61]">
           <Check className="mb-2 h-5 w-5 text-[#216e61]" />
           <p className="text-sm font-bold">Password Reset Succeeded</p>
           <p className="mt-1 leading-5">
-            Your password was updated and all previous employee sessions have been revoked. Redirecting to login...
+            {statusMsg || 'Your password was updated and all previous employee sessions have been revoked.'} Redirecting to login...
           </p>
         </div>
         <button
-          onClick={() => router.push('/login')}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white"
+          onClick={() => {
+            if (redirectTimer.current) clearTimeout(redirectTimer.current);
+            router.push('/login');
+          }}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#1d3f5e]"
         >
           Proceed to Login <ArrowRight className="h-4 w-4" />
         </button>
@@ -908,6 +1115,7 @@ export function ResetForm() {
           icon={Mail}
           type="email"
           placeholder="employee@ravindu.bank"
+          autoComplete="username email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -944,32 +1152,39 @@ export function ResetForm() {
         </div>
       )}
 
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-[#52606d]">
+        <p className="font-bold text-[#102a43]">Password Requirements:</p>
+        <ul className="mt-1 list-disc list-inside space-y-0.5 text-[11px]">
+          <li>At least 8 characters in length</li>
+          <li>Must match the confirmation password</li>
+        </ul>
+      </div>
+
       <Field
         label="Recovery Code (OTP)"
         icon={KeyRound}
         inputMode="numeric"
         maxLength={6}
         placeholder="000000"
+        autoComplete="one-time-code"
         required
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
       />
-      <Field
+      <PasswordField
         label="New Password"
-        icon={LockKeyhole}
-        type="password"
         placeholder="At least 8 characters"
         minLength={8}
+        autoComplete="new-password"
         required
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
-      <Field
+      <PasswordField
         label="Confirm New Password"
-        icon={LockKeyhole}
-        type="password"
         placeholder="Repeat new password"
         minLength={8}
+        autoComplete="new-password"
         required
         value={confirmPassword}
         onChange={(e) => setConfirmPassword(e.target.value)}
@@ -989,14 +1204,23 @@ export function ResetForm() {
         {submitting ? 'Updating...' : 'Set New Password'} <ArrowRight className="h-4 w-4" />
       </button>
 
-      <div className="text-center pt-2">
+      <div className="flex items-center justify-between pt-2 text-xs">
         <button
           type="button"
-          onClick={() => setStep('request')}
-          className="text-xs font-bold text-[#627d98] hover:text-[#b65f45]"
+          onClick={() => {
+            setStep('request');
+            setCode('');
+            setPassword('');
+            setConfirmPassword('');
+            setError('');
+          }}
+          className="font-bold text-[#b65f45] hover:underline"
         >
-          Back to email entry
+          Request another recovery code
         </button>
+        <Link href="/login" className="font-semibold text-[#627d98] hover:text-[#102a43]">
+          Cancel
+        </Link>
       </div>
     </form>
   );
