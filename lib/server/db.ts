@@ -1,3 +1,4 @@
+import { recordEmployeeApproval, lockEmployeeApproval, completeEmployeeApproval, assertNoAgentPortfolio } from './employee-approvals';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -38,6 +39,8 @@ export interface PublicEmployee {
 }
 
 export interface EmployeeWithAuth extends PublicEmployee {
+  must_change_password?: number;
+  temporary_password_expires_at?: string|null;
   password_hash: string;
   failed_attempts: number;
   locked_until: string | null;
@@ -78,6 +81,7 @@ export interface SessionWithEmployee {
 }
 
 export interface CreateEmployeeData {
+  must_change_password?: boolean;
   full_name: string;
   email: string;
   password_hash: string;
@@ -187,6 +191,10 @@ export function getMySqlPool(): Pool {
     connectionLimit: 10,
     queueLimit: 0,
     dateStrings: true,
+    timezone: 'Z',
+  });
+  mysqlPoolInstance.on('connection', connection => {
+    connection.query("SET time_zone = '+00:00'");
   });
 
   return mysqlPoolInstance;
@@ -314,6 +322,9 @@ export function getSqliteDb(): DatabaseSync {
     }
   } catch {}
 
+  const staffColumns=db.prepare('PRAGMA table_info(staff)').all() as Array<{name:string}>;
+  if(!staffColumns.some(c=>c.name==='must_change_password')) db.exec('ALTER TABLE staff ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+  if(!staffColumns.some(c=>c.name==='temporary_password_expires_at')) db.exec('ALTER TABLE staff ADD COLUMN temporary_password_expires_at TEXT');
   sqliteDbInstance = db;
   return db;
 }
@@ -451,7 +462,7 @@ export async function findEmployeeWithAuthByEmail(email: string): Promise<Employ
     const pool = getMySqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT s.id, s.full_name, s.email, s.role, s.branch_id, s.status, s.created_at,
-              COALESCE(a.password_hash, s.password_hash) as password_hash,
+              s.password_hash as password_hash, s.must_change_password, s.temporary_password_expires_at,
               COALESCE(a.failed_attempts, 0) as failed_attempts,
               a.locked_until,
               a.last_login_at
@@ -472,6 +483,8 @@ export async function findEmployeeWithAuthByEmail(email: string): Promise<Employ
       status: row.status as EmployeeStatus,
       created_at: toIso(row.created_at),
       password_hash: row.password_hash,
+      must_change_password:Number(row.must_change_password??0),
+      temporary_password_expires_at:row.temporary_password_expires_at?toIso(row.temporary_password_expires_at):null,
       failed_attempts: Number(row.failed_attempts),
       locked_until: row.locked_until ? toIso(row.locked_until) : null,
       last_login_at: row.last_login_at ? toIso(row.last_login_at) : null,
@@ -481,7 +494,7 @@ export async function findEmployeeWithAuthByEmail(email: string): Promise<Employ
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT s.id, s.full_name, s.email, s.role, s.branch_id, s.status, s.created_at,
-           coalesce(a.password_hash, s.password_hash) as password_hash,
+           s.password_hash as password_hash, s.must_change_password, s.temporary_password_expires_at,
            coalesce(a.failed_attempts, 0) as failed_attempts,
            a.locked_until,
            a.last_login_at
@@ -541,7 +554,7 @@ export async function getEmployeePasswordHash(employeeId: number): Promise<strin
   if (adapter === 'mysql') {
     const pool = getMySqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT COALESCE(a.password_hash, s.password_hash) as password_hash
+      `SELECT s.password_hash as password_hash
        FROM staff s
        LEFT JOIN staff_authentication a ON a.employee_id = s.id
        WHERE s.id = ?
@@ -554,7 +567,7 @@ export async function getEmployeePasswordHash(employeeId: number): Promise<strin
 
   const db = getSqliteDb();
   const stmt = db.prepare(`
-    SELECT coalesce(a.password_hash, s.password_hash) as password_hash
+    SELECT s.password_hash as password_hash
     FROM staff s
     LEFT JOIN staff_authentication a ON a.employee_id = s.id
     WHERE s.id = ?
@@ -697,7 +710,7 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
   const expiresIso = data.expires_at.toISOString();
 
   if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+    return withMySqlTransaction(async (pool) => {
     const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
     const isPendingVal = data.is_pending ? 1 : 0;
 
@@ -728,7 +741,8 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
         createdFormatted,
       ]
     );
-    return;
+    await recordEmployeeApproval(pool,data.id);
+    });
   }
 
   const db = getSqliteDb();
@@ -863,8 +877,11 @@ export async function consumeOtpChallenge(id: string): Promise<boolean> {
 export async function deleteOtpChallenge(id: string): Promise<void> {
   const adapter = getActiveDbAdapterName();
   if (adapter === 'mysql') {
-    const pool = getMySqlPool();
-    await pool.execute('DELETE FROM otp_challenges WHERE id = ?', [id]);
+    await withMySqlTransaction(async conn=>{
+      await conn.execute(`UPDATE approvals SET expires_at=CURRENT_TIMESTAMP,notes='OTP delivery failed; request expired without a human decision'
+        WHERE id=(SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.approval_id')) AS UNSIGNED) FROM otp_challenges WHERE id=? AND is_pending=0) AND status='pending'`,[id]);
+      await conn.execute('DELETE FROM otp_challenges WHERE id = ?', [id]);
+    });
     return;
   }
 
@@ -1147,6 +1164,11 @@ export async function finalizeOtpResend(
         [originalChallengeId]
       );
       await conn.execute(`UPDATE otp_challenges SET is_pending = 0 WHERE id = ?`, [replacementId]);
+      // Keep the durable HR request's expiry aligned with its delivered replacement.
+      // This is committed with activation; failed delivery leaves both originals intact.
+      await conn.execute(`UPDATE approvals a JOIN otp_challenges c
+        ON a.id=CAST(JSON_UNQUOTE(JSON_EXTRACT(c.metadata,'$.approval_id')) AS UNSIGNED)
+        SET a.expires_at=c.expires_at WHERE c.id=? AND a.status='pending'`,[replacementId]);
       await conn.execute(`DELETE FROM otp_resend_reservations WHERE challenge_id = ?`, [originalChallengeId]);
       return { finalized: true };
     });
@@ -1591,13 +1613,19 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
 
   return runInTransaction(
     async (conn) => {
+      await conn.execute('SELECT id FROM staff WHERE id=? FOR UPDATE',[id]);
+      if(nextRole!==current.role || nextBranch!==current.branch_id || nextStatus!==current.status) await assertNoAgentPortfolio(conn,id);
+      if(nextBranch!==null) {
+        const [branches]=await conn.execute<RowDataPacket[]>("SELECT id FROM branches WHERE id=? AND status='active' FOR SHARE",[nextBranch]);
+        if(!branches.length) throw new Error('Employee branch must remain active.');
+      }
       await conn.execute(
-        `UPDATE staff SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ? WHERE id = ?`,
+        `UPDATE staff SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ?,version=version+1 WHERE id = ?`,
         [nextName, nextEmail, nextRole, nextBranch, nextStatus, id]
       );
 
       if (data.password_hash) {
-        await conn.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [data.password_hash, id]);
+        await conn.execute(`UPDATE staff SET password_hash = ?,must_change_password=0,temporary_password_expires_at=NULL WHERE id = ?`, [data.password_hash, id]);
         await conn.execute(
           `INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
            VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1637,7 +1665,7 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
       `).run(nextName, nextEmail, nextRole, nextBranch, nextStatus, id);
 
       if (data.password_hash) {
-        db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(data.password_hash, id);
+        db.prepare(`UPDATE staff SET password_hash = ?,must_change_password=0,temporary_password_expires_at=NULL WHERE id = ?`).run(data.password_hash, id);
         db.prepare(`
           INSERT INTO staff_authentication (employee_id, password_hash, updated_at)
           VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -1669,7 +1697,7 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
 export async function updatePasswordHash(employeeId: number, passwordHash: string): Promise<void> {
   return runInTransaction(
     async (conn) => {
-      await conn.execute(`UPDATE staff SET password_hash = ? WHERE id = ?`, [passwordHash, employeeId]);
+      await conn.execute(`UPDATE staff SET password_hash = ?,must_change_password=0,temporary_password_expires_at=NULL WHERE id = ?`, [passwordHash, employeeId]);
       await conn.execute(
         `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
          VALUES (?, ?, 0, CURRENT_TIMESTAMP)
@@ -1682,7 +1710,7 @@ export async function updatePasswordHash(employeeId: number, passwordHash: strin
       );
     },
     (db) => {
-      db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(passwordHash, employeeId);
+      db.prepare(`UPDATE staff SET password_hash = ?,must_change_password=0,temporary_password_expires_at=NULL WHERE id = ?`).run(passwordHash, employeeId);
       db.prepare(`
         INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
         VALUES (?, ?, 0, CURRENT_TIMESTAMP)
@@ -1758,7 +1786,7 @@ export async function confirmPasswordResetTransaction(
       }
 
       await conn.execute(
-        `UPDATE staff SET password_hash = ? WHERE id = ?`,
+        `UPDATE staff SET password_hash = ?,must_change_password=0,temporary_password_expires_at=NULL WHERE id = ?`,
         [newPasswordHash, employeeId]
       );
 
@@ -1792,7 +1820,7 @@ export async function confirmPasswordResetTransaction(
         return false;
       }
 
-      db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(newPasswordHash, employeeId);
+      db.prepare(`UPDATE staff SET password_hash = ?,must_change_password=0,temporary_password_expires_at=NULL WHERE id = ?`).run(newPasswordHash, employeeId);
 
       if (testTransactionFailureHook) {
         testTransactionFailureHook('after_staff_update');
@@ -1830,14 +1858,19 @@ export async function confirmEmployeeCreationTransaction(
   const normalizedEmail = employeeData.email.trim().toLowerCase();
   return runInTransaction(
     async (conn) => {
+      const request = await lockEmployeeApproval(conn,challengeId);
       const [otpRes] = await conn.execute<ResultSetHeader>(
-        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts AND is_pending=0 AND expires_at>CURRENT_TIMESTAMP`,
         [challengeId]
       );
       if (otpRes.affectedRows === 0) {
         return null;
       }
 
+      if(employeeData.branch_id!==null && employeeData.branch_id!==undefined) {
+        const [branches]=await conn.execute<RowDataPacket[]>("SELECT id FROM branches WHERE id=? AND status='active' FOR SHARE",[employeeData.branch_id]);
+        if(!branches.length) throw new Error('Employee branch must remain active.');
+      }
       const [insertRes] = await conn.execute<ResultSetHeader>(
         `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status, created_at)
          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
@@ -1851,6 +1884,8 @@ export async function confirmEmployeeCreationTransaction(
         ]
       );
       const newId = insertRes.insertId;
+      await completeEmployeeApproval(conn,request,newId);
+      if(employeeData.must_change_password) await conn.execute('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?',[newId]);
 
       await conn.execute(
         `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
@@ -1906,6 +1941,7 @@ export async function confirmEmployeeCreationTransaction(
         VALUES (?, ?, 0, CURRENT_TIMESTAMP)
       `).run(row.id, employeeData.password_hash);
 
+      if(employeeData.must_change_password) db.prepare('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?').run(row.id);
       return {
         ...row,
         created_at: toIso(row.created_at),
@@ -1924,16 +1960,18 @@ export async function confirmEmployeeDeactivationTransaction(
 ): Promise<boolean> {
   return runInTransaction(
     async (conn) => {
+      const request = await lockEmployeeApproval(conn,challengeId);
       const [otpRes] = await conn.execute<ResultSetHeader>(
-        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts AND is_pending=0 AND expires_at>CURRENT_TIMESTAMP`,
         [challengeId]
       );
       if (otpRes.affectedRows === 0) {
         return false;
       }
 
+      await assertNoAgentPortfolio(conn,targetEmployeeId);
       const [updateRes] = await conn.execute<ResultSetHeader>(
-        `UPDATE staff SET status = 'inactive' WHERE id = ?`,
+        `UPDATE staff SET status = 'inactive',version=version+1 WHERE id = ?`,
         [targetEmployeeId]
       );
       if (updateRes.affectedRows === 0) {
@@ -1941,10 +1979,11 @@ export async function confirmEmployeeDeactivationTransaction(
       }
 
       await conn.execute(
-        `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
+        `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP,revocation_reason='employee_deactivated' WHERE employee_id = ? AND revoked_at IS NULL`,
         [targetEmployeeId]
       );
 
+      await completeEmployeeApproval(conn,request,targetEmployeeId);
       return true;
     },
     (db) => {
@@ -2047,110 +2086,4 @@ export async function getAuditLogsForTest(
   }));
 }
 
-/**
- * Reusable helper to execute production MySQL DDL schema.
- * Shared between migration script and MySQL integration test suite.
- */
-export async function applyMySqlSchema(connOrPool: { execute: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
-  await connOrPool.execute(`
-    CREATE TABLE IF NOT EXISTS \`branches\` (
-      \`id\` INT NOT NULL AUTO_INCREMENT,
-      \`code\` VARCHAR(12) NOT NULL,
-      \`name\` VARCHAR(100) NOT NULL,
-      \`address\` TEXT DEFAULT NULL,
-      \`phone\` VARCHAR(12) DEFAULT NULL,
-      \`email\` VARCHAR(254) DEFAULT NULL,
-      \`status\` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
-      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`code\` (\`code\`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-
-  await connOrPool.execute(`
-    CREATE TABLE IF NOT EXISTS \`staff\` (
-      \`id\` INT NOT NULL AUTO_INCREMENT,
-      \`full_name\` VARCHAR(120) NOT NULL,
-      \`email\` VARCHAR(254) NOT NULL,
-      \`password_hash\` TEXT NOT NULL,
-      \`role\` ENUM('admin', 'higher_manager', 'manager', 'agent') NOT NULL,
-      \`branch_id\` INT DEFAULT NULL,
-      \`status\` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
-      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`id\`),
-      UNIQUE KEY \`email\` (\`email\`),
-      KEY \`branch_id\` (\`branch_id\`),
-      CONSTRAINT \`staff_ibfk_branch\` FOREIGN KEY (\`branch_id\`) REFERENCES \`branches\` (\`id\`) ON DELETE RESTRICT
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-
-  await connOrPool.execute(`
-    CREATE TABLE IF NOT EXISTS \`staff_authentication\` (
-      \`employee_id\` INT NOT NULL,
-      \`password_hash\` TEXT NOT NULL,
-      \`failed_attempts\` INT NOT NULL DEFAULT 0,
-      \`locked_until\` TIMESTAMP NULL DEFAULT NULL,
-      \`last_login_at\` TIMESTAMP NULL DEFAULT NULL,
-      \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`employee_id\`),
-      CONSTRAINT \`fk_staff_auth_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-
-  await connOrPool.execute(`
-    CREATE TABLE IF NOT EXISTS \`employee_sessions\` (
-      \`token_hash\` VARCHAR(64) NOT NULL,
-      \`employee_id\` INT NOT NULL,
-      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      \`last_activity_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      \`expires_at\` TIMESTAMP NOT NULL,
-      \`revoked_at\` TIMESTAMP NULL DEFAULT NULL,
-      \`ip_address\` VARCHAR(45) DEFAULT NULL,
-      \`user_agent\` TEXT DEFAULT NULL,
-      PRIMARY KEY (\`token_hash\`),
-      KEY \`idx_sessions_employee\` (\`employee_id\`),
-      KEY \`idx_sessions_expires_at\` (\`expires_at\`),
-      CONSTRAINT \`fk_sessions_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-
-  await connOrPool.execute(`
-    CREATE TABLE IF NOT EXISTS \`otp_challenges\` (
-      \`id\` VARCHAR(64) NOT NULL,
-      \`employee_id\` INT NOT NULL,
-      \`purpose\` ENUM('login', 'password_reset', 'employee_creation', 'employee_deactivation') NOT NULL,
-      \`code_hash\` VARCHAR(128) NOT NULL,
-      \`attempts\` INT NOT NULL DEFAULT 0,
-      \`max_attempts\` INT NOT NULL DEFAULT 5,
-      \`expires_at\` TIMESTAMP NOT NULL,
-      \`consumed_at\` TIMESTAMP NULL DEFAULT NULL,
-      \`metadata\` JSON DEFAULT NULL,
-      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`id\`),
-      KEY \`idx_otp_employee_purpose\` (\`employee_id\`, \`purpose\`, \`created_at\`),
-      CONSTRAINT \`fk_otp_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-
-  await connOrPool.execute(`
-    CREATE TABLE IF NOT EXISTS \`authentication_audit\` (
-      \`id\` BIGINT NOT NULL AUTO_INCREMENT,
-      \`employee_id\` INT DEFAULT NULL,
-      \`email\` VARCHAR(254) NOT NULL,
-      \`event_type\` VARCHAR(50) NOT NULL,
-      \`ip_address\` VARCHAR(45) DEFAULT NULL,
-      \`user_agent\` TEXT DEFAULT NULL,
-      \`details\` JSON DEFAULT NULL,
-      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (\`id\`),
-      KEY \`idx_audit_email\` (\`email\`, \`created_at\`),
-      KEY \`idx_audit_employee\` (\`employee_id\`, \`created_at\`),
-      KEY \`idx_audit_event\` (\`event_type\`, \`created_at\`),
-      CONSTRAINT \`fk_audit_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
-
-  await connOrPool.execute(`
-    INSERT IGNORE INTO \`branches\` (\`id\`, \`code\`, \`name\`) VALUES (1, 'COL-CEN', 'Colombo Central');
-  `);
-}
+// Canonical MySQL DDL lives in scripts/migrate-database.mjs; runtime performs no DDL.

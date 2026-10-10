@@ -1,18 +1,11 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync } from "node:fs";
-import path from "node:path";
+import { bankingFixture } from "./fixtures/mysql";
 import type { Staff } from "../lib/types";
 
-// Each test file owns a new database directory. No demo or team data is changed.
-mkdirSync(".data", { recursive: true });
-process.env.PGLITE_DATA_DIR = mkdtempSync(path.join(process.cwd(), ".data", "reports-test-"));
-process.env.SEED_DEMO = "true";
-delete process.env.DATABASE_URL;
-
-const { getDb } = await import("../lib/db");
-const { getReport } = await import("../lib/reports");
-const database = await getDb();
+const fixture=await bankingFixture();
+const database=fixture.database;
+const {getReport}=await import('../lib/reports');
 let manager: Staff;
 let otherManager: Staff;
 let administrator: Staff;
@@ -34,11 +27,13 @@ before(async () => {
     await database.transaction(async tx => {
       const account = (await tx.query<{ id: number }>(`
         INSERT INTO savings_accounts(account_number,branch_id,agent_id,rate_id,status,opened_at)
-        VALUES($1,$2,$3,1,'active','2024-01-01T00:00:00Z') RETURNING id`,
+        VALUES($1,$2,$3,1,'pending','2024-01-01 00:00:00')`,
       [`REPORT-ACCOUNT-${branch}`, branch, actor.id])).rows[0].id;
-      await tx.query("INSERT INTO customer_accounts(customer_id,account_id) VALUES($1,$2)", [branch === 1 ? 1 : 9, account]);
-      if (branch === 1) await tx.query("INSERT INTO customer_accounts(customer_id,account_id) VALUES(2,$1)", [account]);
+      await tx.query("INSERT INTO customer_accounts(customer_id,account_id,owner_slot) VALUES($1,$2,1)", [branch === 1 ? 1 : 9, account]);
+      if (branch === 1) await tx.query("INSERT INTO customer_accounts(customer_id,account_id,owner_slot) VALUES(2,$1,2)", [account]);
 
+      await tx.query("INSERT INTO ownership_history(account_id,customer_id,valid_from) SELECT account_id,customer_id,'2024-01-01' FROM customer_accounts WHERE account_id=$1",[account]);
+      await tx.query("UPDATE savings_accounts SET status='active' WHERE id=$1",[account]);
       const entries = [
         { type: "deposit", amount: 20000, at: "2024-01-01T00:00:00Z" },
         { type: "fd_open", amount: -10000, at: "2024-01-14T10:00:00Z" },
@@ -53,7 +48,7 @@ before(async () => {
         const key = `report-${branch}-${index}`;
         const operation = (await tx.query<{ id: number }>(`
           INSERT INTO money_operations(reference,actor_id,idempotency_key,request_fingerprint,type,description,created_at)
-          VALUES($1::text,$2,$1::text,$1::text,$3,'Report date-boundary fixture',$4) RETURNING id`,
+          VALUES($1,$2,$1,$1,$3,'Report date-boundary fixture',$4)`,
         [key, actor.id, entry.type, entry.at])).rows[0].id;
         await tx.query(`INSERT INTO ledger_entries(operation_id,account_id,type,amount,balance_before,balance_after,created_at)
           VALUES($1,$2,$3,$4,$5,$6,$7)`, [operation, account, entry.type, entry.amount, balance, balance + entry.amount, entry.at]);
@@ -62,10 +57,10 @@ before(async () => {
       await tx.query("UPDATE savings_accounts SET balance=$1 WHERE id=$2", [balance, account]);
       const fd = (await tx.query<{ id: number }>(`
         INSERT INTO fixed_deposits(fd_number,source_account_id,rate_id,principal,annual_rate,term_months,status,opened_at,maturity_date)
-        VALUES($1,$2,2,10000,8,3,'active','2024-01-14T10:00:00Z','2024-04-14') RETURNING id`,
+        VALUES($1,$2,2,10000,8,3,'active','2024-01-14 10:00:00','2024-04-14')`,
       [`REPORT-FD-${branch}`, account])).rows[0].id;
       const run = (await tx.query<{ id: number }>(`
-        INSERT INTO interest_runs(period,branch_id,created_by) VALUES('2024-01',$1,$2) RETURNING id`,
+        INSERT INTO interest_runs(period,branch_id,created_by) VALUES('2024-01',$1,$2)`,
       [branch, administrator.id])).rows[0].id;
       await tx.query(`INSERT INTO interest_credits(run_id,account_id,period,amount)
         VALUES($1,$2,'2024-01',$3)`, [run, account, branch === 1 ? 10 : 30]);
@@ -80,9 +75,10 @@ before(async () => {
   }
 });
 
-after(async () => database.close());
+after(async () => fixture.close());
 
-test("reports reject agents, missing branch assignments, unknown types and invalid dates", async () => {
+test("reports reject administrators and agents, missing branch assignments, unknown types and invalid dates", async () => {
+  await assert.rejects(getReport(administrator, "account-summary", day, day), /managers/);
   await assert.rejects(getReport(agent, "branch-summary", day, day), /managers/);
   await assert.rejects(getReport({ ...manager, branch_id: null }, "branch-summary", day, day), /assigned/);
   for (const type of ["missing", "constructor", "__proto__"]) {
@@ -117,7 +113,7 @@ test("account summary counts each ledger entry once even when the account has jo
   assert.equal(Number(account.current_balance), 11225);
   assert.match(String(account.owners), /Kamal Perera, Nimali Fernando/);
   assert.match(branch.note!, /current balance/);
-  assert.ok((await getReport(administrator, "account-summary", day, day)).rows.some(row => row.account === "REPORT-ACCOUNT-2"));
+  assert.ok((await getReport(higherManager, "account-summary", day, day)).rows.some(row => row.account === "REPORT-ACCOUNT-2"));
 });
 
 test("agent history stays in its original branch after an employee moves or changes role", async () => {
@@ -140,14 +136,14 @@ test("active FD next payout follows unpaid calendar months and stays capped at m
   assert.equal(report.rows.length, 1);
   assert.equal(report.rows[0].fixed_deposit, "REPORT-FD-1");
   assert.equal(report.rows[0].next_payout, "2024-03-01", "January was paid; February is next, payable on March 1.");
-  assert.equal((await getReport(administrator, "active-fds", day, day)).rows.length, 2);
+  assert.equal((await getReport(higherManager, "active-fds", day, day)).rows.length, 2);
   assert.equal((await getReport(manager, "active-fds", "2023-01-01", "2023-12-31")).rows.length, 0);
 
   const fixture = fixtures[0];
   // A later posted month must not hide an earlier unposted month.
   for (const period of ["2024-03", "2024-02", "2024-04"]) {
     const run = (await database.query<{ id: number }>(`
-      INSERT INTO interest_runs(period,branch_id,created_by) VALUES($1,1,$2) RETURNING id`, [period, administrator.id])).rows[0].id;
+      INSERT INTO interest_runs(period,branch_id,created_by) VALUES($1,1,$2)`, [period, administrator.id])).rows[0].id;
     await database.query(`INSERT INTO interest_credits(run_id,account_id,fixed_deposit_id,period,amount)
       VALUES($1,$2,$3,$4,10)`, [run, fixture.account, fixture.fd, period]);
     const next = (await getReport(manager, "active-fds", day, day)).rows[0].next_payout;
@@ -162,7 +158,7 @@ test("monthly interest groups earned months and keeps branch totals separate", a
   assert.equal(branch.rows.reduce((sum, row) => sum + Number(row.total_interest), 0), 30);
   const other = await getReport(otherManager, "monthly-interest", day, day);
   assert.equal(other.rows.reduce((sum, row) => sum + Number(row.total_interest), 0), 70);
-  const all = await getReport(administrator, "monthly-interest", day, day);
+  const all = await getReport(higherManager, "monthly-interest", day, day);
   assert.equal(all.rows.reduce((sum, row) => sum + Number(row.total_interest), 0), 100);
   assert.ok(all.rows.every(row => row.accounts === 2));
   assert.match(branch.note!, /earned/);
@@ -178,7 +174,7 @@ test("customer cash flow filters branch and dates while identifying repeated joi
     assert.equal(Number(customer.net_cashflow), 125);
   }
   assert.match(branch.note!, /Joint accounts/);
-  const all = await getReport(administrator, "customer-cashflow", day, day);
+  const all = await getReport(higherManager, "customer-cashflow", day, day);
   assert.equal(Number(all.rows.find(row => row.customer_number === "CUS-000009")!.deposits), 450);
 });
 
@@ -188,7 +184,7 @@ test("branch performance is explicitly a current snapshot and stays within manag
   assert.equal(branch.rows[0].name, "Colombo Central");
   assert.match(branch.note!, /current branch snapshot/);
   assert.deepEqual(branch.rows, (await getReport(manager, "branch-summary", "2020-01-01", "2020-12-31")).rows);
-  assert.equal((await getReport(administrator, "branch-summary", day, day)).rows.length, 3);
+  assert.equal((await getReport(higherManager, "branch-summary", day, day)).rows.length, 3);
 });
 
 test("audit reports apply inclusive local dates and prevent other branches from appearing", async () => {
@@ -196,5 +192,5 @@ test("audit reports apply inclusive local dates and prevent other branches from 
   assert.equal(branch.rows.length, 2);
   assert.ok(branch.rows.every(row => row.actor === agent.full_name));
   assert.deepEqual(branch.rows.map(row => row.action), ["report.boundary.2", "report.boundary.1"]);
-  assert.equal((await getReport(administrator, "audit-log", day, day)).rows.length, 4);
+  assert.equal((await getReport(higherManager, "audit-log", day, day)).rows.length, 4);
 });

@@ -7,6 +7,7 @@ if (!baseURL || !/^https:\/\/auth\.mims\.test:\d+$/.test(baseURL) || !process.en
 
 export default defineConfig({
   testDir: './tests/production',
+  testMatch: process.env.AUTH_VERIFY_SMOKE==='1'?'smoke.spec.ts':'auth.spec.ts',
   workers: 1,
   fullyParallel: false,
   retries: 0, // Each runner invocation creates fresh fixtures and process limits.

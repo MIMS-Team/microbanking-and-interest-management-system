@@ -14,12 +14,12 @@ export async function POST(request: Request) {
       || !timingSafeEqual(Buffer.from(received), Buffer.from(configured))) {
       throw new HttpError(403, "A valid scheduler key is required.");
     }
-    const userId = Number(process.env.SCHEDULER_USER_ID ?? 3);
+    const userId = Number(process.env.SCHEDULER_USER_ID);
     const { rows } = await (await getDb()).query<Staff>(
-      "SELECT id,full_name,email,role,branch_id,status FROM staff WHERE id=$1 AND status='active' AND role IN ('admin','higher_manager')",
+      "SELECT id,full_name,email,role,branch_id,status FROM staff WHERE id=$1 AND status='active' AND role='higher_manager'",
       [userId],
     );
-    if (!rows[0]) throw new HttpError(403, "Configure an active administrator or higher manager as the scheduler user.");
+    if (!rows[0]) throw new HttpError(403, "Configure an active higher manager as the scheduler user.");
     return NextResponse.json(await runMaintenance(rows[0]));
   } catch (error) { return errorResponse(error); }
 }

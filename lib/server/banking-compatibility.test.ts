@@ -1,38 +1,26 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
-import { PGlite } from '@electric-sql/pglite';
-import type { Database, Queryable } from '../db';
+import { bankingFixture } from '../../tests/fixtures/mysql';
+import type { Database } from '../db';
 import type { Staff } from '../types';
-import { getDb } from '../db';
 import { createAccount, createFixedDeposit, applyAccountApproval } from '../banking/accounts';
 import { processInactivity, processMaturities } from '../banking/account-lifecycle';
 import { issueApprovalCode, verifyApprovalCode } from '../auth/approvals';
 import { clearDispatchedEmailsForTest, getDispatchedEmailsForTest, setMockDeliveryFailureForTest } from './email';
 
-vi.mock('../db', () => ({ getDb: vi.fn() }));
 
-let embedded: PGlite;
+
+let fixture:Awaited<ReturnType<typeof bankingFixture>>;
 let database: Database;
 const agent: Staff = { id: 1, full_name: 'Agent', email: 'agent@example.test', role: 'agent', branch_id: 1, status: 'active' };
 const reviewer: Staff = { id: 3, full_name: 'Reviewer', email: 'reviewer@example.test', role: 'higher_manager', branch_id: null, status: 'active' };
 
-beforeAll(async () => {
-  embedded = new PGlite();
-  await embedded.exec(await readFile(new URL('../../tests/fixtures/legacy-banking.sql', import.meta.url), 'utf8'));
-  database = {
-    query: async <T>(sql: string, params: unknown[] = []) => ({ rows: (await embedded.query<T>(sql, params)).rows }),
-    transaction: <T>(work: (tx: Queryable) => Promise<T>) => embedded.transaction(tx => work({
-      query: async <R>(sql: string, params: unknown[] = []) => ({ rows: (await tx.query<R>(sql, params)).rows }),
-    })),
-    close: () => embedded.close(),
-  };
-  vi.mocked(getDb).mockResolvedValue(database);
-});
+beforeAll(async () => {fixture=await bankingFixture(false);database=fixture.database;},60000);
 
 beforeEach(async () => {
   vi.stubEnv('EMAIL_PROVIDER', 'test');
   clearDispatchedEmailsForTest();
-  await embedded.exec(`TRUNCATE branches,rates RESTART IDENTITY CASCADE;
+  await fixture.reset();
+  for (const sql of `
     INSERT INTO branches(code,name,address,phone) VALUES ('TEST','Test branch','Test address','0111111111');
     INSERT INTO staff(id,full_name,email,password_hash,role,branch_id) VALUES
       (1,'Agent','agent@example.test','unused','agent',1),
@@ -42,17 +30,17 @@ beforeEach(async () => {
     INSERT INTO rates(product,name,term_months,annual_rate,minimum_balance,min_age,max_age)
       VALUES ('savings','Regular',0,4.5,500,18,100);
     INSERT INTO customers(customer_number,full_name,nic,date_of_birth,address,mobile,branch_id,agent_id,status)
-      VALUES ('CUS-1','Owner','198512300123','1985-01-01','Test address','0771111111',1,1,'active');`);
-});
+      VALUES ('CUS-1','Owner','198512300123','1985-01-01','Test address','0771111111',1,1,'active');`.split(';').filter(s=>s.trim())) await database.query(sql);
+},60000);
 
 afterAll(async () => {
   vi.unstubAllEnvs();
-  await embedded?.close();
+  await fixture?.close();
 });
 
 async function pendingStaffRequest(): Promise<number> {
-  return (await database.query<{ id: number }>(`INSERT INTO approvals(type,summary,payload,requested_by)
-    VALUES ('staff.update','Update employee','{}',2) RETURNING id`)).rows[0].id;
+  return (await database.query<{ id: number }>(`INSERT INTO approvals(type,entity_id,employee_id,target_version,summary,payload,requested_by)
+    VALUES ('staff.update',1,1,0,'Update employee','{}',2)`)).rows[0].id;
 }
 
 async function challenge(approvalId: number) {
@@ -80,7 +68,9 @@ describe('Restored account services', () => {
 
   it('marks an old account inactive and rejects maintenance by an agent', async () => {
     await database.query(`INSERT INTO savings_accounts(account_number,branch_id,agent_id,rate_id,status,opened_at)
-      VALUES ('SA-OLD',1,1,1,'active',CURRENT_TIMESTAMP-INTERVAL '200 days')`);
+      VALUES ('SA-OLD',1,1,1,'pending',UTC_TIMESTAMP()-INTERVAL 200 DAY)`);
+    await database.query('INSERT INTO customer_accounts(customer_id,account_id,owner_slot) VALUES(1,1,1)');
+    await database.query("UPDATE savings_accounts SET status='active' WHERE id=1");
     await expect(database.transaction(tx => processInactivity(tx, agent, {}))).rejects.toThrow('role');
     await database.transaction(tx => processInactivity(tx, reviewer, { days: 180 }));
     expect((await database.query<{ status: string }>('SELECT status FROM savings_accounts')).rows[0].status).toBe('inactive');
@@ -88,17 +78,17 @@ describe('Restored account services', () => {
   });
 
   it.each([false, true])('settles a matured deposit once (auto renew: %s)', async autoRenew => {
-    await database.query(`INSERT INTO rates(product,name,term_months,annual_rate,minimum_balance)
-      VALUES ('fixed','One month',1,12,10000)`);
+    await database.query(`INSERT INTO rates(product,name,term_months,annual_rate,minimum_balance,minimum_deposit)
+      VALUES ('fixed','One month',1,12,0,10000)`);
     await database.transaction(tx => createAccount(tx, agent, { owner_ids: [1], opening_balance: '25000' }));
     const opening = (await database.query<import('../banking/shared').ApprovalRow>("SELECT * FROM approvals WHERE type='account.create'")).rows[0];
     await database.transaction(tx => applyAccountApproval(tx, reviewer, opening));
     await database.transaction(tx => createFixedDeposit(tx, agent, { source_account_id: opening.entity_id, rate_id: 2, principal: '10000', auto_renew: autoRenew }));
     const funding = (await database.query<import('../banking/shared').ApprovalRow>("SELECT * FROM approvals WHERE type='fd.create'")).rows[0];
     await database.transaction(tx => applyAccountApproval(tx, reviewer, funding));
-    await database.query(`UPDATE fixed_deposits SET opened_at=CURRENT_TIMESTAMP-INTERVAL '32 days',
-      maturity_date=(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Colombo')::date-1 WHERE id=$1`, [funding.entity_id]);
-    await database.transaction(tx => processMaturities(tx, reviewer));
+    await database.query(`UPDATE fixed_deposits SET opened_at=UTC_TIMESTAMP()-INTERVAL 32 DAY,
+      maturity_date=DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE)-INTERVAL 1 DAY WHERE id=$1`, [funding.entity_id]);
+    await Promise.all([database.transaction(tx => processMaturities(tx, reviewer)),database.transaction(tx => processMaturities(tx, reviewer))]);
     const old = (await database.query<{ status: string }>('SELECT status FROM fixed_deposits WHERE id=$1', [funding.entity_id])).rows[0];
     expect(old.status).toBe('closed');
     const active = (await database.query("SELECT * FROM fixed_deposits WHERE status='active'")).rows;
@@ -109,7 +99,7 @@ describe('Restored account services', () => {
     expect((await database.query<{ balance: string }>('SELECT balance FROM savings_accounts WHERE id=$1', [opening.entity_id])).rows[0].balance).toBe(balance);
     const reconciled = (await database.query<{ correct: boolean }>(`SELECT a.balance=COALESCE(sum(l.amount),0) AS correct
       FROM savings_accounts a LEFT JOIN ledger_entries l ON l.account_id=a.id WHERE a.id=$1 GROUP BY a.id`, [opening.entity_id])).rows[0];
-    expect(reconciled.correct).toBe(true);
+    expect(Boolean(reconciled.correct)).toBe(true);
   });
 });
 
@@ -146,7 +136,7 @@ describe('Employee approval OTP', () => {
     const old = await challenge(id);
     const replacement = await challenge(id);
     await expect(verifyApprovalCode(reviewer, id, old)).rejects.toThrow('invalid');
-    await database.query("UPDATE banking_approval_challenges SET expires_at=now()-INTERVAL '1 minute' WHERE id=$1", [replacement.challenge_id]);
+    await database.query("UPDATE banking_approval_challenges SET expires_at=UTC_TIMESTAMP()-INTERVAL 1 MINUTE WHERE id=$1", [replacement.challenge_id]);
     await expect(verifyApprovalCode(reviewer, id, replacement)).rejects.toThrow('invalid');
   });
 

@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const { user } = await requireUser(request);
     if (body.action === "approval.review" && body.decision === "approved") {
       const { rows } = await (await getDb()).query<{ type: string }>("SELECT type FROM approvals WHERE id=$1", [body.id]);
-      if (rows[0]?.type.startsWith("staff.")) await verifyApprovalCode(user, Number(body.id), body);
+      if (rows[0]?.type.startsWith("staff.")) await verifyApprovalCode(user, Number(body.id), body, false);
     }
     return NextResponse.json(await performAction(user, body));
   } catch (error) { return errorResponse(error); }
