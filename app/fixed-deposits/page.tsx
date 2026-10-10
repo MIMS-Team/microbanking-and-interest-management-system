@@ -23,7 +23,7 @@ function FixedDepositsContent() {
   const currentUserRole = getStoredSession()?.role ?? '';
   
   // Determine if the user has the right to approve based on actual login roles
-  const canApprove = ['Branch Manager', 'Higher Management'].includes(currentUserRole);
+  const canApprove = ['manager', 'higher_manager'].includes(currentUserRole);
 
   useEffect(() => {
     async function fetchFixedDeposits() {
@@ -49,7 +49,7 @@ function FixedDepositsContent() {
       const response = await fetch('/api/fixed-deposits/approve', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fdNumber, userRole: currentUserRole }),
+        body: JSON.stringify({ fdNumber }),
       });
       
       if (response.ok) {

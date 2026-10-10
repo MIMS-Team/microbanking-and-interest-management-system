@@ -36,7 +36,9 @@ async function denied(page: Page, path: string, method: string, body?: object) {
   // There are intentionally no management controls for these roles. Probe the
   // real API with cookies from their browser login, without keeping idle pages
   // rendering throughout the lifecycle. No fabricated sessions or route mocks.
-  const response = await page.context().request.fetch(path, { method, data: body });
+  // Retry only a reset transport connection from an idle actor's keep-alive
+  // socket. HTTP responses are never retried; the authorization assertion stays.
+  const response = await page.context().request.fetch(path, { method, data: body, maxRetries: 1 });
   expect(response.status()).toBe(403);
   return response.json();
 }

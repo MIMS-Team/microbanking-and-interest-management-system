@@ -19,7 +19,7 @@ function SavingsAccountsContent() {
   const currentUserRole = getStoredSession()?.role ?? '';
   
   // Determine if the user has the right to approve based on actual login roles
-  const canApprove = ['Branch Manager', 'Higher Management'].includes(currentUserRole);
+  const canApprove = ['manager', 'higher_manager'].includes(currentUserRole);
 
   useEffect(() => {
     async function fetchSavingsAccounts() {
@@ -45,7 +45,7 @@ function SavingsAccountsContent() {
       const response = await fetch('/api/savings/approve', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountNumber, userRole: currentUserRole }),
+        body: JSON.stringify({ accountNumber }),
       });
       
       if (response.ok) {

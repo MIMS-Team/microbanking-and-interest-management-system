@@ -1,54 +1,14 @@
 import { NextResponse } from 'next/server';
-import pool from '@/lib/mysql';
-import type { ResultSetHeader } from 'mysql2';
-
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json() as { accountNumber?: string; userRole?: string };
-    const { accountNumber, userRole } = body; 
-
-    // Validate permissions with actual system roles
-    const allowedRoles = ['Branch Manager', 'Higher Management'];
-    if (!allowedRoles.includes(userRole ?? '')) {
-      return NextResponse.json(
-        { error: "Unauthorized: You do not have permission to approve accounts." },
-        { status: 403 }
-      );
-    }
-
-    if (!accountNumber) {
-      return NextResponse.json(
-        { error: "Account Number is required." },
-        { status: 400 }
-      );
-    }
-
-    const connection = await pool.getConnection();
-
-    const [result] = await connection.execute<ResultSetHeader>(
-      `UPDATE savings_accounts SET status = 'active' WHERE account_number = ? AND status = 'pending'`,
-      [accountNumber]
-    );
-
-    connection.release();
-
-    if (result.affectedRows === 0) {
-      return NextResponse.json(
-        { error: "Savings Account not found or it is already active." },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(
-      { message: "Savings Account approved successfully!" },
-      { status: 200 }
-    );
-
-  } catch (error) {
-    console.error("Savings Approval Error:", error);
-    return NextResponse.json(
-      { error: "Internal server error during approval." },
-      { status: 500 }
-    );
-  }
+import { requireUser } from '@/lib/server/api';
+import { getDb } from '@/lib/db';
+import { performAction } from '@/lib/banking';
+import { first, requireRole } from '@/lib/banking/shared';
+import { readBody, errorResponse } from '@/lib/http';
+export async function PUT(request:Request) {
+  try {const {user}=await requireUser(request);requireRole(user,['manager','higher_manager']);const body=await readBody(request);
+    const approval=await first<{id:number}>(await getDb(),
+      "SELECT p.id FROM approvals p JOIN savings_accounts a ON a.id=p.entity_id WHERE p.type='account.create' AND p.status='pending' AND a.account_number=$1",
+      [body.accountNumber]);
+    return NextResponse.json(await performAction(user,{action:'approval.review',id:approval.id,decision:'approved'}));
+  } catch(error){return errorResponse(error);}
 }
