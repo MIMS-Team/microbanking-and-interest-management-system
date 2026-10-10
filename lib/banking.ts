@@ -48,9 +48,9 @@ export async function performAction(sessionUser: Staff, input: Input): Promise<{
   } catch (error) {
     if (error instanceof BusinessError) throw error;
     const code = (error as {code?:string}).code;
-    if (code === '23505') throw new BusinessError('This record already exists or a matching request is already pending.',409);
-    if (code === '23503') throw new BusinessError('A linked record no longer exists. Refresh and try again.');
-    if (code === '23514') throw new BusinessError('This change would violate a database business rule.');
+    if (code === 'ER_DUP_ENTRY') throw new BusinessError('This record already exists or a matching request is already pending.',409);
+    if (code === 'ER_NO_REFERENCED_ROW_2') throw new BusinessError('A linked record no longer exists. Refresh and try again.');
+    if (code === 'ER_CHECK_CONSTRAINT_VIOLATED' || code === 'ER_SIGNAL_EXCEPTION') throw new BusinessError('This change would violate a database business rule.');
     throw error;
   }
 }

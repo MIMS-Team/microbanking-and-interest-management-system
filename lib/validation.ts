@@ -28,7 +28,7 @@ export function phone(value: unknown, required = false): string {
   if (result && !/^\+?[\d ()-]{9,20}$/.test(result)) throw new BusinessError('Enter a valid telephone number.');
   return result;
 }
-/** Validate as decimal text, then let PostgreSQL perform exact NUMERIC arithmetic. */
+/** Validate as decimal text, then let MySQL perform exact DECIMAL arithmetic. */
 export function money(value: unknown, label = 'Amount', allowZero = false): string {
   const result = String(value ?? '').trim();
   if (!/^\d{1,12}(\.\d{1,2})?$/.test(result) || (!allowZero && Number(result) <= 0)) {

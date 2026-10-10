@@ -32,7 +32,8 @@ export function Transactions({ data, onAction }: ModuleProps) {
       destination_account_id: kind === 'transfer' ? Number(values.destination_account_id) : undefined,
       amount: values.amount,
       description: values.description,
-      owner_verified: values.owner_verified === 'on',
+      verified_customer_id:kind==='deposit'?undefined:Number(values.verified_customer_id),
+      verification_method:kind==='deposit'?undefined:values.verification_method,
       idempotency_key: idempotencyKey,
     });
   }
@@ -116,6 +117,21 @@ export function Transactions({ data, onAction }: ModuleProps) {
           <Field label="Amount (LKR) *" wide>
             <input type="number" name="amount" min="0.01" step="0.01" required placeholder="0.00" />
           </Field>
+          {kind!=='deposit' && <>
+            <Field label="Verified account owner *">
+              <select name="verified_customer_id" required defaultValue="">
+                <option value="" disabled>Select the customer present</option>
+                {data.customers.filter(customer=>assignedAccounts.find(a=>String(a.id)===sourceId)?.owner_ids?.includes(customer.id)).map(customer=><option key={customer.id} value={customer.id}>{customer.full_name}</option>)}
+              </select>
+            </Field>
+            <Field label="Identity document checked *">
+              <select name="verification_method" required defaultValue="">
+                <option value="" disabled>Select verification method</option>
+                <option value="nic-in-person">NIC checked in person</option>
+                <option value="passport-in-person">Passport checked in person</option>
+              </select>
+            </Field>
+          </>}
           <Field label="Description / reference *" wide>
             <textarea name="description" required minLength={3} maxLength={250} rows={2} placeholder="Purpose of this transaction" />
           </Field>

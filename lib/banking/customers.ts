@@ -2,7 +2,7 @@
 import type { Queryable } from '../db';
 import type { Staff } from '../types';
 import { BusinessError, requiredText, positiveId, nic, dateOfBirth, email, phone } from '../validation';
-import { first, requireRole, requireAgent, queue, reference } from './shared';
+import { first, requireRole, requireAgent, queue, reference, requireActiveAssignment } from './shared';
 import type { Input, CustomerRow, ApprovalRow } from './shared';
 
 export function customerDetails(input: Input): Input {
@@ -18,7 +18,7 @@ export async function createCustomer(tx: Queryable, user: Staff, input: Input) {
   if (input.agent_id && positiveId(input.agent_id) !== user.id) throw new BusinessError('Customers must be assigned to the registering agent.',403);
   await first(tx,'SELECT id FROM branches WHERE id=$1 AND status=\'active\'',[branch]);
   const created = await first<{id:number}>(tx,`INSERT INTO customers(customer_number,full_name,nic,date_of_birth,address,mobile,landline,email,branch_id,agent_id)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,[reference('CUS'),values.full_name,values.nic,values.date_of_birth,values.address,values.mobile,values.landline,values.email,branch,user.id]);
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[reference('CUS'),values.full_name,values.nic,values.date_of_birth,values.address,values.mobile,values.landline,values.email,branch,user.id]);
   await queue(tx,user,'customer.create',created.id,branch,String(values.full_name),`Register ${values.full_name}`,{id:created.id});
   return {message:'Customer registration submitted for manager approval.'};
 }
@@ -44,16 +44,19 @@ export async function customerStatus(tx: Queryable,user: Staff,input: Input) {
 export async function applyCustomerApproval(tx: Queryable, approval: ApprovalRow): Promise<void> {
   const id = approval.entity_id;
   const proposed = approval.payload;
+  const current=await first<CustomerRow & Input>(tx,"SELECT *,DATE_FORMAT(date_of_birth,'%Y-%m-%d') AS date_of_birth FROM customers WHERE id=$1 FOR UPDATE",[id]);
+  await requireActiveAssignment(tx,current.branch_id,current.agent_id);
+  if(approval.type==='customer.create') customerDetails(current);
   switch (approval.type) {
     case 'customer.create': {
       await first(tx, `UPDATE customers SET status='active',updated_at=CURRENT_TIMESTAMP
-        WHERE id=$1 AND status='pending' RETURNING id`, [id]);
+        WHERE id=$1 AND status='pending'`, [id]);
       break;
     }
     case 'customer.update': {
       const values = customerDetails(proposed);
       await first(tx, `UPDATE customers SET full_name=$1,nic=$2,date_of_birth=$3,address=$4,mobile=$5,
-        landline=$6,email=$7,updated_at=CURRENT_TIMESTAMP WHERE id=$8 AND status='active' RETURNING id`,
+        landline=$6,email=$7,updated_at=CURRENT_TIMESTAMP WHERE id=$8 AND status='active'`,
         [values.full_name, values.nic, values.date_of_birth, values.address, values.mobile, values.landline, values.email, id]);
       break;
     }
@@ -66,7 +69,7 @@ export async function applyCustomerApproval(tx: Queryable, approval: ApprovalRow
         if (linked.rows.length) throw new BusinessError('Close this customer’s open savings accounts before deactivating the customer.');
       }
       await first(tx, `UPDATE customers SET status=$1,updated_at=CURRENT_TIMESTAMP
-        WHERE id=$2 AND status IN ('active','inactive') RETURNING id`, [proposed.status, id]);
+        WHERE id=$2 AND status IN ('active','inactive')`, [proposed.status, id]);
       break;
     }
     default: throw new BusinessError('Unsupported approval request.');

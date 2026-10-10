@@ -28,8 +28,8 @@ export async function applyBranchChange(tx: Queryable, approval: ApprovalRow): P
   const values = branchDetails(approval.payload);
   if (approval.type === 'branch.create') {
     const created = await first<{id: number}>(tx, `INSERT INTO branches(code,name,address,phone,email,status)
-      VALUES($1,$2,$3,$4,$5,$6) RETURNING id`, [values.code, values.name, values.address, values.phone, values.email, values.status]);
-    await tx.query('UPDATE approvals SET entity_id=$1,branch_id=$1 WHERE id=$2', [created.id, approval.id]);
+      VALUES($1,$2,$3,$4,$5,$6)`, [values.code, values.name, values.address, values.phone, values.email, values.status]);
+    await tx.query('UPDATE approvals SET entity_id=$1,target_branch_id=$1,branch_id=$1 WHERE id=$2', [created.id, approval.id]);
     return;
   }
   await first(tx, 'SELECT id FROM branches WHERE id=$1 FOR UPDATE', [approval.entity_id]);
@@ -78,8 +78,9 @@ export async function applyStaffChange(tx: Queryable, reviewer: Staff, approval:
   if (approval.type === 'staff.create') {
     if (typeof passwordHash !== 'string') throw new BusinessError('The new staff request is missing its password.');
     const created = await first<{id:number}>(tx, `INSERT INTO staff(full_name,email,role,branch_id,status,password_hash)
-      VALUES($1,$2,$3,$4,$5,$6) RETURNING id`, [values.full_name, values.email, values.role, values.branch_id, values.status, passwordHash]);
-    await tx.query('UPDATE approvals SET entity_id=$1 WHERE id=$2', [created.id, approval.id]);
+      VALUES($1,$2,$3,$4,$5,$6)`, [values.full_name, values.email, values.role, values.branch_id, values.status, passwordHash]);
+    await tx.query('INSERT INTO staff_authentication(employee_id,password_hash) VALUES($1,$2)',[created.id,passwordHash]);
+    await tx.query('UPDATE approvals SET entity_id=$1,employee_id=$1 WHERE id=$2', [created.id, approval.id]);
     return;
   }
   const current = await first<Staff>(tx, 'SELECT id,full_name,email,role,branch_id,status FROM staff WHERE id=$1 FOR UPDATE', [approval.entity_id]);
@@ -100,17 +101,27 @@ export async function applyStaffChange(tx: Queryable, reviewer: Staff, approval:
   await tx.query(`UPDATE staff SET full_name=$1,email=$2,role=$3,branch_id=$4,status=$5,
     password_hash=COALESCE($6,password_hash) WHERE id=$7`,
     [values.full_name, values.email, values.role, values.branch_id, values.status, passwordHash ?? null, current.id]);
+  if (passwordHash) await tx.query('UPDATE staff_authentication SET password_hash=$1 WHERE employee_id=$2',[passwordHash,current.id]);
+  await tx.query("UPDATE employee_sessions SET revoked_at=CURRENT_TIMESTAMP,revocation_reason='employee_change' WHERE employee_id=$1 AND revoked_at IS NULL",[current.id]);
 }
 
 export async function reassignAgent(tx: Queryable, user: Staff, input: Input) {
-  requireRole(user, ['manager', 'higher_manager', 'admin']);
+  requireRole(user,['manager','higher_manager']);
+  const from=await first<Staff>(tx,'SELECT * FROM staff WHERE id=$1 FOR UPDATE',[positiveId(input.from_agent_id)]);
+  requireBranch(user,from.branch_id!);
+  await queue(tx,user,'agent.reassign',from.id,from.branch_id,'','Reassign agent portfolio',{from_agent_id:from.id,to_agent_id:positiveId(input.to_agent_id)});
+  return {message:'Agent reassignment submitted for independent higher-management approval.'};
+}
+
+export async function applyAgentReassignment(tx: Queryable, user: Staff, input: Input, approvalId:number) {
+  requireRole(user, ['higher_manager']);
   const fromId = positiveId(input.from_agent_id, 'Current agent');
   const toId = positiveId(input.to_agent_id, 'New agent');
   if (fromId === toId) throw new BusinessError('Choose a different receiving agent.');
   // Lock staff before their customer/account rows. Actions already in progress
   // finish first; later actions see the new assignment and recheck permissions.
   const staff = (await tx.query<Staff>(`SELECT id,full_name,email,role,branch_id,status FROM staff
-    WHERE id=ANY($1::integer[]) ORDER BY id FOR UPDATE`, [[fromId, toId]])).rows;
+    WHERE id IN ($1) ORDER BY id FOR UPDATE`, [[fromId, toId]])).rows;
   const from = staff.find(person => person.id === fromId);
   const to = staff.find(person => person.id === toId);
   if (!from || !to || from.role !== 'agent' || to.role !== 'agent' || to.status !== 'active') {
@@ -120,12 +131,16 @@ export async function reassignAgent(tx: Queryable, user: Staff, input: Input) {
     throw new BusinessError('Both agents must belong to the same branch.');
   }
   requireBranch(user, from.branch_id);
+  for(const [table,column] of [['customers','customer_id'],['savings_accounts','account_id']]) {
+    await tx.query(`UPDATE assignment_history SET valid_to=CURRENT_TIMESTAMP(3) WHERE ${column} IN (SELECT id FROM ${table} WHERE agent_id=$1) AND valid_to IS NULL`,[fromId]);
+    await tx.query(`INSERT INTO assignment_history(${column},agent_id,branch_id,approval_id) SELECT id,$1,branch_id,$2 FROM ${table} WHERE agent_id=$3`,[toId,approvalId,fromId]);
+  }
   const customers = await tx.query<{id: number}>(
-    'UPDATE customers SET agent_id=$1,updated_at=CURRENT_TIMESTAMP WHERE agent_id=$2 RETURNING id', [toId, fromId],
+    'UPDATE customers SET agent_id=$1,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE agent_id=$2', [toId, fromId],
   );
-  const accounts = await tx.query<{id: number}>(`UPDATE savings_accounts SET agent_id=$1
-    WHERE agent_id=$2 AND status IN ('pending','active','inactive') RETURNING id`, [toId, fromId]);
+  const accounts = await tx.query<{id: number}>(`UPDATE savings_accounts SET agent_id=$1,version=version+1
+    WHERE agent_id=$2 AND status IN ('pending','active','inactive')`, [toId, fromId]);
   await audit(tx, user, 'agent.reassigned', 'staff', fromId, from.branch_id,
-    {to_agent_id: toId, customers: customers.rows.length, accounts: accounts.rows.length});
-  return {message: `${customers.rows.length} customers and ${accounts.rows.length} open accounts assigned to ${to.full_name}.`};
+    {to_agent_id: toId, customers: customers.affectedRows, accounts: accounts.affectedRows,approval_id:approvalId});
+  return {message: `${customers.affectedRows} customers and ${accounts.affectedRows} open accounts assigned to ${to.full_name}.`};
 }
