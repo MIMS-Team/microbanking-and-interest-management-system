@@ -45,7 +45,7 @@ This upgrade establishes an enterprise-grade banking security architecture:
 5. **Frontend Logout Integration & Full Session Revocation**:
    - Integrated keyboard-accessible, loading-aware `LogoutButton` into authenticated navigation layouts.
    - Calls backend `POST /api/auth/logout` with credentials, immediately clearing `localStorage` and `sessionStorage`.
-   - Protects protected routes (`/dashboard`, `/profile`, `/savings`, `/fixed-deposits`) via Next.js route middleware (`src/middleware.ts`) and client-side `RequireSession` guards.
+   - Protects protected routes (`/dashboard`, `/profile`, `/savings`, `/fixed-deposits`) via Next.js route middleware (`proxy.ts`) and client-side `RequireSession` guards.
    - Revokes session records in the database, expires session cookies, and emits anti-caching HTTP headers.
 
 6. **Hardened Authorization & Dual-Control Integrity**:
@@ -191,7 +191,7 @@ Content-Type: application/json
 ### Automated Checks (59 Passing Tests)
 
 ```powershell
-cd microbanking-and-interest-management-system
+# Run from the repository root
 npm run lint
 npx tsc --noEmit
 npm test
@@ -237,7 +237,7 @@ Configured in `.github/workflows/ci.yml`. Runs on all pull requests and pushes t
 - [x] OTP expiration, one-time use, and retry limits strictly enforced.
 - [x] Frontend logout UI connected to backend `/api/auth/logout` API with session revocation.
 - [x] Client authentication state, `localStorage`, and `sessionStorage` purged on logout.
-- [x] Protected routes guarded on edge/server (`src/middleware.ts`) and client (`RequireSession`).
+- [x] Protected routes guarded on edge/server (`proxy.ts`) and client (`RequireSession`).
 - [x] Post-logout redirection to `/login?status=logged_out` with safe confirmation banner.
 - [x] Automated unit and integration test suite created (72 passing tests across 3 suites).
 - [x] GitHub Actions CI workflow configured (`.github/workflows/ci.yml`).

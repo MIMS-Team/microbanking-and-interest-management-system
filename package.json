@@ -9,29 +9,42 @@
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "scheduler": "node scripts/scheduler.mjs",
-    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
-    "test:auth": "tsx --test tests/auth.test.ts",
-    "test:banking": "tsx --test tests/banking.test.ts",
+    "test": "npm run test:auth && npm run test:banking",
+    "test:auth": "vitest run",
+    "test:banking": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:reports": "tsx --test tests/reports.test.ts",
     "test:smoke": "node scripts/smoke.mjs",
-    "db:setup": "tsx scripts/db-setup.ts"
+    "db:setup": "tsx scripts/db-setup.ts",
+    "lint": "eslint",
+    "seed": "node scripts/seed-dev.mjs",
+    "db:migrate:auth": "node scripts/migrate-auth-mysql.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",
     "exceljs": "4.4.0",
-    "lucide-react": "1.46.0",
-    "next": "16.3.5",
+    "lucide-react": "^1.49.0",
+    "next": "16.3.3",
     "pg": "8.23.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "mysql2": "^3.24.5",
+    "nodemailer": "^10.0.16"
   },
   "devDependencies": {
-    "@types/node": "26.5.1",
+    "@types/node": "^26.6.4",
     "@types/pg": "8.23.1",
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "tsx": "4.23.13",
-    "typescript": "7.0.2"
+    "typescript": "^5",
+    "@tailwindcss/postcss": "^4",
+    "@testing-library/react": "^16.3.3",
+    "@types/nodemailer": "^8.0.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.3",
+    "happy-dom": "^20.14.6",
+    "tailwindcss": "^4",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=22.0.0"
