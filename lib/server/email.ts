@@ -36,9 +36,14 @@ export interface DispatchedEmailRecord {
 
 let testDispatchedEmails: DispatchedEmailRecord[] = [];
 let mockDeliveryFailure = false;
+let mockDeliveryDelayMs = 0;
 
 export function setMockDeliveryFailureForTest(shouldFail: boolean): void {
   mockDeliveryFailure = shouldFail;
+}
+
+export function setMockDeliveryDelayForTest(ms: number): void {
+  mockDeliveryDelayMs = ms;
 }
 
 export function getDispatchedEmailsForTest(): DispatchedEmailRecord[] {
@@ -48,6 +53,7 @@ export function getDispatchedEmailsForTest(): DispatchedEmailRecord[] {
 export function clearDispatchedEmailsForTest(): void {
   testDispatchedEmails = [];
   mockDeliveryFailure = false;
+  mockDeliveryDelayMs = 0;
 }
 
 /**
@@ -55,6 +61,10 @@ export function clearDispatchedEmailsForTest(): void {
  * Handles production delivery (SMTP/HTTP relay) and development/test fallback.
  */
 export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ success: boolean; provider: string }> {
+  if (mockDeliveryDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, mockDeliveryDelayMs));
+  }
+
   if (mockDeliveryFailure) {
     throw new OtpDeliveryError('Email delivery service returned an error. Verification code could not be sent.', 502, 'OTP_DELIVERY_FAILED');
   }
@@ -72,6 +82,19 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
       subject: options.subject,
       timestamp: new Date().toISOString(),
     });
+    try {
+      const dataDir = join(process.cwd(), '.data');
+      if (!existsSync(dataDir)) {
+        mkdirSync(dataDir, { recursive: true });
+      }
+      writeFileSync(
+        join(dataDir, 'latest_otp.json'),
+        JSON.stringify({ to: options.to, purpose: options.purpose, code: options.otpCode, timestamp: new Date().toISOString() }),
+        'utf8'
+      );
+    } catch {
+      // Ignore write failure in test sandbox
+    }
     return { success: true, provider: 'test' };
   }
 
@@ -101,8 +124,9 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
       }
       return { success: true, provider: 'webhook' };
     } catch (error) {
+      console.error('[EMAIL-WEBHOOK-ERROR]', error instanceof Error ? error.message : error);
       throw new OtpDeliveryError(
-        `Failed to send verification email via provider: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'Failed to deliver verification email via provider. Please try again later.',
         502,
         'OTP_DELIVERY_FAILED'
       );
@@ -146,8 +170,9 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
 
       return { success: true, provider: 'smtp' };
     } catch (error) {
+      console.error('[EMAIL-SMTP-ERROR]', error instanceof Error ? error.message : error);
       throw new OtpDeliveryError(
-        `Failed to send verification email via SMTP: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'Failed to deliver verification email via SMTP server. Please try again later.',
         502,
         'OTP_DELIVERY_FAILED'
       );
@@ -175,6 +200,11 @@ function sendDevOtp(options: EmailDispatchOptions): { success: boolean; provider
     writeFileSync(
       join(dataDir, 'latest_otp.txt'),
       `=========================================\n  LATEST OTP CODE: ${options.otpCode}\n  Account: ${options.to}\n  Purpose: ${options.purpose}\n  Generated at: ${new Date().toLocaleTimeString()}\n=========================================\n`,
+      'utf8'
+    );
+    writeFileSync(
+      join(dataDir, 'latest_otp.json'),
+      JSON.stringify({ to: options.to, purpose: options.purpose, code: options.otpCode, timestamp: new Date().toISOString() }),
       'utf8'
     );
   } catch {

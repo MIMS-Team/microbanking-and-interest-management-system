@@ -24,3 +24,13 @@ Checked locally on `file-organize`, 2026-10-10. Changes are not committed or pus
 `tests/fixtures/legacy-banking.sql` is a recovered test-only schema. Neither the active MySQL schema nor the application's database selection was changed to make the tests pass. The new compatibility tests validate legacy service behavior in isolation, not MySQL conversion or end-to-end banking operation.
 
 The next integration step is to reconcile the older banking services, schema, and employee identity with the team's MySQL implementation. Whole-bank HTTP smoke tests have not passed and the current build result should not be treated as a working-bank release.
+
+## Main merge verification
+
+Resolved the merge of main `f4a5bb6` into `file-organize`, preserving the root layout and existing banking fixes. Consolidated the new Playwright dependency/scripts into the root manifest and regenerated its lockfile. Corrected Vitest test discovery and the browser CI job's paths for the root layout. The merge is staged, not committed or pushed by this resolution.
+
+- Clean install (`npm.cmd ci --ignore-scripts --no-audit --no-fund`): passes.
+- Typecheck, lint and production build: pass.
+- Authentication/compatibility suite: 124 passed, 22 disposable MySQL tests skipped without a configured dedicated server.
+- Playwright discovery: all 14 browser tests listed successfully. Browser flows were not executed locally.
+- The separately recorded PostgreSQL/MySQL banking initialization failure remains outside this merge-resolution change.

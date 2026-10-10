@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import mysql from 'mysql2/promise';
 
@@ -42,6 +43,13 @@ export interface EmployeeWithAuth extends PublicEmployee {
   last_login_at: string | null;
 }
 
+export class AuthError extends Error {
+  constructor(message: string, public status = 400, public code = 'AUTH_ERROR') {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
 export interface OtpChallengeRecord {
   id: string;
   employee_id: number;
@@ -52,6 +60,7 @@ export interface OtpChallengeRecord {
   expires_at: string;
   consumed_at: string | null;
   metadata: string | null;
+  is_pending?: number;
   created_at: string;
 }
 
@@ -102,6 +111,8 @@ export interface CreateOtpData {
   expires_at: Date;
   metadata?: Record<string, unknown> | null;
   invalidatePrevious?: boolean;
+  is_pending?: boolean;
+  created_at?: Date;
 }
 
 export interface AuditAttemptData {
@@ -136,7 +147,11 @@ export function getActiveDbAdapterName(): 'mysql' | 'sqlite' {
 
 function toIso(val: unknown): string {
   if (val instanceof Date) return val.toISOString();
-  if (typeof val === 'string') return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(trimmed)) return trimmed;
+    return trimmed.replace(' ', 'T') + 'Z';
+  }
   if (!val) return '';
   return String(val);
 }
@@ -254,6 +269,15 @@ export function getSqliteDb(): DatabaseSync {
       expires_at TEXT NOT NULL,
       consumed_at TEXT,
       metadata TEXT,
+      is_pending INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS otp_resend_reservations (
+      challenge_id TEXT PRIMARY KEY REFERENCES otp_challenges(id) ON DELETE CASCADE,
+      reservation_token TEXT NOT NULL,
+      replacement_id TEXT NOT NULL,
+      lease_expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -276,6 +300,13 @@ export function getSqliteDb(): DatabaseSync {
 
     INSERT OR IGNORE INTO branches (id, code, name) VALUES (1, 'COL-CEN', 'Colombo Central');
   `);
+
+  try {
+    const cols = db.prepare(`PRAGMA table_info(otp_challenges)`).all() as Array<{ name: string }>;
+    if (cols.length > 0 && !cols.some((c) => c.name === 'is_pending')) {
+      db.exec(`ALTER TABLE otp_challenges ADD COLUMN is_pending INTEGER NOT NULL DEFAULT 0;`);
+    }
+  } catch {}
 
   sqliteDbInstance = db;
   return db;
@@ -350,6 +381,7 @@ export async function resetDatabase(): Promise<void> {
     const pool = getMySqlPool();
     await pool.execute('DELETE FROM authentication_audit');
     await pool.execute('DELETE FROM employee_sessions');
+    await pool.execute('DELETE FROM otp_resend_reservations');
     await pool.execute('DELETE FROM otp_challenges');
     await pool.execute('DELETE FROM staff_authentication');
     await pool.execute('DELETE FROM staff');
@@ -360,6 +392,7 @@ export async function resetDatabase(): Promise<void> {
   db.exec(`
     DELETE FROM authentication_audit;
     DELETE FROM employee_sessions;
+    DELETE FROM otp_resend_reservations;
     DELETE FROM otp_challenges;
     DELETE FROM staff_authentication;
     DELETE FROM staff;
@@ -660,6 +693,7 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
   if (adapter === 'mysql') {
     const pool = getMySqlPool();
     const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
+    const isPendingVal = data.is_pending ? 1 : 0;
 
     // Invalidate earlier unconsumed OTPs for same employee and purpose only if requested
     if (data.invalidatePrevious !== false) {
@@ -669,10 +703,13 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
       );
     }
 
+    const createdDate = data.created_at ?? new Date();
+    const createdFormatted = createdDate.toISOString().slice(0, 19).replace('T', ' ');
+
     await pool.execute(
-      `INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, created_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON DUPLICATE KEY UPDATE code_hash = VALUES(code_hash), attempts = 0, expires_at = VALUES(expires_at), consumed_at = NULL, metadata = VALUES(metadata)`,
+      `INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, is_pending, created_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE code_hash = VALUES(code_hash), attempts = 0, expires_at = VALUES(expires_at), consumed_at = NULL, metadata = VALUES(metadata), is_pending = VALUES(is_pending), created_at = VALUES(created_at)`,
       [
         data.id,
         data.employee_id,
@@ -681,6 +718,8 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
         data.max_attempts ?? 5,
         expiresFormatted,
         metadataJson,
+        isPendingVal,
+        createdFormatted,
       ]
     );
     return;
@@ -688,6 +727,8 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
 
   const db = getSqliteDb();
   const nowIso = new Date().toISOString();
+  const createdIso = (data.created_at ?? new Date()).toISOString();
+  const isPendingVal = data.is_pending ? 1 : 0;
   if (data.invalidatePrevious !== false) {
     db.prepare(`
       UPDATE otp_challenges
@@ -697,14 +738,16 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
   }
 
   db.prepare(`
-    INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, created_at)
-    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+    INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, is_pending, created_at)
+    VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       code_hash = excluded.code_hash,
       attempts = 0,
       expires_at = excluded.expires_at,
       consumed_at = NULL,
-      metadata = excluded.metadata
+      metadata = excluded.metadata,
+      is_pending = excluded.is_pending,
+      created_at = excluded.created_at
   `).run(
     data.id,
     data.employee_id,
@@ -713,18 +756,25 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
     data.max_attempts ?? 5,
     expiresIso,
     metadataJson,
-    nowIso
+    isPendingVal,
+    createdIso
   );
 }
 
-export async function findOtpChallenge(id: string, purpose: OtpPurpose): Promise<OtpChallengeRecord | null> {
+export async function findOtpChallenge(
+  id: string,
+  purpose: OtpPurpose,
+  includePending = false
+): Promise<OtpChallengeRecord | null> {
   const adapter = getActiveDbAdapterName();
+  const pendingClause = includePending ? '' : 'AND (is_pending = 0 OR is_pending IS NULL)';
+
   if (adapter === 'mysql') {
     const pool = getMySqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, created_at
+      `SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, is_pending, created_at
        FROM otp_challenges
-       WHERE id = ? AND purpose = ?
+       WHERE id = ? AND purpose = ? ${pendingClause}
        LIMIT 1`,
       [id, purpose]
     );
@@ -740,15 +790,16 @@ export async function findOtpChallenge(id: string, purpose: OtpPurpose): Promise
       expires_at: toIso(row.expires_at),
       consumed_at: row.consumed_at ? toIso(row.consumed_at) : null,
       metadata: typeof row.metadata === 'object' && row.metadata !== null ? JSON.stringify(row.metadata) : (row.metadata ?? null),
+      is_pending: Number(row.is_pending ?? 0),
       created_at: toIso(row.created_at),
     };
   }
 
   const db = getSqliteDb();
   const stmt = db.prepare(`
-    SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, created_at
+    SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, is_pending, created_at
     FROM otp_challenges
-    WHERE id = ? AND purpose = ?
+    WHERE id = ? AND purpose = ? ${pendingClause}
     LIMIT 1
   `);
   const row = stmt.get(id, purpose) as unknown as OtpChallengeRecord | undefined;
@@ -757,6 +808,7 @@ export async function findOtpChallenge(id: string, purpose: OtpPurpose): Promise
     ...row,
     expires_at: toIso(row.expires_at),
     consumed_at: row.consumed_at ? toIso(row.consumed_at) : null,
+    is_pending: Number(row.is_pending ?? 0),
     created_at: toIso(row.created_at),
   };
 }
@@ -812,6 +864,345 @@ export async function deleteOtpChallenge(id: string): Promise<void> {
 
   const db = getSqliteDb();
   db.prepare('DELETE FROM otp_challenges WHERE id = ?').run(id);
+}
+
+export function parseDateSafe(dateString: string): Date {
+  if (!dateString) return new Date(0);
+  const trimmed = dateString.trim();
+  if (trimmed.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    return new Date(trimmed);
+  }
+  const isoUtc = trimmed.replace(' ', 'T') + 'Z';
+  const d = new Date(isoUtc);
+  if (!isNaN(d.getTime())) {
+    return d;
+  }
+  return new Date(trimmed);
+}
+
+export interface AcquiredResendReservation {
+  reservationToken: string;
+  originalChallenge: OtpChallengeRecord;
+  replacementId: string;
+}
+
+/**
+ * Atomically acquires a bounded database reservation to resend an OTP challenge.
+ * Works across multi-process deployments. Ensures only one request can own the resend lease.
+ * Creates replacement challenge in a pending state preventing premature verification.
+ */
+export async function acquireOtpResendReservation(
+  originalChallengeId: string,
+  replacementData: CreateOtpData,
+  leaseDurationMs = 30000
+): Promise<AcquiredResendReservation> {
+  const adapter = getActiveDbAdapterName();
+  const now = new Date();
+  const newToken = randomBytes(24).toString('hex');
+
+  if (adapter === 'mysql') {
+    return withMySqlTransaction(async (conn) => {
+      // 1. Lock and inspect original challenge
+      const [rows] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, is_pending, created_at
+         FROM otp_challenges
+         WHERE id = ?
+         FOR UPDATE`,
+        [originalChallengeId]
+      );
+      const row = rows[0] as (OtpChallengeRecord & RowDataPacket) | undefined;
+      if (!row) {
+        throw new AuthError('Verification challenge not found or has expired.', 404, 'CHALLENGE_NOT_FOUND');
+      }
+      if (Number(row.is_pending) === 1) {
+        throw new AuthError('Cannot resend a pending challenge.', 400, 'INVALID_CHALLENGE_STATE');
+      }
+      if (row.consumed_at) {
+        throw new AuthError('This verification code has already been confirmed.', 400, 'ALREADY_CONSUMED');
+      }
+      const expiresAtMs = parseDateSafe(String(row.expires_at)).getTime();
+      if (expiresAtMs <= Date.now()) {
+        throw new AuthError('Verification challenge has expired.', 400, 'CHALLENGE_EXPIRED');
+      }
+      const createdAtMs = parseDateSafe(String(row.created_at)).getTime();
+      const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
+      const isE2E = process.env.E2E_TEST === 'true';
+      if (!isE2E && elapsedSeconds < 30) {
+        const wait = 30 - elapsedSeconds;
+        throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
+      }
+
+      // 2. Lock and inspect existing reservation
+      const [resRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT challenge_id, reservation_token, replacement_id, lease_expires_at
+         FROM otp_resend_reservations
+         WHERE challenge_id = ?
+         FOR UPDATE`,
+        [originalChallengeId]
+      );
+      const existing = resRows[0] as {
+        challenge_id: string;
+        reservation_token: string;
+        replacement_id: string;
+        lease_expires_at: string;
+      } | undefined;
+
+      const leaseExpires = new Date(Date.now() + leaseDurationMs);
+      const leaseExpiresFormatted = leaseExpires.toISOString().slice(0, 19).replace('T', ' ');
+
+      if (existing) {
+        const leaseUntilMs = parseDateSafe(String(existing.lease_expires_at)).getTime();
+        if (leaseUntilMs > Date.now()) {
+          throw new AuthError('A verification resend is currently in progress. Please wait before retrying.', 429, 'CONCURRENT_RESEND_IN_PROGRESS');
+        }
+        // Abandoned lease recovery: clean up stale pending challenge
+        await conn.execute(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`, [existing.replacement_id]);
+        await conn.execute(
+          `UPDATE otp_resend_reservations
+           SET reservation_token = ?, replacement_id = ?, lease_expires_at = ?, created_at = CURRENT_TIMESTAMP
+           WHERE challenge_id = ?`,
+          [newToken, replacementData.id, leaseExpiresFormatted, originalChallengeId]
+        );
+      } else {
+        await conn.execute(
+          `INSERT INTO otp_resend_reservations (challenge_id, reservation_token, replacement_id, lease_expires_at, created_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          [originalChallengeId, newToken, replacementData.id, leaseExpiresFormatted]
+        );
+      }
+
+      // 3. Insert replacement challenge in pending state (is_pending = 1)
+      const repExpiresFormatted = replacementData.expires_at.toISOString().slice(0, 19).replace('T', ' ');
+      const repMetadataJson = replacementData.metadata ? JSON.stringify(replacementData.metadata) : null;
+      await conn.execute(
+        `INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, is_pending, created_at)
+         VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        [
+          replacementData.id,
+          replacementData.employee_id,
+          replacementData.purpose,
+          replacementData.code_hash,
+          replacementData.max_attempts ?? 5,
+          repExpiresFormatted,
+          repMetadataJson,
+        ]
+      );
+
+      const originalChallenge: OtpChallengeRecord = {
+        id: row.id,
+        employee_id: Number(row.employee_id),
+        purpose: row.purpose,
+        code_hash: row.code_hash,
+        attempts: Number(row.attempts),
+        max_attempts: Number(row.max_attempts),
+        expires_at: toIso(row.expires_at),
+        consumed_at: row.consumed_at ? toIso(row.consumed_at) : null,
+        metadata: typeof row.metadata === 'object' && row.metadata !== null ? JSON.stringify(row.metadata) : (row.metadata ?? null),
+        is_pending: Number(row.is_pending ?? 0),
+        created_at: toIso(row.created_at),
+      };
+
+      return {
+        reservationToken: newToken,
+        originalChallenge,
+        replacementId: replacementData.id,
+      };
+    });
+  }
+
+  // SQLite implementation
+  return withSqliteTransaction((db) => {
+    const row = db.prepare(`
+      SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, is_pending, created_at
+      FROM otp_challenges
+      WHERE id = ?
+    `).get(originalChallengeId) as (OtpChallengeRecord & { is_pending: number }) | undefined;
+
+    if (!row) {
+      throw new AuthError('Verification challenge not found or has expired.', 404, 'CHALLENGE_NOT_FOUND');
+    }
+    if (Number(row.is_pending) === 1) {
+      throw new AuthError('Cannot resend a pending challenge.', 400, 'INVALID_CHALLENGE_STATE');
+    }
+    if (row.consumed_at) {
+      throw new AuthError('This verification code has already been confirmed.', 400, 'ALREADY_CONSUMED');
+    }
+    const expiresAtMs = parseDateSafe(String(row.expires_at)).getTime();
+    if (expiresAtMs <= Date.now()) {
+      throw new AuthError('Verification challenge has expired.', 400, 'CHALLENGE_EXPIRED');
+    }
+    const createdAtMs = parseDateSafe(String(row.created_at)).getTime();
+    const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
+    const isE2E = process.env.E2E_TEST === 'true';
+    if (!isE2E && elapsedSeconds < 30) {
+      const wait = 30 - elapsedSeconds;
+      throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
+    }
+
+    const existing = db.prepare(`
+      SELECT challenge_id, reservation_token, replacement_id, lease_expires_at
+      FROM otp_resend_reservations
+      WHERE challenge_id = ?
+    `).get(originalChallengeId) as {
+      challenge_id: string;
+      reservation_token: string;
+      replacement_id: string;
+      lease_expires_at: string;
+    } | undefined;
+
+    const leaseExpires = new Date(Date.now() + leaseDurationMs);
+    const leaseExpiresIso = leaseExpires.toISOString();
+
+    if (existing) {
+      const leaseUntilMs = parseDateSafe(String(existing.lease_expires_at)).getTime();
+      if (leaseUntilMs > Date.now()) {
+        throw new AuthError('A verification resend is currently in progress. Please wait before retrying.', 429, 'CONCURRENT_RESEND_IN_PROGRESS');
+      }
+      db.prepare(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`).run(existing.replacement_id);
+      db.prepare(`
+        UPDATE otp_resend_reservations
+        SET reservation_token = ?, replacement_id = ?, lease_expires_at = ?, created_at = CURRENT_TIMESTAMP
+        WHERE challenge_id = ?
+      `).run(newToken, replacementData.id, leaseExpiresIso, originalChallengeId);
+    } else {
+      db.prepare(`
+        INSERT INTO otp_resend_reservations (challenge_id, reservation_token, replacement_id, lease_expires_at, created_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(originalChallengeId, newToken, replacementData.id, leaseExpiresIso);
+    }
+
+    const repExpiresIso = replacementData.expires_at.toISOString();
+    const repMetadataJson = replacementData.metadata ? JSON.stringify(replacementData.metadata) : null;
+    db.prepare(`
+      INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, is_pending, created_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?, ?, 1, ?)
+    `).run(
+      replacementData.id,
+      replacementData.employee_id,
+      replacementData.purpose,
+      replacementData.code_hash,
+      replacementData.max_attempts ?? 5,
+      repExpiresIso,
+      repMetadataJson,
+      now.toISOString()
+    );
+
+    return {
+      reservationToken: newToken,
+      originalChallenge: {
+        ...row,
+        expires_at: toIso(row.expires_at),
+        consumed_at: row.consumed_at ? toIso(row.consumed_at) : null,
+        created_at: toIso(row.created_at),
+        is_pending: Number(row.is_pending ?? 0),
+      },
+      replacementId: replacementData.id,
+    };
+  });
+}
+
+/**
+ * Atomically finalizes an OTP replacement and invalidates the original challenge.
+ * Rechecks the original challenge; if it was verified or invalidated during email delivery,
+ * does NOT leave replacement usable.
+ */
+export async function finalizeOtpResend(
+  originalChallengeId: string,
+  replacementId: string,
+  reservationToken: string
+): Promise<{ finalized: boolean; reason?: string }> {
+  const adapter = getActiveDbAdapterName();
+
+  if (adapter === 'mysql') {
+    return withMySqlTransaction(async (conn) => {
+      // Match acquisition's lock order: original challenge, then reservation.
+      // Reversing these locks can deadlock with another concurrent resend.
+      const [chalRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT consumed_at, expires_at FROM otp_challenges WHERE id = ? FOR UPDATE`,
+        [originalChallengeId]
+      );
+      const orig = chalRows[0] as { consumed_at: string | null; expires_at: string } | undefined;
+
+      const [resRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT reservation_token, replacement_id FROM otp_resend_reservations WHERE challenge_id = ? FOR UPDATE`,
+        [originalChallengeId]
+      );
+      const reservation = resRows[0] as { reservation_token: string; replacement_id: string } | undefined;
+      if (!reservation || reservation.reservation_token !== reservationToken) {
+        return { finalized: false, reason: 'RESERVATION_LOST' };
+      }
+
+      if (!orig || orig.consumed_at !== null || parseDateSafe(String(orig.expires_at)).getTime() <= Date.now()) {
+        await conn.execute(`DELETE FROM otp_challenges WHERE id = ?`, [replacementId]);
+        await conn.execute(`DELETE FROM otp_resend_reservations WHERE challenge_id = ?`, [originalChallengeId]);
+        return { finalized: false, reason: orig?.consumed_at ? 'ORIGINAL_ALREADY_CONSUMED' : 'ORIGINAL_EXPIRED' };
+      }
+
+      await conn.execute(
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL`,
+        [originalChallengeId]
+      );
+      await conn.execute(`UPDATE otp_challenges SET is_pending = 0 WHERE id = ?`, [replacementId]);
+      await conn.execute(`DELETE FROM otp_resend_reservations WHERE challenge_id = ?`, [originalChallengeId]);
+      return { finalized: true };
+    });
+  }
+
+  return withSqliteTransaction((db) => {
+    const reservation = db.prepare(`
+      SELECT reservation_token, replacement_id FROM otp_resend_reservations WHERE challenge_id = ?
+    `).get(originalChallengeId) as { reservation_token: string; replacement_id: string } | undefined;
+
+    if (!reservation || reservation.reservation_token !== reservationToken) {
+      return { finalized: false, reason: 'RESERVATION_LOST' };
+    }
+
+    const orig = db.prepare(`
+      SELECT consumed_at, expires_at FROM otp_challenges WHERE id = ?
+    `).get(originalChallengeId) as { consumed_at: string | null; expires_at: string } | undefined;
+
+    if (!orig || orig.consumed_at !== null || parseDateSafe(String(orig.expires_at)).getTime() <= Date.now()) {
+      db.prepare(`DELETE FROM otp_challenges WHERE id = ?`).run(replacementId);
+      db.prepare(`DELETE FROM otp_resend_reservations WHERE challenge_id = ?`).run(originalChallengeId);
+      return { finalized: false, reason: orig?.consumed_at ? 'ORIGINAL_ALREADY_CONSUMED' : 'ORIGINAL_EXPIRED' };
+    }
+
+    const nowIso = new Date().toISOString();
+    db.prepare(`UPDATE otp_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`).run(nowIso, originalChallengeId);
+    db.prepare(`UPDATE otp_challenges SET is_pending = 0 WHERE id = ?`).run(replacementId);
+    db.prepare(`DELETE FROM otp_resend_reservations WHERE challenge_id = ?`).run(originalChallengeId);
+    return { finalized: true };
+  });
+}
+
+/**
+ * Releases resend reservation upon email delivery failure.
+ * Removes pending replacement and preserves original challenge validity.
+ */
+export async function releaseOtpResendReservation(
+  originalChallengeId: string,
+  replacementId: string,
+  reservationToken: string
+): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+
+  if (adapter === 'mysql') {
+    return withMySqlTransaction(async (conn) => {
+      await conn.execute(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`, [replacementId]);
+      await conn.execute(
+        `DELETE FROM otp_resend_reservations WHERE challenge_id = ? AND reservation_token = ?`,
+        [originalChallengeId, reservationToken]
+      );
+    });
+  }
+
+  return withSqliteTransaction((db) => {
+    db.prepare(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`).run(replacementId);
+    db.prepare(`DELETE FROM otp_resend_reservations WHERE challenge_id = ? AND reservation_token = ?`).run(
+      originalChallengeId,
+      reservationToken
+    );
+  });
 }
 
 export async function createSession(data: CreateSessionData): Promise<void> {
@@ -1337,6 +1728,11 @@ export async function deactivateEmployee(id: number): Promise<boolean> {
   );
 }
 
+let testTransactionFailureHook: ((step: string) => void) | null = null;
+export function setTransactionFailureHookForTest(hook: ((step: string) => void) | null): void {
+  testTransactionFailureHook = hook;
+}
+
 /**
  * Atomically consumes password reset OTP challenge, updates staff and authentication password hashes,
  * resets lockout/attempts, and revokes all active employee sessions in a single transaction.
@@ -1361,6 +1757,10 @@ export async function confirmPasswordResetTransaction(
         `UPDATE staff SET password_hash = ? WHERE id = ?`,
         [newPasswordHash, employeeId]
       );
+
+      if (testTransactionFailureHook) {
+        testTransactionFailureHook('after_staff_update');
+      }
 
       await conn.execute(
         `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
@@ -1389,6 +1789,10 @@ export async function confirmPasswordResetTransaction(
       }
 
       db.prepare(`UPDATE staff SET password_hash = ? WHERE id = ?`).run(newPasswordHash, employeeId);
+
+      if (testTransactionFailureHook) {
+        testTransactionFailureHook('after_staff_update');
+      }
 
       db.prepare(`
         INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
@@ -1746,4 +2150,3 @@ export async function applyMySqlSchema(connOrPool: { execute: (sql: string, para
     INSERT IGNORE INTO \`branches\` (\`id\`, \`code\`, \`name\`) VALUES (1, 'COL-CEN', 'Colombo Central');
   `);
 }
-

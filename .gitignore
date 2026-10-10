@@ -20,6 +20,7 @@ test-results/
 !.yarn/versions
 # testing
 /coverage
+/playwright-report/
 # next.js
 /.next/
 /out/

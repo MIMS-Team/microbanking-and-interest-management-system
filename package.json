@@ -11,12 +11,14 @@
     "scheduler": "node scripts/scheduler.mjs",
     "test": "npm run test:auth && npm run test:banking",
     "test:auth": "vitest run",
+    "test:e2e": "playwright test",
     "test:banking": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:reports": "tsx --test tests/reports.test.ts",
     "test:smoke": "node scripts/smoke.mjs",
     "db:setup": "tsx scripts/db-setup.ts",
     "lint": "eslint",
     "seed": "node scripts/seed-dev.mjs",
+    "seed:dev": "node scripts/seed-dev.mjs",
     "db:migrate:auth": "node scripts/migrate-auth-mysql.mjs"
   },
   "dependencies": {
@@ -31,6 +33,7 @@
     "nodemailer": "^10.0.16"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@types/node": "^26.6.4",
     "@types/pg": "8.23.1",
     "@types/react": "^19",
