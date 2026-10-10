@@ -9,7 +9,7 @@ if (!baseURL || !/^http:\/\/127\.0\.0\.1:[0-9]+$/.test(baseURL)) {
 
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: 60000, // Resend exercises the real 30-second server cooldown.
+  timeout: 120000, // Allow cold Next.js compilation plus the real 30-second resend cooldown.
   expect: {
     timeout: 30000,
   },
