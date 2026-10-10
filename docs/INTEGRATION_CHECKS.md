@@ -21,7 +21,7 @@ Checked locally on `file-organize`, 2026-10-10. Changes are not committed or pus
 
 ## Runtime boundary
 
-`tests/fixtures/legacy-banking.sql` is a recovered test-only schema. Neither the active MySQL schema nor the application's database selection was changed to make the tests pass. The new compatibility tests validate legacy service behavior in isolation, not MySQL conversion or end-to-end banking operation.
+`tests/fixtures/legacy-banking.sql` is a recovered test-only schema. Customer transaction actions, rate changes and scheduled interest now use a dedicated MySQL transaction adapter; their additive schema is in `database/person-4-financial-schema.sql` and must be applied by Person 3 after the shared MySQL schema. Account opening, closure and maturity approvals retain separate PostgreSQL ledger/settlement adapters, as do customer/account lifecycle, generic approvals, reports and general maintenance. The full banking application is therefore not yet on one database. Compatibility tests validate legacy lifecycle behavior in isolation, not end-to-end operation across that remaining boundary.
 
 The next integration step is to reconcile the older banking services, schema, and employee identity with the team's MySQL implementation. Whole-bank HTTP smoke tests have not passed and the current build result should not be treated as a working-bank release.
 

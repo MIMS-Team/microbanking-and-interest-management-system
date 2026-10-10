@@ -8,6 +8,21 @@ if (!key || key.length < 32) throw new Error("Set SCHEDULER_KEY to at least 32 r
 
 async function runJobs() {
   try {
+    let interestFailed = false;
+    try {
+      const interestResponse = await fetch(`${url}/api/cron/interest`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(10 * 60 * 1000),
+      });
+      const interestResult = await interestResponse.json();
+      if (!interestResponse.ok) throw new Error(interestResult.error || "Interest job failed.");
+      console.log(new Date().toISOString(), "interest", interestResult.message, interestResult.periods);
+    } catch (error) {
+      interestFailed = true;
+      console.error(new Date().toISOString(), "interest", error.message);
+    }
+
     const response = await fetch(`${url}/api/maintenance`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}` },
@@ -16,6 +31,7 @@ async function runJobs() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Maintenance failed.");
     console.log(new Date().toISOString(), result.message, result.details);
+    if (interestFailed) process.exitCode = 1;
   } catch (error) {
     console.error(new Date().toISOString(), error.message);
     if (process.argv.includes("--once")) process.exitCode = 1;

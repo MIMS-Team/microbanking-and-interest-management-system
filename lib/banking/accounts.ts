@@ -4,8 +4,8 @@ import type { Staff } from '../types';
 import { BusinessError, requiredText, positiveId, money } from '../validation';
 import { first, requireRole, requireAgent, queue, account, requireActive, reference, requireActiveOwners, requireNoFixedDeposit, businessDates } from './shared';
 import type { Input, CustomerRow, RateRow, DepositRow, ApprovalRow } from './shared';
-import { postEntry, operation } from './ledger';
-import { settleSavingsOnClosure, settleFixedDeposit } from './interest';
+import { postEntry, operation } from './legacy-ledger';
+import { settleSavingsOnClosure, settleFixedDeposit } from './legacy-interest-settlement';
 
 export async function createAccount(tx: Queryable,user: Staff,input: Input) {
   requireRole(user,['agent']);

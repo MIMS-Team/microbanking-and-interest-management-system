@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import mysql from 'mysql2/promise';
-import type { Connection, RowDataPacket } from 'mysql2/promise';
+import type { Connection, PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import {
   acquireOtpResendReservation,
   closePoolForTest,
@@ -32,6 +33,10 @@ import {
   getDispatchedEmailsForTest,
   setMockDeliveryFailureForTest,
 } from './email';
+import type { Staff } from '../types';
+import { financialQueryable } from '../banking/financial-db';
+import { createTransaction } from '../banking/transactions';
+import { runInterest } from '../banking/interest';
 
 /**
  * Disposable MySQL Production Database Verification Suite
@@ -643,5 +648,425 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
     // Replacement OTP works
     const verifySuccess = await verifyLoginOtpChallenge(resendResult.challengeId, replacementOtp);
     expect(verifySuccess.employee.id).toBe(emp.id);
+  });
+
+  describe('MySQL transaction and interest integration', () => {
+    let financialAgent: Staff;
+    let administrator: Staff;
+    let nextAccountNumber = 1;
+
+    async function connectFinancialTest(): Promise<Connection> {
+      return mysql.createConnection({
+        host,
+        port,
+        user,
+        password,
+        database: disposableDbName,
+      });
+    }
+
+    async function transaction<T>(
+      connection: Connection | PoolConnection,
+      work: (tx: ReturnType<typeof financialQueryable>) => Promise<T>,
+    ): Promise<T> {
+      await connection.beginTransaction();
+      try {
+        const result = await work(financialQueryable(connection));
+        await connection.commit();
+        return result;
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      }
+    }
+
+    async function createActiveAccount(connection: Connection, balance = '0.00'): Promise<number> {
+      const [result] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO savings_accounts
+           (account_number, branch_id, agent_id, rate_id, balance, minimum_balance, status)
+         VALUES (?, 1, ?, 1, ?, 500.00, 'active')`,
+        [`FIN-SA-${nextAccountNumber++}`, financialAgent.id, balance],
+      );
+      return result.insertId;
+    }
+
+    async function withAccountTransaction<T>(
+      work: (connection: Connection) => Promise<T>,
+    ): Promise<T> {
+      const connection = await connectFinancialTest();
+      try {
+        return await work(connection);
+      } finally {
+        await connection.end();
+      }
+    }
+
+    beforeAll(async () => {
+      await migrateAuthTables(testConn!);
+      const suffix = `${Date.now()}_${randomBytes(3).toString('hex')}`;
+      const [agentResult] = await testConn!.execute<ResultSetHeader>(
+        `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status)
+         VALUES ('Financial Test Agent', ?, 'unused', 'agent', 1, 'active')`,
+        [`financial_agent_${suffix}@example.test`],
+      );
+      const [adminResult] = await testConn!.execute<ResultSetHeader>(
+        `INSERT INTO staff (full_name, email, password_hash, role, branch_id, status)
+         VALUES ('Financial Test Admin', ?, 'unused', 'admin', NULL, 'active')`,
+        [`financial_admin_${suffix}@example.test`],
+      );
+      financialAgent = {
+        id: agentResult.insertId,
+        full_name: 'Financial Test Agent',
+        email: `financial_agent_${suffix}@example.test`,
+        role: 'agent',
+        branch_id: 1,
+        status: 'active',
+      };
+      administrator = {
+        id: adminResult.insertId,
+        full_name: 'Financial Test Admin',
+        email: `financial_admin_${suffix}@example.test`,
+        role: 'admin',
+        branch_id: null,
+        status: 'active',
+      };
+
+      await testConn!.execute(`CREATE TABLE rates (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        product VARCHAR(20) NOT NULL,
+        name VARCHAR(80) NOT NULL UNIQUE,
+        term_months INT NOT NULL DEFAULT 0,
+        annual_rate DECIMAL(6,3) NOT NULL,
+        minimum_balance DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+        min_age INT NOT NULL DEFAULT 0,
+        max_age INT NOT NULL DEFAULT 120
+      ) ENGINE=InnoDB`);
+      await testConn!.execute(`CREATE TABLE savings_accounts (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        account_number VARCHAR(24) NOT NULL UNIQUE,
+        branch_id INT NOT NULL,
+        agent_id INT NOT NULL,
+        rate_id INT NOT NULL,
+        balance DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+        minimum_balance DECIMAL(14,2) NOT NULL DEFAULT 500.00,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        opened_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        closed_at TIMESTAMP NULL,
+        CONSTRAINT fk_fin_test_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
+        CONSTRAINT fk_fin_test_agent FOREIGN KEY (agent_id) REFERENCES staff(id),
+        CONSTRAINT fk_fin_test_rate FOREIGN KEY (rate_id) REFERENCES rates(id)
+      ) ENGINE=InnoDB`);
+      await testConn!.execute(`CREATE TABLE fixed_deposits (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        fd_number VARCHAR(24) NOT NULL UNIQUE,
+        source_account_id INT NOT NULL,
+        rate_id INT NOT NULL,
+        principal DECIMAL(14,2) NOT NULL,
+        annual_rate DECIMAL(6,3) NOT NULL,
+        term_months INT NOT NULL,
+        auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        opened_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        maturity_date DATE NOT NULL,
+        closed_at TIMESTAMP NULL,
+        CONSTRAINT fk_fin_test_fd_account FOREIGN KEY (source_account_id) REFERENCES savings_accounts(id),
+        CONSTRAINT fk_fin_test_fd_rate FOREIGN KEY (rate_id) REFERENCES rates(id)
+      ) ENGINE=InnoDB`);
+      await testConn!.execute(
+        `INSERT INTO rates (id, product, name, annual_rate, minimum_balance)
+         VALUES (1, 'savings', 'Financial Test Savings', 4.500, 500.00)`,
+      );
+
+      const migration = await readFile(
+        new URL('../../database/person-4-financial-schema.sql', import.meta.url),
+        'utf8',
+      );
+      let delimiter = ';';
+      let statement = '';
+      for (const line of migration.split(/\r?\n/)) {
+        const delimiterLine = /^DELIMITER\s+(.+)$/.exec(line.trim());
+        if (delimiterLine) {
+          delimiter = delimiterLine[1];
+          continue;
+        }
+        statement += `${line}\n`;
+        if (line.trimEnd().endsWith(delimiter)) {
+          const sql = statement.trimEnd().slice(0, -delimiter.length).trim();
+          if (sql) await testConn!.execute(sql);
+          statement = '';
+        }
+      }
+      if (statement.trim()) await testConn!.execute(statement.trim());
+    });
+
+    it('retries a financial request without duplicate ledger entries', async () => {
+      const accountId = await createActiveAccount(testConn!);
+      const input = {
+        type: 'deposit',
+        account_id: accountId,
+        amount: '100.0',
+        idempotency_key: `retry-${Date.now()}`,
+      };
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, input));
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        ...input,
+        amount: '100.00',
+      }));
+
+      const [accounts] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT balance FROM savings_accounts WHERE id = ?',
+        [accountId],
+      );
+      const [entries] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT id FROM ledger_entries WHERE account_id = ?',
+        [accountId],
+      );
+      expect(accounts[0].balance).toBe('100.00');
+      expect(entries).toHaveLength(1);
+      await expect(transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        ...input,
+        amount: '101.00',
+      }))).rejects.toThrow(/different transaction details/i);
+    });
+
+    it('rolls back operation, balance, and ledger together after a failure', async () => {
+      const accountId = await createActiveAccount(testConn!);
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        type: 'deposit',
+        account_id: accountId,
+        amount: '1000.00',
+        idempotency_key: `rollback-opening-${Date.now()}`,
+      }));
+      const [before] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT balance FROM savings_accounts WHERE id = ?',
+        [accountId],
+      );
+      const [beforeEntries] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT COUNT(*) AS count FROM ledger_entries WHERE account_id = ?',
+        [accountId],
+      );
+
+      await expect(withAccountTransaction(connection => transaction(connection, async tx => {
+        await createTransaction(tx, financialAgent, {
+          type: 'withdrawal',
+          account_id: accountId,
+          amount: '100.00',
+          owner_verified: true,
+          idempotency_key: `rollback-withdrawal-${Date.now()}`,
+        });
+        throw new Error('Injected financial transaction failure');
+      }))).rejects.toThrow('Injected financial transaction failure');
+
+      const [after] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT balance FROM savings_accounts WHERE id = ?',
+        [accountId],
+      );
+      const [afterEntries] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT COUNT(*) AS count FROM ledger_entries WHERE account_id = ?',
+        [accountId],
+      );
+      expect(after[0].balance).toBe(before[0].balance);
+      expect(afterEntries[0].count).toBe(beforeEntries[0].count);
+    });
+
+    it('serializes concurrent withdrawals and preserves the minimum balance', async () => {
+      const accountId = await createActiveAccount(testConn!);
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        type: 'deposit',
+        account_id: accountId,
+        amount: '1000.00',
+        idempotency_key: `concurrent-opening-${Date.now()}`,
+      }));
+      const requests = [1, 2].map(index => withAccountTransaction(connection =>
+        transaction(connection, tx => createTransaction(tx, financialAgent, {
+          type: 'withdrawal',
+          account_id: accountId,
+          amount: '400.00',
+          owner_verified: true,
+          idempotency_key: `concurrent-withdrawal-${Date.now()}-${index}`,
+        })),
+      ));
+      const results = await Promise.allSettled(requests);
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+
+      const [rows] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT a.balance, SUM(l.amount) AS ledger_balance
+         FROM savings_accounts a
+         JOIN ledger_entries l ON l.account_id = a.id
+         WHERE a.id = ?
+         GROUP BY a.id`,
+        [accountId],
+      );
+      expect(rows[0].balance).toBe('600.00');
+      expect(rows[0].ledger_balance).toBe('600.00');
+    });
+
+    it('posts both sides of a transfer atomically with reconciled balances', async () => {
+      const sourceId = await createActiveAccount(testConn!);
+      const destinationId = await createActiveAccount(testConn!);
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        type: 'deposit',
+        account_id: sourceId,
+        amount: '1000.00',
+        idempotency_key: `transfer-opening-${Date.now()}`,
+      }));
+      const input = {
+        type: 'transfer',
+        account_id: sourceId,
+        destination_account_id: destinationId,
+        amount: '200.00',
+        owner_verified: true,
+        idempotency_key: `transfer-${Date.now()}`,
+      };
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, input));
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, input));
+
+      const [rows] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT a.id, a.balance, COALESCE(SUM(l.amount), 0) AS ledger_balance
+         FROM savings_accounts a
+         LEFT JOIN ledger_entries l ON l.account_id = a.id
+         WHERE a.id IN (?, ?)
+         GROUP BY a.id
+         ORDER BY a.id`,
+        [sourceId, destinationId],
+      );
+      expect(rows.map(row => row.balance)).toEqual(['800.00', '200.00']);
+      expect(rows.map(row => row.ledger_balance)).toEqual(['800.00', '200.00']);
+      const [entries] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM ledger_entries
+         WHERE account_id IN (?, ?) AND type IN ('transfer_in', 'transfer_out')`,
+        [sourceId, destinationId],
+      );
+      expect(entries[0].count).toBe(2);
+    });
+
+    it('does not pay savings or FD interest twice under concurrent or repeated runs', async () => {
+      const [accountResult] = await testConn!.execute<ResultSetHeader>(
+        `INSERT INTO savings_accounts
+           (account_number, branch_id, agent_id, rate_id, balance, minimum_balance, status, opened_at)
+         VALUES (?, 1, ?, 1, 1000.00, 500.00, 'active', UTC_TIMESTAMP() - INTERVAL 60 DAY)`,
+        [`FIN-INTEREST-${nextAccountNumber++}`, financialAgent.id],
+      );
+      const accountId = accountResult.insertId;
+      const [openingOperation] = await testConn!.execute<ResultSetHeader>(
+        `INSERT INTO money_operations
+           (reference, actor_id, idempotency_key, request_fingerprint, type, description, created_at)
+         VALUES (?, ?, ?, REPEAT('0', 64), 'deposit', 'Interest test opening', UTC_TIMESTAMP() - INTERVAL 60 DAY)`,
+        [`FIN-OPEN-${Date.now()}`, financialAgent.id, `interest-opening-${Date.now()}`],
+      );
+      await testConn!.execute(
+        `INSERT INTO ledger_entries
+           (operation_id, account_id, type, amount, balance_before, balance_after, created_at)
+         VALUES (?, ?, 'deposit', 1000.00, 0.00, 1000.00, UTC_TIMESTAMP() - INTERVAL 60 DAY)`,
+        [openingOperation.insertId, accountId],
+      );
+      await testConn!.execute(
+        `INSERT INTO fixed_deposits
+           (fd_number, source_account_id, rate_id, principal, annual_rate, term_months, status,
+            opened_at, maturity_date)
+         VALUES (?, ?, 1, 10000.00, 12.000, 3, 'active',
+                 UTC_TIMESTAMP() - INTERVAL 60 DAY, DATE_ADD(CURRENT_DATE, INTERVAL 3 MONTH))`,
+        [`FIN-FD-${Date.now()}`, accountId],
+      );
+      const [periodRows] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(
+           DATE_SUB(
+             DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')),
+             INTERVAL DAYOFMONTH(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) DAY
+           ),
+           '%Y-%m'
+         ) AS period`,
+      );
+      const period = String(periodRows[0].period);
+      const user = administrator;
+      const firstRun = await withAccountTransaction(connection =>
+        transaction(connection, tx => runInterest(tx, user, { period })),
+      );
+      const [afterFirst] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT balance FROM savings_accounts WHERE id = ?',
+        [accountId],
+      );
+      expect(Number(afterFirst[0].balance)).toBeGreaterThan(1000);
+
+      const concurrent = await Promise.allSettled([
+        withAccountTransaction(connection =>
+          transaction(connection, tx => runInterest(tx, user, { period })),
+        ),
+        withAccountTransaction(connection =>
+          transaction(connection, tx => runInterest(tx, user, { period })),
+        ),
+      ]);
+      expect(concurrent.every(result => result.status === 'fulfilled')).toBe(true);
+      await withAccountTransaction(connection =>
+        transaction(connection, tx => runInterest(tx, user, { period })),
+      );
+
+      const [credits] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT fixed_deposit_id, amount FROM interest_credits
+         WHERE account_id = ? AND period = ? ORDER BY fixed_deposit_id`,
+        [accountId, period],
+      );
+      const [savingsExpected] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT ROUND(SUM(amount), 2) AS amount
+         FROM interest_accruals
+         WHERE account_id = ? AND DATE_FORMAT(accrual_date, '%Y-%m') = ?`,
+        [accountId, period],
+      );
+      const [dailyCalculation] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT amount,
+                CAST(ROUND(minimum_balance * annual_rate / 100 / 365, 6) AS DECIMAL(18,6)) AS expected
+         FROM interest_accruals
+         WHERE account_id = ? AND minimum_balance > 0
+         ORDER BY accrual_date LIMIT 1`,
+        [accountId],
+      );
+      const [afterRepeated] = await testConn!.execute<RowDataPacket[]>(
+        'SELECT balance FROM savings_accounts WHERE id = ?',
+        [accountId],
+      );
+      const [reconciliation] = await testConn!.execute<RowDataPacket[]>(
+        `SELECT a.balance, SUM(l.amount) AS ledger_balance
+         FROM savings_accounts a
+         JOIN ledger_entries l ON l.account_id = a.id
+         WHERE a.id = ? GROUP BY a.id`,
+        [accountId],
+      );
+      expect(credits).toHaveLength(2);
+      expect(credits.every(credit => Number(credit.amount) > 0)).toBe(true);
+      const savingsCredit = credits.find(credit => credit.fixed_deposit_id === null);
+      const fixedCredit = credits.find(credit => credit.fixed_deposit_id !== null);
+      if (!savingsCredit || !fixedCredit) throw new Error('Expected savings and fixed-deposit interest credits.');
+      expect(savingsCredit.amount).toBe(savingsExpected[0].amount);
+      expect(fixedCredit.amount).toBe('100.00');
+      expect(dailyCalculation[0].amount).toBe(dailyCalculation[0].expected);
+      expect(afterRepeated[0].balance).toBe(afterFirst[0].balance);
+      expect(reconciliation[0].balance).toBe(reconciliation[0].ledger_balance);
+      expect(firstRun.message).toContain(period);
+    });
+
+    it('rejects inactive accounts and transfers that would breach the minimum balance', async () => {
+      const accountId = await createActiveAccount(testConn!);
+      await transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        type: 'deposit',
+        account_id: accountId,
+        amount: '1000.00',
+        idempotency_key: `boundary-opening-${Date.now()}`,
+      }));
+      await expect(transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        type: 'withdrawal',
+        account_id: accountId,
+        amount: '500.01',
+        owner_verified: true,
+        idempotency_key: `minimum-boundary-${Date.now()}`,
+      }))).rejects.toThrow(/minimum balance/i);
+      await testConn!.execute(`UPDATE savings_accounts SET status = 'inactive' WHERE id = ?`, [accountId]);
+      await expect(transaction(testConn!, tx => createTransaction(tx, financialAgent, {
+        type: 'deposit',
+        account_id: accountId,
+        amount: '1.00',
+        idempotency_key: `inactive-boundary-${Date.now()}`,
+      }))).rejects.toThrow(/must be active/i);
+    });
   });
 });

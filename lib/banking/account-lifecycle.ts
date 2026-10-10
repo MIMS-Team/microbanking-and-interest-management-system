@@ -4,8 +4,8 @@ import type { Staff } from '../types';
 import { BusinessError } from '../validation';
 import { first, audit, account, reference, businessDates, managementScope } from './shared';
 import type { Input, AccountRow, RateRow, DepositRow } from './shared';
-import { postEntry, operation } from './ledger';
-import { settleFixedDeposit } from './interest';
+import { postEntry, operation } from './legacy-ledger';
+import { settleFixedDeposit } from './legacy-interest-settlement';
 
 export async function processMaturities(tx: Queryable, user: Staff) {
   const branch = managementScope(user);

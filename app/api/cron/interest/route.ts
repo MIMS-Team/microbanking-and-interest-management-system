@@ -1,101 +1,102 @@
+import { timingSafeEqual } from 'node:crypto';
 import { NextResponse } from 'next/server';
+import type { RowDataPacket } from 'mysql2';
 import pool from '@/lib/mysql';
-import type { ResultSetHeader, RowDataPacket } from 'mysql2';
+import { financialQueryable } from '@/lib/banking/financial-db';
+import { runInterest } from '@/lib/banking/interest';
+import { errorResponse, HttpError } from '@/lib/http';
+import type { Staff } from '@/lib/types';
 
-export async function POST() {
-  const connection = await pool.getConnection();
-  
+export const runtime = 'nodejs';
+
+function assertSchedulerAuthorization(request: Request): void {
+  const expected = process.env.SCHEDULER_KEY ?? '';
+  const authorization = request.headers.get('authorization') ?? '';
+  const match = /^Bearer (.+)$/.exec(authorization);
+  const supplied = match?.[1] ?? '';
+  if (
+    expected.length < 32 ||
+    Buffer.byteLength(supplied) !== Buffer.byteLength(expected) ||
+    !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))
+  ) {
+    throw new HttpError(403, 'A valid scheduler key is required.');
+  }
+}
+
+export async function POST(request: Request) {
   try {
-    await connection.beginTransaction();
-
-    // 1. Fetch all FDs that have matured today or earlier
-    const [maturedFDs] = await connection.execute<RowDataPacket[]>(`
-      SELECT * FROM fixed_deposits 
-      WHERE maturity_date <= CURRENT_DATE 
-      AND status IN ('active', 'pending')
-    `);
-
-    let processedCount = 0;
-
-    for (const fd of maturedFDs) {
-      const principal = parseFloat(fd.principal);
-      const annualRate = parseFloat(fd.annual_rate);
-      const termMonths = parseInt(fd.term_months);
-      const isAutoRenew = fd.auto_renew === 1;
-
-      // Calculate the interest amount for the term
-      // Formula: (Principal * (Annual Rate / 100)) * (Term Months / 12)
-      const interestAmount = (principal * (annualRate / 100)) * (termMonths / 12);
-
-      if (isAutoRenew) {
-        // --- AUTO RENEW SCENARIO ---
-        
-        // 1. Deposit ONLY the interest into the linked savings account
-        await connection.execute(
-          `UPDATE savings_accounts SET balance = balance + ? WHERE id = ?`,
-          [interestAmount, fd.source_account_id]
-        );
-
-        // 2. Generate a new FD number (appending -R to the old number)
-        const newFdNumber = `${fd.fd_number}-R${Math.floor(Math.random() * 1000)}`;
-
-        // 3. Create the new Fixed Deposit record with the principal amount
-        await connection.execute(`
-          INSERT INTO fixed_deposits 
-          (fd_number, source_account_id, rate_id, principal, annual_rate, term_months, auto_renew, maturity_date, renewed_from_id) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_DATE, INTERVAL ? MONTH), ?)
-        `, [
-          newFdNumber, fd.source_account_id, fd.rate_id, principal, annualRate, termMonths, 1, termMonths, fd.id
-        ]);
-
-      } else {
-        // --- NORMAL CLOSURE SCENARIO (No Auto Renew) ---
-        
-        const totalAmount = principal + interestAmount;
-        
-        // Deposit the total amount (Principal + Interest) into the linked savings account
-        await connection.execute(
-          `UPDATE savings_accounts SET balance = balance + ? WHERE id = ?`,
-          [totalAmount, fd.source_account_id]
-        );
-      }
-
-      // Mark the old FD as 'closed' (Common for both scenarios)
-      await connection.execute(
-        `UPDATE fixed_deposits SET status = 'closed' WHERE id = ?`,
-        [fd.id]
-      );
-
-      processedCount++;
+    assertSchedulerAuthorization(request);
+    const userId = Number(process.env.SCHEDULER_USER_ID ?? 3);
+    if (!Number.isSafeInteger(userId) || userId < 1) {
+      throw new HttpError(500, 'Configure a valid scheduler user ID.');
     }
 
-    await connection.commit();
-    connection.release();
+    const [users] = await pool.execute<Array<RowDataPacket & Staff>>(
+      `SELECT id, full_name, email, role, branch_id, status
+       FROM staff
+       WHERE id = ? AND status = 'active' AND role IN ('admin', 'higher_manager')`,
+      [userId],
+    );
+    const user = users[0];
+    if (!user) {
+      throw new HttpError(403, 'Configure an active administrator or higher manager as the scheduler user.');
+    }
 
-    return NextResponse.json({ 
-      message: "Daily FD interest calculation completed successfully!", 
-      processedFDs: processedCount 
-    }, { status: 200 });
+    const [periodRows] = await pool.execute<Array<RowDataPacket & { period: string; first_period: string | null }>>(
+      `SELECT DATE_FORMAT(
+         DATE_SUB(
+           DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')),
+           INTERVAL DAYOFMONTH(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')) DAY
+         ),
+         '%Y-%m'
+       ) AS period,
+       DATE_FORMAT(
+         MIN(DATE(CONVERT_TZ(opened_at, '+00:00', '+05:30'))),
+         '%Y-%m'
+       ) AS first_period
+       FROM savings_accounts`,
+    );
+    const period = periodRows[0]?.period;
+    if (!period) throw new Error('Could not determine the last completed Colombo calendar month.');
 
-  } catch (error: unknown) {
-    await connection.rollback();
-    connection.release();
-    console.error("Interest Calculation Error:", error);
-    return NextResponse.json({ error: "Failed to calculate interest." }, { status: 500 });
+    const connection = await pool.getConnection();
+    const results: string[] = [];
+    try {
+      const earliestAccountPeriod = periodRows[0].first_period;
+      if (!earliestAccountPeriod) {
+        return NextResponse.json({ message: 'No savings accounts are eligible for interest.', periods: [] });
+      }
+      const firstPeriod = earliestAccountPeriod < '2000-01' ? '2000-01' : earliestAccountPeriod;
+      const [firstYear, firstMonth] = firstPeriod.split('-').map(Number);
+      const [lastYear, lastMonth] = period.split('-').map(Number);
+      let year = firstYear;
+      let month = firstMonth;
+      while (year < lastYear || (year === lastYear && month <= lastMonth)) {
+        const currentPeriod = `${year}-${String(month).padStart(2, '0')}`;
+        await connection.beginTransaction();
+        try {
+          const result = await runInterest(financialQueryable(connection), user, { period: currentPeriod });
+          await connection.commit();
+          results.push(`${currentPeriod}: ${result.message}`);
+        } catch (error) {
+          try {
+            await connection.rollback();
+          } catch (rollbackError) {
+            console.error('Failed to roll back the scheduled interest run.', rollbackError);
+          }
+          throw error;
+        }
+        month += 1;
+        if (month === 13) {
+          year += 1;
+          month = 1;
+        }
+      }
+      return NextResponse.json({ message: 'Scheduled interest processing completed.', periods: results });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    return errorResponse(error);
   }
 }
-
-export async function GET() {
-  try {
-    const [rows] = await pool.execute<RowDataPacket[]>(`
-      SELECT id, amount, status FROM fixed_deposits ORDER BY id DESC LIMIT 100
-    `);
-    return NextResponse.json({ data: rows }, { status: 200 });
-  } catch (error: unknown) {
-    console.error("GET Interest Error:", error);
-    return NextResponse.json({ error: "Failed to fetch interest data." }, { status: 500 });
-  }
-}
-
-// Needed so TypeScript treats this as ESM module
-export type { ResultSetHeader };

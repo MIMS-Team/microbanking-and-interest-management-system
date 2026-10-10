@@ -28,7 +28,7 @@ npm run dev
 
 The home page redirects to `/login`. Existing authentication, dashboard, profile, savings and fixed-deposit routes keep their URLs. Do not commit `.env.local` or database data.
 
-Authentication uses MySQL in production and SQLite for local tests; the savings/FD pool uses MySQL. The customer, transaction, interest, reporting and generic approval services still contain PostgreSQL/PGlite code. **These separate implementations still need database integration.** The missing account modules have been recovered and banking routes now use the existing login session. TypeScript and the production build pass; the existing report/maintenance tests still fail because `lib/db.ts` attempts to load the MySQL schema into PostgreSQL. See [the integration verification notes](docs/INTEGRATION_CHECKS.md).
+Authentication uses MySQL in production and SQLite for local tests; the savings/FD pool uses MySQL. Customer transaction actions, rate changes, daily accrual and monthly interest use a dedicated MySQL transaction adapter. Account opening, closure and maturity approval flows still run through the legacy PostgreSQL services and their separate ledger/settlement adapters. The additive [Person 4 financial schema migration](database/person-4-financial-schema.sql) must be applied after the shared MySQL schema; coordinate its application with Person 3, who owns `database/schema.sql`. The customer, account lifecycle, approvals, reports and general maintenance services remain PostgreSQL/PGlite integration work. See [the integration verification notes](docs/INTEGRATION_CHECKS.md).
 
 ## Verification commands
 
@@ -48,11 +48,11 @@ The disposable MySQL tests skip when `TEST_MYSQL_*` settings are absent. Configu
 ```powershell
 npm run seed             # Explicit local authentication SQLite demo seed
 npm run db:migrate:auth   # Existing authentication migration to MySQL
-npm run scheduler        # Calls the existing maintenance endpoint
+npm run scheduler        # Runs authenticated MySQL interest and organization-maintenance jobs
 npm run db:setup          # Existing PostgreSQL/PGlite setup; requires integration fixes
 npm run test:smoke        # Existing whole-bank HTTP demonstration; requires integration fixes
 ```
 
-`database/schema.sql` is the team's MySQL schema. `database/auth/` contains the additional authentication SQL files. `database/examples.sql` and `compose.yaml` are existing PostgreSQL examples/development configuration; they are preserved for reference and must not be mistaken for MySQL setup instructions.
+`database/schema.sql` is the team's MySQL schema. `database/person-4-financial-schema.sql` adds the transaction ledger, idempotency, rate history, accrual, interest-run and audit tables and their integrity constraints. Apply it once after the shared schema and before routing financial actions to MySQL. `database/auth/` contains the additional authentication SQL files. `database/examples.sql` and `compose.yaml` are existing PostgreSQL examples/development configuration; they are preserved for reference and must not be mistaken for MySQL setup instructions.
 
 The old PostgreSQL demo README, package manifest and pnpm lockfiles are under `docs/reference/`. They preserve historical information and do not control the active application.

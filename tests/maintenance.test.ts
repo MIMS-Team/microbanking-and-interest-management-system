@@ -42,7 +42,7 @@ describe("Scheduled maintenance", { concurrency: false }, () => {
     await assert.rejects(runMaintenance(agent), /administrator or higher manager/);
   });
 
-  it("catches up completed months and is safe to run twice", async () => {
+  it("runs non-interest organization maintenance", async () => {
     const request = () => new Request("http://localhost/api/maintenance", {
       method: "POST",
       headers: { authorization: `Bearer ${process.env.SCHEDULER_KEY}` },
@@ -59,10 +59,8 @@ describe("Scheduled maintenance", { concurrency: false }, () => {
     `)).rows[0];
 
     const firstRun = await snapshot();
-    assert.ok(Number(firstRun.daily_rows) > 0);
-    assert.ok(Number(firstRun.credits) > 0);
     await runMaintenance(administrator);
-    assert.deepEqual(await snapshot(), firstRun, "A retry must not pay interest twice.");
+    assert.deepEqual(await snapshot(), firstRun, "Repeated non-interest maintenance must preserve posted balances.");
 
     const mismatches = await database.query(`
       SELECT a.id FROM savings_accounts a LEFT JOIN ledger_entries l ON l.account_id=a.id

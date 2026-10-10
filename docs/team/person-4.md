@@ -13,6 +13,10 @@ needs the entire repository to run the app; the list below is the code you maint
 - `lib/banking/transactions.ts`
 - `lib/banking/ledger.ts`
 - `lib/banking/interest.ts`
+- `lib/banking/financial-db.ts`
+- `app/api/cron/interest/route.ts`
+- `database/person-4-financial-schema.sql`
+- `lib/server/mysql-disposable.test.ts`
 - `lib/maintenance.ts`
 - `app/api/maintenance/route.ts`
 - `scripts/scheduler.mjs`
@@ -29,12 +33,19 @@ needs the entire repository to run the app; the list below is the code you maint
 `money_operations`, `ledger_entries`, `rates`, `rate_history`, `interest_accruals`, `interest_runs`, `interest_credits`.
 
 Explain financial table, constraint and trigger requirements to Person 3, who
-exclusively owns and commits `database/schema.sql`. You review all financial SQL.
+exclusively owns and commits `database/schema.sql`. The additive MySQL definitions
+are in `database/person-4-financial-schema.sql`; coordinate applying or merging
+them with Person 3. You review all financial SQL.
+
+The app's transaction actions and scheduled interest are MySQL-backed. Legacy
+account opening/closure/maturity approval services still use isolated
+PostgreSQL ledger/settlement adapters until those shared workflows are migrated;
+do not route their PostgreSQL transaction object through the MySQL helpers.
 
 ## Reading order
 
 1. Read `createTransaction` and then `operation`/`postEntry`; the request key, ordered locks and ledger work together.
-2. Read `recordDailyAccruals`: historical daily minimum balance × annual rate / 100 / 365.
+2. Read `recordDailyAccruals`: historical daily minimum balance × annual rate / 100 / 365. Store the daily result at six decimal places and round the summed monthly savings credit to two decimal places.
 3. Read `runInterest` and `postInterestCredit`; uniqueness prevents duplicate payouts.
 4. Read the interest settlement helpers used by Person 3, then `lib/maintenance.ts` and the HTTP scheduler.
 
@@ -42,6 +53,7 @@ exclusively owns and commits `database/schema.sql`. You review all financial SQL
 
 - Why two transfer entries must commit or roll back together.
 - Why money is calculated with SQL NUMERIC rather than JavaScript floats.
+- How posted monetary values use MySQL `DECIMAL(14,2)` arithmetic, and why savings and FD monthly credits are rounded in SQL.
 - How retries avoid duplicate transactions and interest.
 - How partial months, Sri Lankan calendar dates and late payouts are handled.
 
@@ -51,6 +63,12 @@ exclusively owns and commits `database/schema.sql`. You review all financial SQL
 npm run typecheck
 npm run test:banking
 ```
+
+The focused MySQL transaction and interest integration tests run from
+`lib/server/mysql-disposable.test.ts` when the dedicated `TEST_MYSQL_*`
+connection settings are present. Without them, only the existing disposable-DB
+safety checks run. Never point those test settings at a shared or production
+database.
 
 Before merging, run `npm test` and `npm run build`. The banking integration tests
 span multiple modules; do not delete another module's tests to make yours pass.
