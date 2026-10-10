@@ -89,12 +89,12 @@ export async function dispatchOtp(email: string, purpose: OtpPurpose, code: stri
 
 export function passwordHash(password: string, salt = randomBytes(16).toString('hex')): string {
   const derived = scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${derived}`;
+  return `scrypt-v1$${salt}$${derived}`;
 }
 
 export function passwordMatches(password: string, storedHash: string): boolean {
-  const [salt, expected] = storedHash.split(':');
-  if (!salt || !expected) return false;
+  const [salt, expected] = storedHash.startsWith('scrypt-v1$') ? storedHash.slice(10).split('$') : storedHash.split(':');
+  if (!salt || salt.length>128 || !/^[a-f0-9]{128}$/.test(expected??'')) return false;
   const actual = scryptSync(password, salt, 64).toString('hex');
   return actual.length === expected.length && timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
@@ -104,7 +104,20 @@ export function generateSecureOtp(): string {
 }
 
 export function hashOtp(code: string): string {
-  return createHash('sha256').update(`mims_salt:${code.trim()}`).digest('hex');
+  const salt=randomBytes(16).toString('hex');
+  return 's1$'+salt+'$'+scryptSync(code.trim(),salt,32).toString('hex');
+}
+export function otpMatches(code: string, verifier: string): boolean {
+  let actual: string;
+  if (verifier.startsWith('s1$')) {
+    const [,salt,digest]=verifier.split('$');
+    if (!/^[a-f0-9]{32}$/.test(salt??'') || !/^[a-f0-9]{64}$/.test(digest??'')) return false;
+    actual='s1$'+salt+'$'+scryptSync(code.trim(),salt,32).toString('hex');
+  } else {
+    // Only outstanding legacy challenges use this verifier until their existing expiry.
+    actual=createHash('sha256').update('mims_salt:'+code.trim()).digest('hex');
+  }
+  return actual.length===verifier.length && timingSafeEqual(Buffer.from(actual),Buffer.from(verifier));
 }
 
 export function hashSessionToken(token: string): string {
@@ -212,6 +225,9 @@ export async function authenticateCredentials(
     throw new AuthError('Invalid credentials.', 401);
   }
 
+  if (employee.must_change_password || (employee.temporary_password_expires_at && parseDateSafe(employee.temporary_password_expires_at)<=new Date())) {
+    throw new AuthError('Set your personal password using password recovery before signing in.',428,'PASSWORD_CHANGE_REQUIRED');
+  }
   // Clear failed login attempts upon successful first factor
   await clearFailedLoginAttempts(employee.id);
 
@@ -300,9 +316,9 @@ export async function verifyLoginOtpChallenge(
   await incrementOtpAttempts(challengeId);
 
   const expectedHash = challenge.code_hash;
-  const actualHash = hashOtp(rawCode);
+  const matches = otpMatches(rawCode, expectedHash);
 
-  if (actualHash !== expectedHash) {
+  if (!matches) {
     await recordAuthenticationAttempt({
       employee_id: employee.id,
       email: employee.email,
@@ -665,8 +681,7 @@ export async function confirmPasswordReset(
 
   await incrementOtpAttempts(challengeId);
 
-  const actualHash = hashOtp(rawOtp);
-  if (actualHash !== challenge.code_hash) {
+  if (!otpMatches(rawOtp, challenge.code_hash)) {
     await recordAuthenticationAttempt({
       employee_id: challenge.employee_id,
       email: 'reset@system',
@@ -759,6 +774,7 @@ export async function initiateEmployeeCreation(
       full_name: employeeData.full_name,
       email: normalizedEmail,
       password_hash: pwdHash,
+      must_change_password:employeeData.password===undefined,
       role: employeeData.role,
       branch_id: employeeData.branch_id,
       createdByAdminId: adminActor.id,
@@ -814,8 +830,7 @@ export async function confirmEmployeeCreation(
 
   await incrementOtpAttempts(challengeId);
 
-  const actualHash = hashOtp(rawOtp);
-  if (actualHash !== challenge.code_hash) {
+  if (!otpMatches(rawOtp, challenge.code_hash)) {
     await recordAuthenticationAttempt({
       employee_id: challenge.employee_id,
       email: 'approver@system',
@@ -835,6 +850,7 @@ export async function confirmEmployeeCreation(
     branch_id: number | null;
     createdByAdminId: number;
     intendedApproverId?: number;
+    must_change_password?:boolean;
   };
 
   // Dual Control enforcement: Requester cannot approve their own creation request
@@ -864,6 +880,7 @@ export async function confirmEmployeeCreation(
     full_name: payload.full_name,
     email: payload.email,
     password_hash: payload.password_hash,
+    must_change_password:payload.must_change_password,
     role: payload.role,
     branch_id: payload.branch_id,
     status: 'active',
@@ -1107,8 +1124,7 @@ export async function confirmEmployeeDeactivation(
 
   await incrementOtpAttempts(challengeId);
 
-  const actualHash = hashOtp(rawOtp);
-  if (actualHash !== challenge.code_hash) {
+  if (!otpMatches(rawOtp, challenge.code_hash)) {
     await recordAuthenticationAttempt({
       employee_id: challenge.employee_id,
       email: 'approver@system',
