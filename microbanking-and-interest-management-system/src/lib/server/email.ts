@@ -1,5 +1,6 @@
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { authDataDirectory, isolatedE2eDirectory } from '../../../scripts/auth-test-environment.mjs';
 import nodemailer from 'nodemailer';
 import type { OtpPurpose } from './db';
 
@@ -70,6 +71,10 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
   const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
   const provider = (process.env.EMAIL_PROVIDER || (isProduction ? 'smtp' : isTest ? 'test' : 'console')).toLowerCase();
 
+  if (isProduction && provider === 'test') {
+    throw new OtpDeliveryError('Test email delivery is prohibited in production.', 502, 'EMAIL_CONFIG_MISSING');
+  }
+
   // Test mode adapter: fallback when provider is 'test' or when in test environment without an explicit provider override
   if (provider === 'test' || (!process.env.EMAIL_PROVIDER && isTest)) {
     testDispatchedEmails.push({
@@ -79,18 +84,13 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
       subject: options.subject,
       timestamp: new Date().toISOString(),
     });
-    try {
-      const dataDir = join(process.cwd(), '.data');
-      if (!existsSync(dataDir)) {
-        mkdirSync(dataDir, { recursive: true });
-      }
+    const dataDir = isolatedE2eDirectory();
+    if (dataDir) {
       writeFileSync(
         join(dataDir, 'latest_otp.json'),
         JSON.stringify({ to: options.to, purpose: options.purpose, code: options.otpCode, timestamp: new Date().toISOString() }),
         'utf8'
       );
-    } catch {
-      // Ignore write failure in test sandbox
     }
     return { success: true, provider: 'test' };
   }
@@ -190,7 +190,9 @@ function sendDevOtp(options: EmailDispatchOptions): { success: boolean; provider
   }
   console.info(`[MIMS-DEV-OTP] Code for ${options.to} (${options.purpose}): ${options.otpCode}`);
   try {
-    const dataDir = join(process.cwd(), '.data');
+    // Unit tests use in-memory delivery records and never touch development files.
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') return { success: true, provider: 'console' };
+    const dataDir = authDataDirectory();
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
     }

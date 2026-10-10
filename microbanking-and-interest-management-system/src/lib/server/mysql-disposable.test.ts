@@ -147,7 +147,8 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
   it('executes real migration and establishes foreign key constraints on MySQL', async () => {
     expect(testConn).not.toBeNull();
     // Run the actual migration logic
-    await migrateAuthTables(testConn!);
+    // Exercise the real schema migration without importing development employees.
+    await migrateAuthTables(testConn!, { sqlitePath: null });
 
     // Verify foreign key enforcement
     await expect(

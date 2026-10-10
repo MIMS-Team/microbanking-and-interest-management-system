@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
+import { authDatabasePath } from '../../../scripts/auth-test-environment.mjs';
 import { randomBytes } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import mysql from 'mysql2/promise';
@@ -202,11 +203,11 @@ export function getSqliteDb(): DatabaseSync {
   let dbPath = ':memory:';
 
   if (!isTest) {
-    const dataDir = join(process.cwd(), '.data');
+    dbPath = authDatabasePath();
+    const dataDir = dirname(dbPath);
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
     }
-    dbPath = join(dataDir, 'mims_auth.db');
   }
 
   const db = new DatabaseSync(dbPath);
@@ -926,8 +927,7 @@ export async function acquireOtpResendReservation(
       }
       const createdAtMs = parseDateSafe(String(row.created_at)).getTime();
       const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
-      const isE2E = process.env.E2E_TEST === 'true';
-      if (!isE2E && elapsedSeconds < 30) {
+      if (elapsedSeconds < 30) {
         const wait = 30 - elapsedSeconds;
         throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
       }
@@ -1033,8 +1033,7 @@ export async function acquireOtpResendReservation(
     }
     const createdAtMs = parseDateSafe(String(row.created_at)).getTime();
     const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
-    const isE2E = process.env.E2E_TEST === 'true';
-    if (!isE2E && elapsedSeconds < 30) {
+    if (elapsedSeconds < 30) {
       const wait = 30 - elapsedSeconds;
       throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
     }

@@ -7,6 +7,8 @@
  * Bounded memory usage prevents memory leaks via LRU eviction and automatic TTL pruning.
  */
 
+import { isolatedE2eDirectory } from '../../../scripts/auth-test-environment.mjs';
+
 export interface RateLimitResult {
   allowed: boolean;
   limit: number;
@@ -158,32 +160,40 @@ export function clearAllRateLimits(): void {
 /**
  * Rate limit configuration profiles
  */
-const isE2E = process.env.E2E_TEST === 'true';
-
 export const RATE_LIMIT_CONFIGS = {
-  // Login: 5 attempts per 15 minutes per IP/email in production; generous in E2E test runs
+  // Login: 5 attempts per 15 minutes per IP/email
   LOGIN: {
-    maxAttempts: isE2E ? 200 : 5,
+    maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
   },
   // OTP Verification: 5 attempts per 15 minutes
   OTP: {
-    maxAttempts: isE2E ? 200 : 5,
+    maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
   },
-  // OTP Resend Cooldown: 1 attempt per 30 seconds (overridden in E2E test runs)
+  // OTP Resend Cooldown: 1 attempt per 30 seconds, including E2E
   OTP_RESEND: {
-    maxAttempts: isE2E ? 200 : 1,
+    maxAttempts: 1,
     windowMs: 30 * 1000,
   },
   // Password Reset Request: 3 requests per 15 minutes
   PASSWORD_RESET_REQUEST: {
-    maxAttempts: isE2E ? 200 : 3,
+    maxAttempts: 3,
     windowMs: 15 * 60 * 1000,
   },
   // Password Reset Confirm: 5 attempts per 15 minutes
   PASSWORD_RESET_CONFIRM: {
-    maxAttempts: isE2E ? 200 : 5,
+    maxAttempts: 5,
     windowMs: 15 * 60 * 1000,
   },
 };
+
+export function rateLimitConfig(action: keyof typeof RATE_LIMIT_CONFIGS) {
+  const normal = RATE_LIMIT_CONFIGS[action];
+  // Many browser scenarios share one loopback IP. Relax only long-window limits
+  // for the explicitly configured isolated server; never relax resend cooldown.
+  if (action !== 'OTP_RESEND' && process.env.MIMS_AUTH_E2E_RELAX_LIMITS === 'true' && isolatedE2eDirectory()) {
+    return { ...normal, maxAttempts: 200 };
+  }
+  return normal;
+}

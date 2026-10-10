@@ -9,6 +9,7 @@ import {
 import {
   checkRateLimit,
   RATE_LIMIT_CONFIGS,
+  rateLimitConfig,
 } from './rate-limit';
 import { OtpDeliveryError } from './email';
 
@@ -120,13 +121,7 @@ export function enforceRateLimit(
   action: keyof typeof RATE_LIMIT_CONFIGS,
   identifier?: string
 ): void {
-  const isE2E =
-    process.env.E2E_TEST === 'true' ||
-    request.headers.get('x-e2e-test') === 'true';
-  const baseConfig = RATE_LIMIT_CONFIGS[action];
-  const config = isE2E
-    ? { maxAttempts: 500, windowMs: baseConfig.windowMs }
-    : baseConfig;
+  const config = rateLimitConfig(action);
 
   const ip = getClientIp(request) ?? '127.0.0.1';
 
