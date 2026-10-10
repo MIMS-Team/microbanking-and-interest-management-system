@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import { getBranchMetrics } from '@/data/branchMetrics';
 import StatCard from '@/components/common/StatCard';
 import LineChartWithAxes from '@/components/common/LineChartWithAxes';
@@ -10,7 +9,6 @@ import {
   Wallet,
   TrendingUp,
   FileSpreadsheet,
-  CheckCircle2,
   ArrowUpRight,
   ShieldCheck,
 } from 'lucide-react';

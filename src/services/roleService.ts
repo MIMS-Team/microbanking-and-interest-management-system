@@ -1,7 +1,7 @@
 "use server";
 
 import { RoleOption } from '@/types';
-import sql from '@/lib/db';
+import sql from '@/src/lib/db';
 
 export async function getRoles(): Promise<{
   roles: RoleOption[];
@@ -14,7 +14,7 @@ export async function getRoles(): Promise<{
   `;
 
   return {
-    roles: roleRows.map((row) => ({
+    roles: roleRows.map((row: Record<string, unknown>) => ({
       id: String(row.role_id),
       title: String(row.title),
     })),

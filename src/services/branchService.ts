@@ -1,7 +1,7 @@
 "use server";
 
 import { Branch } from '@/types';
-import sql from '@/lib/db';
+import sql from '@/src/lib/db';
 import { validateOtp } from '@/services/otpService';
 
 
@@ -12,7 +12,7 @@ export async function getBranchName(){
 
   const rows = await sql`SELECT branch_id, name FROM branch ORDER BY branch_id `;
 
-  const branches = rows.map((row) => ({ id: String(row.branch_id), name: String(row.name), }));
+  const branches = rows.map((row: Record<string, unknown>) => ({ id: String(row.branch_id), name: String(row.name), }));
 
   return { branches };
 

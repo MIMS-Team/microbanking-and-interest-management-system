@@ -1,6 +1,6 @@
 "use server";
 
-import sql from "@/lib/db";
+import sql from "@/src/lib/db";
 import bcrypt from "bcryptjs";
 import { sendOtpEmail } from "./emailService";
 

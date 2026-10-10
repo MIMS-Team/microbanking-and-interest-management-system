@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { EmployeeRecord } from '@/types';
-import sql from '@/lib/db';
+import sql from '@/src/lib/db';
 import { validateOtp } from '@/services/otpService';
 
 
@@ -120,7 +120,7 @@ export async function getEmployees(
   ]);
 
   return {
-    employees: rows.map((row) => mapEmployee(row as Record<string, unknown>)),
+    employees: rows.map((row: Record<string, unknown>) => mapEmployee(row)),
     total: Number(countRows[0]?.total ?? 0),
   };
 }
@@ -344,7 +344,7 @@ export async function updateEmployee(
     WHERE e.employee_id = ${employeeId}
   `;
   if (currentEmployeeRows.length === 0) return null;
-  const hasExistingAssignments = currentEmployeeRows.some((row) => row.otprole === 'BM' || row.otprole === 'HRM');
+  const hasExistingAssignments = currentEmployeeRows.some((row: Record<string, unknown>) => row.otprole === 'BM' || row.otprole === 'HRM');
   const hasRequestedAssignments = data.secondaryOtpRoles.length > 0;
   const losesAdmin =
     currentEmployeeRows[0].is_active === true &&

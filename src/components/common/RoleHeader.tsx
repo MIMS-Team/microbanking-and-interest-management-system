@@ -12,13 +12,6 @@ import {
   LogOut,
   ShieldCheck,
   Check,
-  Building2,
-  Users,
-  Wallet,
-  Coins,
-  ArrowLeftRight,
-  FileText,
-  LayoutDashboard,
   LucideIcon,
 } from 'lucide-react';
 
