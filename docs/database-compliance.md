@@ -376,7 +376,8 @@ owned server, preventing accidental access to a configured shared database.
   slow reset-hook issues; these were fixed before the final runs. The former
   PostgreSQL-versus-MySQL banking mismatch is resolved in the active root app.
 
-CI configuration was updated but **not executed remotely**. Deployment grants,
+CI had not executed remotely at the time of the initial local verification.
+The subsequent PR check and its fixes are recorded below. Deployment grants,
 NTFS ACLs, off-host backup recovery and 70 concurrent browser users were not
 verified and are not included among passed checks.
 
@@ -395,3 +396,37 @@ deployment or write to a shared/development/production database was performed.
 Applying the migration to an application database remains a separate reviewed
 operation. Initial production staff/product/calendar provisioning is explicit
 and is not hidden in startup.
+
+## PR #37 CI follow-up
+
+The first [pull-request run](https://github.com/MIMS-Team/microbanking-and-interest-management-system/actions/runs/38070788897)
+passed lint, typecheck, all 162 authentication tests and the 24 standalone MySQL
+tests, then failed banking with 26 passed and two failed (no skips/cancellations).
+The later workflow steps did not execute in that run.
+
+- The restore test created a temporary directory beneath ignored `.data/`, which
+  existed on the workstation but was absent from a clean checkout. It now creates
+  its owned directory under the operating system's temporary directory.
+- The 70-call workload recorded a posting at 7,014.7 ms against the unchanged
+  5,000 ms ceiling. Dashboard account/FD/ledger queries now scope the base account
+  table before computing owner fields, instead of repeatedly joining the account
+  summary view. The account report aggregates ledger and owners separately once.
+  Dashboard queries share one connection per request, and today's transaction
+  metric uses timestamp bounds that permit index lookup.
+- The workload still uses 70 calls, 711 accounts and 7,000 seeded ledger entries,
+  with the same 3/5/15-second ceilings. New assertions verify complete dashboard
+  account/transaction results and all 711 report rows, including totals and owners.
+  Calls settle before timing failures are raised, so failure does not drop a
+  database while other measured calls are still running.
+
+No migration checksum, production limit or authorization rule was relaxed.
+Local follow-up verification uses a new disposable MySQL instance with its actual
+worker restricted to two CPUs. Hosted Linux results must be read from the new
+commit's Actions run; local timings do not substitute for those results.
+
+Follow-up local checks passed: lint, typecheck, `npm test` (162 authentication +
+28 banking tests; zero failures/skips/cancellations), and production HTTPS smoke
+(one passed; its runner also rebuilt the current application). The final measured
+maxima were 1,208.066 ms dashboard, 1,175.927 ms posting and 1,199.970 ms report;
+the complete 70-call workload took 1,209.828 ms. The owned production runner
+confirmed that development authentication and OTP capture files were unchanged.

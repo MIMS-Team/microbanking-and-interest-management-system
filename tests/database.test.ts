@@ -2,6 +2,7 @@ import {before,after,test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,mkdtemp,unlink,rmdir} from 'node:fs/promises';
 import path from 'node:path';
+import {tmpdir} from 'node:os';
 import {randomBytes} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -141,6 +142,10 @@ test('customer and account reads enforce administrator, branch, and assigned-age
   const adminData=await getBootstrap(admin);assert.equal(adminData.accounts.length,0);assert.equal(adminData.customers.length,0);
   await assert.rejects(getReport(admin,'account-summary','2026-01-01','2026-12-31'),/managers/);
   const data=await getBootstrap(agent);assert.ok(data.accounts.every(a=>a.agent_id===agent.id));assert.ok(data.customers.every(c=>c.agent_id===agent.id));
+  const summary=(await fixture.database.query('SELECT * FROM account_summary WHERE branch_id=$1 AND agent_id=$2 ORDER BY id DESC',[agent.branch_id,agent.id])).rows;
+  assert.deepEqual(data.accounts,JSON.parse(JSON.stringify(summary)),'dashboard preserves the complete account-summary contract');
+  const [{entries}]=(await fixture.database.query<{entries:number}>('SELECT COUNT(*) AS entries FROM ledger_entries l JOIN savings_accounts a ON a.id=l.account_id WHERE a.branch_id=$1 AND a.agent_id=$2',[agent.branch_id,agent.id])).rows;
+  assert.equal(data.transactions.length,entries,'dashboard retains every scoped ledger entry');
   await assert.rejects(act(agent,{action:'transaction.create',type:'deposit',account_id:9,amount:'1',idempotency_key:'wrong-branch'}),/branch/);
 });
 
@@ -223,7 +228,7 @@ test('versioned salted OTP/password verifiers retain supported legacy credential
 });
 
 test('encrypted backup restores ledger, credentials, and migration state into an empty owned database',async()=>{
-  const directory=await mkdtemp(path.resolve('.data','srs-backup-'));const key=randomBytes(32).toString('hex');
+  const directory=await mkdtemp(path.join(tmpdir(),'mims-backup-test-'));const key=randomBytes(32).toString('hex');
   const target=await disposableDatabase({migrate:false});let file:string|undefined;
   try {
     const binaries=process.env.MYSQL_BIN_DIRECTORY;
@@ -280,12 +285,24 @@ test('70 concurrent fictional dashboard, report, and posting calls meet measured
   }
   console.log('QUERY_PLANS',JSON.stringify(plans));
   const started=performance.now();const elapsed:{kind:string;ms:number}[]=[];
-  await Promise.all(Array.from({length:70},async(_,index)=>{
+  const outcomes=await Promise.allSettled(Array.from({length:70},async(_,index)=>{
     const start=performance.now();const kind=index%3===0?'dashboard':index%3===1?'report':'posting';
-    if(kind==='dashboard') await getBootstrap(identities[index]);
-    else if(kind==='report') await getReport(higher,'account-summary','2026-01-01','2026-12-31');
+    if(kind==='dashboard') {
+      const data=await getBootstrap(identities[index]);
+      assert.equal(data.accounts.length,10);assert.equal(data.customers.length,10);assert.equal(data.transactions.length,100);
+    } else if(kind==='report') {
+      const report=await getReport(higher,'account-summary','2026-01-01','2026-12-31');
+      assert.equal(report.rows.length,711);
+      const account=report.rows.find(row=>row.account==='LOAD-A1000')!;
+      assert.equal(Number(account.credits),1000);assert.equal(Number(account.debits),0);assert.equal(Number(account.transaction_count),10);
+      assert.equal(account.owners,'Fictional Load Customer 1000');
+    }
     else await act(identities[index],{action:'transaction.create',type:'deposit',account_id:1000+index*10,amount:'0.01',idempotency_key:'load-'+index});
-    const ms=performance.now()-start;elapsed.push({kind,ms});assert.ok(ms<(kind==='dashboard'?3000:kind==='posting'?5000:15000),`${kind} took ${ms.toFixed(1)}ms`);
+    const ms=performance.now()-start;elapsed.push({kind,ms});
   }));
   console.log('PERFORMANCE',JSON.stringify({calls:70,staff_identities:70,accounts:711,customers:712,seeded_ledger_entries:7000,pool:10,network:'local service calls; reporting uses higher-management identity',wall_ms:performance.now()-started,max:elapsed.reduce((a,r)=>({...a,[r.kind]:Math.max(a[r.kind]??0,r.ms)}),{} as Record<string,number>)}));
+  // Drain every call before asserting or closing the database. A slow call must
+  // not hide the other timings or leave them running against a dropped fixture.
+  for(const outcome of outcomes) if(outcome.status==='rejected') throw outcome.reason;
+  for(const {kind,ms} of elapsed) assert.ok(ms<(kind==='dashboard'?3000:kind==='posting'?5000:15000),`${kind} took ${ms.toFixed(1)}ms`);
 });

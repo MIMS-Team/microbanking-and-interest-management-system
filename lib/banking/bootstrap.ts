@@ -1,12 +1,21 @@
 // Person 5: dashboard queries and the shared frontend data contract.
-import { getDb } from '../db';
+import { getDb, type Queryable } from '../db';
 import type { Bootstrap, Staff, Branch } from '../types';
 import { first, requireRole } from './shared';
 
 export async function getBootstrap(user: Staff): Promise<Bootstrap> {
   const database = await getDb();
+  // One connection per request avoids queueing eleven separate pool borrowers
+  // for every dashboard while money operations are waiting for a connection.
+  return database.transaction(tx=>loadBootstrap(tx,user));
+}
+
+const ownerNames = `COALESCE((SELECT GROUP_CONCAT(c.full_name ORDER BY c.id SEPARATOR ', ')
+  FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id),'')`;
+
+async function loadBootstrap(database: Queryable,user: Staff): Promise<Bootstrap> {
   const current = await first<Staff>(database,`SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status,b.name AS branch_name
-    FROM staff s LEFT JOIN branches b ON b.id=s.branch_id WHERE s.id=$1 AND s.status='active'`,[user.id]);
+    FROM staff s LEFT JOIN branches b ON b.id=s.branch_id WHERE s.id=$1 AND s.status='active' FOR SHARE`,[user.id]);
   if (current.email.toLowerCase()!==user.email.toLowerCase()) throw new Error('Session identity mismatch');
   requireRole(current,['agent','manager','higher_manager','admin']);
   if (current.role==='admin') {
@@ -26,15 +35,22 @@ export async function getBootstrap(user: Staff): Promise<Bootstrap> {
       COALESCE((SELECT sum(a.balance) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active'),0) AS total_balance
       FROM customers c JOIN branches b ON b.id=c.branch_id JOIN staff s ON s.id=c.agent_id
       WHERE ($1 IS NULL OR c.branch_id=$1) AND ($2 IS NULL OR c.agent_id=$2) ORDER BY c.created_at DESC,c.id DESC`,[branch,agent]),
-    database.query(`SELECT * FROM account_summary WHERE ($1 IS NULL OR branch_id=$1) AND ($2 IS NULL OR agent_id=$2) ORDER BY id DESC`,[branch,agent]),
+    database.query(`SELECT a.*,r.annual_rate,b.name AS branch_name,${ownerNames} AS owner_names,
+      (SELECT JSON_ARRAYAGG(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS owner_ids,
+      (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,
+      (SELECT MIN(c.full_name) FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id) AS customer_name
+      FROM savings_accounts a JOIN rates r ON r.id=a.rate_id JOIN branches b ON b.id=a.branch_id
+      WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2) ORDER BY a.id DESC`,[branch,agent]),
     database.query(`SELECT f.*,DATE_FORMAT(f.maturity_date,'%Y-%m-%d') AS maturity_date,
-      DATE_FORMAT(f.payout_date,'%Y-%m-%d') AS payout_date,a.customer_id,a.owner_names AS customer_name,a.branch_id,a.account_number,
+      DATE_FORMAT(f.payout_date,'%Y-%m-%d') AS payout_date,
+      (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,
+      ${ownerNames} AS customer_name,a.branch_id,a.account_number,
       f.principal AS maturity_amount,round(f.principal*f.annual_rate/100/12,2) AS monthly_interest
-      FROM fixed_deposits f JOIN account_summary a ON a.id=f.source_account_id
+      FROM fixed_deposits f JOIN savings_accounts a ON a.id=f.source_account_id
       WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2) ORDER BY f.id DESC`,[branch,agent]),
-    database.query(`SELECT l.id,o.reference,l.account_id,a.account_number,a.owner_names AS customer_name,l.type,
+    database.query(`SELECT l.id,o.reference,l.account_id,a.account_number,${ownerNames} AS customer_name,l.type,
       abs(l.amount) AS amount,l.amount AS signed_amount,l.balance_after,o.description,l.created_at,s.full_name AS agent_name,a.branch_id
-      FROM ledger_entries l JOIN money_operations o ON o.id=l.operation_id JOIN account_summary a ON a.id=l.account_id
+      FROM ledger_entries l JOIN money_operations o ON o.id=l.operation_id JOIN savings_accounts a ON a.id=l.account_id
       JOIN staff s ON s.id=o.actor_id WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2) ORDER BY l.created_at DESC,l.id DESC`,[branch,agent]),
     // Approval payloads can contain hashed employee passwords; return only the
     // reviewable public fields. Never ship hashes to the browser.
@@ -52,7 +68,10 @@ export async function getBootstrap(user: Staff): Promise<Bootstrap> {
       COALESCE((SELECT sum(balance) FROM savings_accounts WHERE status='active' AND ($1 IS NULL OR branch_id=$1) AND ($2 IS NULL OR agent_id=$2)),0) AS savings_balance,
       COALESCE((SELECT sum(f.principal) FROM fixed_deposits f JOIN savings_accounts a ON a.id=f.source_account_id WHERE f.status='active' AND ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)),0) AS fixed_deposit_balance,
       (SELECT count(*) FROM approvals WHERE status='pending' AND ($1 IS NULL OR branch_id=$1) AND ($2 IS NULL OR requested_by=$2)) AS pending_approvals,
-      (SELECT count(DISTINCT l.operation_id) FROM ledger_entries l JOIN savings_accounts a ON a.id=l.account_id WHERE DATE(l.created_at+INTERVAL 330 MINUTE)=DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE) AND ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)) AS today_transactions`,[branch,agent]),
+      (SELECT count(DISTINCT l.operation_id) FROM ledger_entries l JOIN savings_accounts a ON a.id=l.account_id
+        WHERE l.created_at>=DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE)-INTERVAL 330 MINUTE
+        AND l.created_at<DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE)+INTERVAL 1 DAY-INTERVAL 330 MINUTE
+        AND ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)) AS today_transactions`,[branch,agent]),
   ]);
   // DATE columns are projected as civil-date strings; the pool reads timestamps
   // in UTC. Keep the response serializable for the existing client contract.

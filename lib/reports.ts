@@ -48,15 +48,19 @@ export async function getReport(user: Staff, type: string, from: string, to: str
       title: "Account transactions and current balances",
       columns: ["account", "owners", "branch", "credits", "debits", "current_balance", "transaction_count"],
       note: "Credits, debits and counts use the selected Sri Lankan calendar dates. Balances show the current balance, not a historical closing balance.",
-      sql: `SELECT a.account_number AS account,a.owner_names AS owners,a.branch_name AS branch,
-        COALESCE(SUM(CASE WHEN l.amount>0 THEN l.amount ELSE 0 END),0) AS credits,
-        COALESCE(-SUM(CASE WHEN l.amount<0 THEN l.amount ELSE 0 END),0) AS debits,
-        a.balance AS current_balance,count(l.id) AS transaction_count
-        FROM account_summary a LEFT JOIN ledger_entries l ON l.account_id=a.id
-          AND l.created_at >= CAST($2 AS DATETIME)-INTERVAL 330 MINUTE
-          AND l.created_at < CAST($3 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE
+      sql: `SELECT a.account_number AS account,COALESCE(owners.names,'') AS owners,b.name AS branch,
+        COALESCE(movements.credits,0) AS credits,COALESCE(movements.debits,0) AS debits,
+        a.balance AS current_balance,COALESCE(movements.transaction_count,0) AS transaction_count
+        FROM savings_accounts a JOIN branches b ON b.id=a.branch_id
+        LEFT JOIN (SELECT l.account_id,SUM(CASE WHEN l.amount>0 THEN l.amount ELSE 0 END) AS credits,
+          -SUM(CASE WHEN l.amount<0 THEN l.amount ELSE 0 END) AS debits,COUNT(*) AS transaction_count
+          FROM ledger_entries l WHERE l.created_at >= CAST($2 AS DATETIME)-INTERVAL 330 MINUTE
+            AND l.created_at < CAST($3 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE
+          GROUP BY l.account_id) movements ON movements.account_id=a.id
+        LEFT JOIN (SELECT ca.account_id,GROUP_CONCAT(c.full_name ORDER BY c.id SEPARATOR ', ') AS names
+          FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id GROUP BY ca.account_id) owners ON owners.account_id=a.id
         WHERE ($1 IS NULL OR a.branch_id=$1)
-        GROUP BY a.id,a.account_number,a.owner_names,a.branch_name,a.balance ORDER BY a.account_number`,
+        ORDER BY a.account_number`,
     },
     "active-fds": {
       title: "Active fixed deposits and next payouts",
