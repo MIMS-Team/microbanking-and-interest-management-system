@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { renderToString } from 'react-dom/server';
 import {
   LoginForm,
   LogoutButton,
@@ -224,6 +225,7 @@ describe('Real Browser & Component Regression Test Suite', () => {
     });
 
     window.history.replaceState(null, '', '/otp?challenge=initial_challenge_123');
+    window.sessionStorage.setItem('mims_otp_challenge_id', 'initial_challenge_123');
     window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 200000));
     window.sessionStorage.setItem('mims_otp_cooldown_until', '0');
 
@@ -258,6 +260,7 @@ describe('Real Browser & Component Regression Test Suite', () => {
 
   it('5. OtpForm: preserves remaining countdown on refresh and displays expired notice after expiry', async () => {
     // 5A: Refresh before expiry (180 seconds remaining)
+    window.sessionStorage.setItem('mims_otp_challenge_id', 'refresh_challenge');
     window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 180000));
     const { unmount } = render(<OtpForm />);
 
@@ -375,5 +378,42 @@ describe('Real Browser & Component Regression Test Suite', () => {
     const req = new NextRequest('http://localhost:3000/api/users');
     const res = await listUsersRoute(req);
     expect(res.status).toBe(401);
+  });
+
+  it('renders a consistent disabled OTP initialization state without reading or writing storage', () => {
+    window.history.replaceState(null, '', '/otp?challenge=server-challenge');
+    window.sessionStorage.setItem('mims_otp_challenge_id', 'server-challenge');
+    window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 300000));
+    const read = vi.spyOn(window.sessionStorage, 'getItem');
+    const write = vi.spyOn(window.sessionStorage, 'setItem');
+    const html = renderToString(<OtpForm />);
+    expect(html).toContain('Loading verification details...');
+    expect(html).not.toContain('Code expires in:');
+    expect(html.match(/disabled=""/g)).toHaveLength(2);
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('does not render browser-only logout notices on the server', () => {
+    window.history.replaceState(null, '', '/login?status=logged_out');
+    expect(renderToString(<LoginForm />)).not.toContain('successfully logged out');
+    window.history.replaceState(null, '', '/login?error=unconfirmed_logout');
+    expect(renderToString(<LoginForm />)).not.toContain('revocation could not be confirmed');
+  });
+
+  it('a different URL challenge cannot inherit stale expiry, cooldown or destination', () => {
+    window.sessionStorage.setItem('mims_otp_challenge_id', 'old-challenge');
+    window.sessionStorage.setItem('mims_otp_details_challenge_id', 'old-challenge');
+    window.sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 300000));
+    window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + 30000));
+    window.sessionStorage.setItem('mims_otp_email', 'previous@example.test');
+    window.history.replaceState(null, '', '/otp?challenge=different-challenge');
+    render(<OtpForm />);
+    expect(screen.getByText(/code has expired/i)).toBeTruthy();
+    expect(screen.queryByText(/example.test/)).toBeNull();
+    expect(window.sessionStorage.getItem('mims_otp_expires_at')).toBeNull();
+    expect(window.sessionStorage.getItem('mims_otp_cooldown_until')).toBeNull();
+    expect(window.sessionStorage.getItem('mims_otp_challenge_id')).toBe('different-challenge');
+    expect((screen.getByRole('button', { name: /verify & authorize/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -15,15 +15,14 @@ import {
   PublicEmployee,
   RequireSession,
   RavinduShell,
-  getStoredSession,
   roleDetails,
   roleLabels,
   saveSession,
 } from '../_components';
 
 function ProfileContent() {
-  const [employee, setEmployee] = useState<PublicEmployee | null>(() => getStoredSession());
-  const [loading, setLoading] = useState(!employee);
+  const [employee, setEmployee] = useState<PublicEmployee | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;

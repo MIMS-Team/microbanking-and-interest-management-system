@@ -27,7 +27,6 @@ import {
   RavinduShell,
   Role,
   StatusRow,
-  getStoredSession,
   roleDetails,
   roleLabels,
 } from '../_components';
@@ -41,7 +40,7 @@ export default function DashboardPage() {
 }
 
 function DashboardContent() {
-  const [currentUser, setCurrentUser] = useState<PublicEmployee | null>(() => getStoredSession());
+  const [currentUser, setCurrentUser] = useState<PublicEmployee | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'employees' | 'approvals'>('overview');
 
   useEffect(() => {

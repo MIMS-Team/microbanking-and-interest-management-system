@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
@@ -423,7 +423,7 @@ export function RavinduShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [session, setSession] = useState<PublicEmployee | null>(() => getStoredSession());
+  const [session, setSession] = useState<PublicEmployee | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
@@ -684,20 +684,18 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [loggedOutNotice] = useState(() => {
-    if (typeof window !== 'undefined') {
+  const search = useSearchParams().toString();
+  const [loggedOutNotice, setLoggedOutNotice] = useState(false);
+  const [unconfirmedLogoutNotice, setUnconfirmedLogoutNotice] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
-      return params.get('status') === 'logged_out' || params.get('message') === 'logged_out';
-    }
-    return false;
-  });
-  const [unconfirmedLogoutNotice] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('error') === 'unconfirmed_logout';
-    }
-    return false;
-  });
+      setLoggedOutNotice(params.get('status') === 'logged_out' || params.get('message') === 'logged_out');
+      setUnconfirmedLogoutNotice(params.get('error') === 'unconfirmed_logout');
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -733,8 +731,9 @@ export function LoginForm() {
           }
           if (body.challengeId) {
             window.sessionStorage.setItem('mims_otp_challenge_id', body.challengeId);
+            window.sessionStorage.setItem('mims_otp_details_challenge_id', body.challengeId);
           }
-          const expMs = body.expiresAt ? new Date(body.expiresAt).getTime() : Date.now() + 5 * 60 * 1000;
+          const expMs = body.expiresAt ? new Date(body.expiresAt).getTime() : 0;
           window.sessionStorage.setItem('mims_otp_expires_at', String(expMs));
           const cd = body.cooldownSeconds ?? 30;
           window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + cd * 1000));
@@ -829,63 +828,75 @@ export function OtpForm() {
   const [submitting, setSubmitting] = useState(false);
   const [resending, setResending] = useState(false);
 
-  // Authoritative current challenge ID throughout the OTP verification flow
-  const [currentChallengeId, setCurrentChallengeId] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    const urlParams = new URLSearchParams(window.location.search);
-    const fromUrl = urlParams.get('challenge');
-    if (fromUrl) {
-      window.sessionStorage.setItem('mims_otp_challenge_id', fromUrl);
-      return fromUrl;
-    }
-    return window.sessionStorage.getItem('mims_otp_challenge_id') ?? '';
-  });
-
-  const [cooldown, setCooldown] = useState<number>(() => {
-    if (typeof window === 'undefined') return 0;
-    const cooldownUntil = Number(window.sessionStorage.getItem('mims_otp_cooldown_until') || '0');
-    return cooldownUntil > Date.now() ? Math.ceil((cooldownUntil - Date.now()) / 1000) : 0;
-  });
-
-  const [maskedDestination] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    const storedEmail = window.sessionStorage.getItem('mims_otp_email');
-    if (storedEmail) {
-      const [local, domain] = storedEmail.split('@');
-      if (domain) {
-        return local.length <= 2 ? `${local[0] ?? ''}***@${domain}` : `${local[0]}***${local[local.length - 1]}@${domain}`;
-      }
-    }
-    return '';
-  });
-
-  const [expirySeconds, setExpirySeconds] = useState<number>(() => {
-    if (typeof window === 'undefined') return 0;
-    const rawExpiresAt = Number(window.sessionStorage.getItem('mims_otp_expires_at') || '0');
-    if (!rawExpiresAt) return 0;
-    // Server timestamp is authoritative; never extend validity on refresh
-    return Math.max(0, Math.floor((rawExpiresAt - Date.now()) / 1000));
-  });
+  const search = useSearchParams().toString();
+  const [initialized, setInitialized] = useState(false);
+  const [currentChallengeId, setCurrentChallengeId] = useState('');
+  const [cooldown, setCooldown] = useState(0);
+  const [maskedDestination, setMaskedDestination] = useState('');
+  const [expirySeconds, setExpirySeconds] = useState(0);
+  const deadlines = useRef({ id: '', expiresAt: 0, cooldownUntil: 0 });
+  const mounted = useRef(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const interval = setInterval(() => {
+    mounted.current = true;
+    const updateCountdown = () => {
       const now = Date.now();
-      const currentExpiry = Number(window.sessionStorage.getItem('mims_otp_expires_at') || '0');
-      if (currentExpiry) {
-        setExpirySeconds(Math.max(0, Math.floor((currentExpiry - now) / 1000)));
+      setExpirySeconds(Math.max(0, Math.floor((deadlines.current.expiresAt - now) / 1000)));
+      setCooldown(Math.max(0, Math.ceil((deadlines.current.cooldownUntil - now) / 1000)));
+    };
+    const initialize = () => {
+      try {
+        const storage = window.sessionStorage;
+        const url = new URL(window.location.href);
+        const storedId = storage.getItem('mims_otp_challenge_id') ?? '';
+        const id = url.searchParams.get('challenge') ?? storedId;
+        const detailsId = storage.getItem('mims_otp_details_challenge_id') ?? storedId;
+        const sameChallenge = !!id && id === storedId && id === detailsId;
+        if (deadlines.current.id !== id) {
+          setCode('');
+          setError('');
+          setSuccessMsg('');
+        }
+        const expiresAt = sameChallenge ? Number(storage.getItem('mims_otp_expires_at')) : 0;
+        const cooldownUntil = sameChallenge ? Number(storage.getItem('mims_otp_cooldown_until')) : 0;
+        const email = sameChallenge ? storage.getItem('mims_otp_email') ?? '' : '';
+        if (!sameChallenge) {
+          for (const key of ['mims_otp_expires_at', 'mims_otp_cooldown_until', 'mims_otp_email']) storage.removeItem(key);
+        }
+        storage.setItem('mims_otp_challenge_id', id);
+        storage.setItem('mims_otp_details_challenge_id', id);
+        deadlines.current = {
+          id, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+          cooldownUntil: Number.isFinite(cooldownUntil) ? cooldownUntil : 0,
+        };
+        setCurrentChallengeId(id);
+        const [local, domain] = email.split('@');
+        setMaskedDestination(domain ? `${local[0] ?? ''}***${local.length > 2 ? local.at(-1) : ''}@${domain}` : '');
+        if (id && !url.searchParams.has('challenge')) {
+          url.searchParams.set('challenge', id);
+          window.history.replaceState(null, '', url.toString());
+        }
+        updateCountdown();
+      } catch {
+        deadlines.current = { id: '', expiresAt: 0, cooldownUntil: 0 };
+        setCurrentChallengeId('');
+        setMaskedDestination('');
+        updateCountdown();
+        setError('Unable to load verification details. Please sign in again.');
       }
-      const currentCooldown = Number(window.sessionStorage.getItem('mims_otp_cooldown_until') || '0');
-      if (currentCooldown > now) {
-        setCooldown(Math.ceil((currentCooldown - now) / 1000));
-      } else {
-        setCooldown(0);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
+      setInitialized(true);
+    };
+    initialize();
+    const interval = setInterval(updateCountdown, 1000);
+    window.addEventListener('popstate', initialize);
+    window.addEventListener('storage', initialize);
+    return () => {
+      mounted.current = false;
+      clearInterval(interval);
+      window.removeEventListener('popstate', initialize);
+      window.removeEventListener('storage', initialize);
+    };
+  }, [search]);
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData('text').trim();
@@ -897,7 +908,7 @@ export function OtpForm() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting) return;
+    if (!initialized || !currentChallengeId || expirySeconds === 0 || submitting || resending) return;
     setError('');
     setSuccessMsg('');
     setSubmitting(true);
@@ -915,6 +926,7 @@ export function OtpForm() {
         dashboardUrl?: string;
       };
 
+      if (!mounted.current || deadlines.current.id !== currentChallengeId) return;
       if (!response.ok || !body.user) {
         setError(body.error ?? 'The verification code is invalid or has expired.');
         return;
@@ -925,6 +937,7 @@ export function OtpForm() {
       // Clean up temporary OTP challenge data upon successful authentication
       if (typeof window !== 'undefined') {
         window.sessionStorage.removeItem('mims_otp_challenge_id');
+        window.sessionStorage.removeItem('mims_otp_details_challenge_id');
         window.sessionStorage.removeItem('mims_otp_expires_at');
         window.sessionStorage.removeItem('mims_otp_cooldown_until');
         window.sessionStorage.removeItem('mims_otp_email');
@@ -946,7 +959,7 @@ export function OtpForm() {
   };
 
   const handleResend = async () => {
-    if (cooldown > 0 || resending) return;
+    if (!initialized || !currentChallengeId || cooldown > 0 || resending || submitting) return;
     setError('');
     setSuccessMsg('');
     setResending(true);
@@ -967,6 +980,7 @@ export function OtpForm() {
         expiresAt?: string;
       };
 
+      if (!mounted.current || deadlines.current.id !== currentChallengeId) return;
       if (!response.ok || !body.challengeId) {
         setError(body.error ?? 'Failed to resend verification code.');
         return;
@@ -978,17 +992,19 @@ export function OtpForm() {
 
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem('mims_otp_challenge_id', freshChallengeId);
-        const url = new URL(window.location.href);
-        url.searchParams.set('challenge', freshChallengeId);
-        window.history.replaceState(null, '', url.toString());
+        window.sessionStorage.setItem('mims_otp_details_challenge_id', freshChallengeId);
 
         const cd = body.cooldownSeconds ?? 30;
         setCooldown(cd);
         window.sessionStorage.setItem('mims_otp_cooldown_until', String(Date.now() + cd * 1000));
 
-        const expMs = body.expiresAt ? new Date(body.expiresAt).getTime() : Date.now() + 5 * 60 * 1000;
+        const expMs = body.expiresAt ? new Date(body.expiresAt).getTime() : 0;
         window.sessionStorage.setItem('mims_otp_expires_at', String(expMs));
+        deadlines.current = { id: freshChallengeId, expiresAt: expMs, cooldownUntil: Date.now() + cd * 1000 };
         setExpirySeconds(Math.max(0, Math.floor((expMs - Date.now()) / 1000)));
+        const url = new URL(window.location.href);
+        url.searchParams.set('challenge', freshChallengeId);
+        window.history.replaceState(null, '', url.toString());
       }
 
       setSuccessMsg(body.message ?? 'A fresh verification code has been dispatched. Previous code has been invalidated.');
@@ -1016,7 +1032,7 @@ export function OtpForm() {
           </span>
           <div className="mt-1 flex items-center gap-1.5 font-semibold text-[#102a43]">
             <Clock3 className="h-3.5 w-3.5 text-[#b65f45]" />
-            {expirySeconds > 0 ? (
+            {!initialized ? <span>Loading verification details...</span> : expirySeconds > 0 ? (
               <span>Code expires in: <span className="font-mono text-[#b65f45]">{formatCountdown(expirySeconds)}</span></span>
             ) : (
               <span className="text-rose-600">Code has expired. Please request a new code.</span>
@@ -1054,7 +1070,7 @@ export function OtpForm() {
 
       <button
         type="submit"
-        disabled={submitting || code.length !== 6 || expirySeconds === 0}
+        disabled={!initialized || !currentChallengeId || submitting || resending || code.length !== 6 || expirySeconds === 0}
         className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#1d3f5e] disabled:opacity-50"
       >
         {submitting ? (
@@ -1071,7 +1087,7 @@ export function OtpForm() {
       <div className="flex items-center justify-between pt-1 text-xs">
         <button
           type="button"
-          disabled={cooldown > 0 || resending}
+          disabled={!initialized || !currentChallengeId || cooldown > 0 || resending || submitting}
           onClick={handleResend}
           className="font-bold text-[#b65f45] hover:underline disabled:opacity-50"
         >
