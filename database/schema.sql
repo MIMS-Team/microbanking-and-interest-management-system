@@ -345,6 +345,86 @@ CREATE TABLE `authentication_audit` (
   CONSTRAINT `fk_audit_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `money_operations`
+--
+DROP TABLE IF EXISTS `money_operations`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `money_operations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `reference` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `actor_id` int NOT NULL,
+  `idempotency_key` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `request_fingerprint` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `type` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` varchar(300) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `reference` (`reference`),
+  UNIQUE KEY `idx_actor_idempotency` (`actor_id`, `idempotency_key`),
+  CONSTRAINT `money_operations_ibfk_1` FOREIGN KEY (`actor_id`) REFERENCES `staff` (`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `ledger_entries`
+--
+DROP TABLE IF EXISTS `ledger_entries`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `ledger_entries` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `operation_id` int NOT NULL,
+  `account_id` int NOT NULL,
+  `type` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `amount` decimal(14,2) NOT NULL,
+  `balance_before` decimal(14,2) NOT NULL,
+  `balance_after` decimal(14,2) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_op_account` (`operation_id`, `account_id`),
+  KEY `idx_account_created` (`account_id`, `created_at`, `id`),
+  CONSTRAINT `ledger_entries_ibfk_1` FOREIGN KEY (`operation_id`) REFERENCES `money_operations` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `ledger_entries_ibfk_2` FOREIGN KEY (`account_id`) REFERENCES `savings_accounts` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `chk_amount_not_zero` CHECK (`amount` <> 0),
+  CONSTRAINT `chk_balance_before` CHECK (`balance_before` >= 0),
+  CONSTRAINT `chk_balance_after` CHECK (`balance_after` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `approvals`
+--
+DROP TABLE IF EXISTS `approvals`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `approvals` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `type` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entity_id` int DEFAULT NULL,
+  `branch_id` int DEFAULT NULL,
+  `customer_name` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `summary` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `payload` json NOT NULL,
+  `requested_by` int NOT NULL,
+  `status` enum('pending','approved','rejected') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `reviewed_by` int DEFAULT NULL,
+  `notes` text COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `reviewed_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `branch_id` (`branch_id`),
+  KEY `requested_by` (`requested_by`),
+  KEY `reviewed_by` (`reviewed_by`),
+  CONSTRAINT `approvals_ibfk_1` FOREIGN KEY (`branch_id`) REFERENCES `branches` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `approvals_ibfk_2` FOREIGN KEY (`requested_by`) REFERENCES `staff` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `approvals_ibfk_3` FOREIGN KEY (`reviewed_by`) REFERENCES `staff` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `chk_status_reviewed` CHECK (((`status` = 'pending' AND `reviewed_by` IS NULL) OR (`status` <> 'pending' AND `reviewed_by` IS NOT NULL)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;

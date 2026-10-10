@@ -1,24 +1,33 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 import pool from '@/lib/mysql';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
+import { requireSession } from '@/lib/server/auth';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const { user } = await requireSession(request);
+
     const body = await request.json() as {
       fdNumber?: string;
       sourceAccountId?: number;
       rateId?: number;
       principal?: number;
-      annualRate?: number;
       termMonths?: number;
       autoRenew?: boolean;
     };
-    const { fdNumber, sourceAccountId, rateId, principal, annualRate, termMonths, autoRenew } = body;
+    const { fdNumber, sourceAccountId, rateId, principal, termMonths, autoRenew } = body;
 
     // 1. Validate required fields from the request body
-    if (!fdNumber || !sourceAccountId || !rateId || !principal || !annualRate || !termMonths) {
+    if (!fdNumber || !sourceAccountId || !rateId || !principal || !termMonths) {
       return NextResponse.json(
         { error: "Missing required fields for Fixed Deposit." },
+        { status: 400 }
+      );
+    }
+
+    if (principal <= 0) {
+      return NextResponse.json(
+        { error: "Validation Error: Principal must be positive." },
         { status: 400 }
       );
     }
@@ -44,6 +53,18 @@ export async function POST(request: Request) {
         throw new Error("Validation Error: Source savings account must be ACTIVE to create a Fixed Deposit.");
       }
 
+      // Fetch the applicable rate from the database instead of trusting the client
+      const [rateRows] = await connection.execute<RowDataPacket[]>(
+        'SELECT annual_rate FROM rates WHERE id = ? AND product = "fixed"',
+        [rateId]
+      );
+
+      if (rateRows.length === 0) {
+        throw new Error("Validation Error: Invalid Fixed Deposit rate selected.");
+      }
+
+      const dbAnnualRate = parseFloat(rateRows[0].annual_rate);
+
       // 5. Check if the savings account has enough balance to fund the FD
       // FOR UPDATE locks the row to prevent concurrent modifications during this transaction
       const [accounts] = await connection.execute<RowDataPacket[]>(
@@ -59,17 +80,32 @@ export async function POST(request: Request) {
       }
 
       // 6. Deduct the FD principal amount from the source savings account balance
+      const balanceAfter = currentBalance - fdAmount;
       await connection.execute(
-        'UPDATE savings_accounts SET balance = balance - ? WHERE id = ?',
-        [fdAmount, sourceAccountId]
+        'UPDATE savings_accounts SET balance = ? WHERE id = ?',
+        [balanceAfter, sourceAccountId]
+      );
+
+      // Create money operation for the funding
+      const [opResult] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO money_operations (reference, actor_id, idempotency_key, request_fingerprint, type, description) 
+         VALUES (UUID(), ?, UUID(), ?, 'transfer', 'Fund fixed deposit from savings')`,
+        [user.id, '{}']
+      );
+      
+      // Create ledger entry for the deduction
+      await connection.execute(
+        `INSERT INTO ledger_entries (operation_id, account_id, type, amount, balance_before, balance_after)
+         VALUES (?, ?, 'debit', ?, ?, ?)`,
+        [opResult.insertId, sourceAccountId, -fdAmount, currentBalance, balanceAfter]
       );
 
       // 7. Create the Fixed Deposit record
       // MySQL's DATE_ADD is used to automatically calculate the maturity_date based on term_months
       const insertFdQuery = `
         INSERT INTO fixed_deposits 
-        (fd_number, source_account_id, rate_id, principal, annual_rate, term_months, auto_renew, maturity_date) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_DATE, INTERVAL ? MONTH))
+        (fd_number, source_account_id, rate_id, principal, annual_rate, term_months, auto_renew, maturity_date, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_DATE, INTERVAL ? MONTH), 'pending')
       `;
       
       const [fdResult] = await connection.execute<ResultSetHeader>(insertFdQuery, [
@@ -77,7 +113,7 @@ export async function POST(request: Request) {
         sourceAccountId, 
         rateId, 
         fdAmount, 
-        annualRate, 
+        dbAnnualRate, 
         termMonths, 
         autoRenew ? 1 : 0, 
         termMonths // Passed again for the INTERVAL ? MONTH calculation
@@ -109,8 +145,10 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { user } = await requireSession(request);
+
     const connection = await pool.getConnection();
     
     // Fetch all fixed deposits with joined customer details

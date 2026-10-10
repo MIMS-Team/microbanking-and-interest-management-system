@@ -470,6 +470,8 @@ export function RavinduShell({
   // Role-based navigation items
   const navItems = [
     { label: 'Overview', href: '/dashboard', icon: BarChartNav, roles: ['admin', 'higher_manager', 'manager', 'agent'] },
+    { label: 'Saving Accounts', href: '/savings', icon: Landmark, roles: ['admin', 'higher_manager', 'manager', 'agent'] },
+    { label: 'Fixed Deposits', href: '/fixed-deposits', icon: Clock3, roles: ['admin', 'higher_manager', 'manager', 'agent'] },
     ...(userRole === 'admin' ? [{ label: 'User Management', href: '/dashboard?tab=admin', icon: Users, roles: ['admin'] }] : []),
     ...(userRole === 'higher_manager' ? [{ label: 'Approvals Queue', href: '/dashboard?tab=approvals', icon: UserCheck, roles: ['higher_manager'] }] : []),
     { label: 'My profile', href: '/profile', icon: UserRound, roles: ['admin', 'higher_manager', 'manager', 'agent'] },

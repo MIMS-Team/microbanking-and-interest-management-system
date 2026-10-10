@@ -1,24 +1,50 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 import pool from '@/lib/mysql';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
+import { requireSession } from '@/lib/server/auth';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const { user } = await requireSession(request);
+
     // 1. Extract all required data sent from the frontend
     const body = await request.json() as {
       accountNumber?: string;
       branchId?: number;
-      agentId?: number;
       rateId?: number;
-      customerId?: number;
+      customerIds?: number[];
       balance?: number;
     };
-    const { accountNumber, branchId, agentId, rateId, customerId, balance } = body;
+    const { accountNumber, branchId, rateId, customerIds, balance } = body;
 
     // 2. Validate that all mandatory fields are provided
-    if (!accountNumber || !branchId || !agentId || !rateId || !customerId) {
+    if (!accountNumber || !branchId || !rateId || !customerIds || customerIds.length === 0) {
       return NextResponse.json(
-        { error: "Account Number, Branch ID, Agent ID, Rate ID, and Customer ID are required!" },
+        { error: "Account Number, Branch ID, Rate ID, and at least one Customer ID are required!" },
+        { status: 400 }
+      );
+    }
+
+    if (customerIds.length > 4) {
+      return NextResponse.json(
+        { error: "A joint account cannot have more than 4 owners." },
+        { status: 400 }
+      );
+    }
+
+    // Branch access validation
+    if (user.role === 'agent' || user.role === 'manager') {
+      if (user.branch_id !== branchId) {
+        return NextResponse.json(
+          { error: "Unauthorized: You can only create accounts for your assigned branch." },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (balance !== undefined && balance < 0) {
+      return NextResponse.json(
+        { error: "Validation Error: Balance cannot be negative." },
         { status: 400 }
       );
     }
@@ -32,13 +58,13 @@ export async function POST(request: Request) {
     try {
       // Step A: Insert the new account into 'savings_accounts' table
       const insertAccountQuery = `
-        INSERT INTO savings_accounts (account_number, branch_id, agent_id, rate_id, balance) 
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO savings_accounts (account_number, branch_id, agent_id, rate_id, balance, status) 
+        VALUES (?, ?, ?, ?, ?, 'pending')
       `;
       const [accountResult] = await connection.execute<ResultSetHeader>(insertAccountQuery, [
         accountNumber, 
         branchId, 
-        agentId, 
+        user.id, 
         rateId, 
         balance ?? 0 // Default to 0 if no balance is provided
       ]);
@@ -46,12 +72,14 @@ export async function POST(request: Request) {
       // Get the ID of the newly created savings account
       const newAccountId = accountResult.insertId;
 
-      // Step B: Link the customer to this new account in 'customer_accounts' table
+      // Step B: Link the customers to this new account in 'customer_accounts' table
       const insertLinkQuery = `
         INSERT INTO customer_accounts (customer_id, account_id) 
         VALUES (?, ?)
       `;
-      await connection.execute(insertLinkQuery, [customerId, newAccountId]);
+      for (const cid of customerIds) {
+        await connection.execute(insertLinkQuery, [cid, newAccountId]);
+      }
 
       // If both steps were successful, save (commit) the changes to the database
       await connection.commit();
@@ -82,8 +110,10 @@ export async function POST(request: Request) {
 }
 
 // GET API - To fetch all savings accounts and their owners
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { user } = await requireSession(request);
+
     // Write the SQL query to join 3 tables and get meaningful data
     const query = `
       SELECT 

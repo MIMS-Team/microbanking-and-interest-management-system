@@ -7,13 +7,12 @@ export async function PUT(request: NextRequest) {
   try {
     const { user } = await requireSession(request, ['manager', 'higher_manager', 'admin']);
 
-    const body = await request.json() as { fdNumber?: string };
-    const { fdNumber } = body; 
+    const body = await request.json() as { accountNumber?: string };
+    const { accountNumber } = body; 
 
-
-    if (!fdNumber) {
+    if (!accountNumber) {
       return NextResponse.json(
-        { error: "FD Number is required." },
+        { error: "Account Number is required." },
         { status: 400 }
       );
     }
@@ -21,28 +20,28 @@ export async function PUT(request: NextRequest) {
     const connection = await pool.getConnection();
 
     const [result] = await connection.execute<ResultSetHeader>(
-      `UPDATE fixed_deposits SET status = 'active' WHERE fd_number = ? AND status = 'pending'`,
-      [fdNumber]
+      `UPDATE savings_accounts SET status = 'rejected' WHERE account_number = ? AND status = 'pending'`,
+      [accountNumber]
     );
 
     connection.release();
 
     if (result.affectedRows === 0) {
       return NextResponse.json(
-        { error: "Fixed Deposit not found or it is already active." },
+        { error: "Savings Account not found or it is not in pending state." },
         { status: 404 }
       );
     }
 
     return NextResponse.json(
-      { message: "Fixed Deposit approved successfully!" },
+      { message: "Savings Account rejected successfully!" },
       { status: 200 }
     );
 
   } catch (error) {
-    console.error("Approval Error:", error);
+    console.error("Savings Rejection Error:", error);
     return NextResponse.json(
-      { error: "Internal server error during approval." },
+      { error: "Internal server error during rejection." },
       { status: 500 }
     );
   }

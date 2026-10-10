@@ -19,7 +19,7 @@ function SavingsAccountsContent() {
   const currentUserRole = getStoredSession()?.role ?? '';
   
   // Determine if the user has the right to approve based on actual login roles
-  const canApprove = ['Branch Manager', 'Higher Management'].includes(currentUserRole);
+  const canApprove = ['manager', 'higher_manager', 'admin'].includes(currentUserRole);
 
   useEffect(() => {
     async function fetchSavingsAccounts() {
@@ -45,7 +45,7 @@ function SavingsAccountsContent() {
       const response = await fetch('/api/savings/approve', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountNumber, userRole: currentUserRole }),
+        body: JSON.stringify({ accountNumber }),
       });
       
       if (response.ok) {
@@ -61,6 +61,29 @@ function SavingsAccountsContent() {
     }
   };
 
+  const handleReject = async (accountNumber: string) => {
+    if (!confirm(`Are you sure you want to reject Account: ${accountNumber}?`)) return;
+
+    try {
+      const response = await fetch('/api/savings/reject', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountNumber }),
+      });
+      
+      if (response.ok) {
+        alert("Rejected successfully!");
+        window.location.reload(); 
+      } else {
+        const data = await response.json() as { error?: string };
+        alert(data.error || "Rejection failed.");
+      }
+    } catch (error) {
+      console.error("Error rejecting account:", error);
+      alert("Network error occurred.");
+    }
+  };
+
   return (
     <RavinduShell eyebrow="Wealth Management" title="Savings Accounts Portfolio">
       <div className="mt-2 rounded-2xl border border-[#d9e2ec] bg-[#fffdf9] p-6">
@@ -70,15 +93,23 @@ function SavingsAccountsContent() {
             <p className="text-xs font-bold uppercase tracking-[0.15em] text-[#b65f45]">Live Data</p>
             <h2 className="mt-2 text-xl font-black text-[#102a43]">Active Savings Accounts</h2>
           </div>
-          <div className="relative max-w-sm w-full">
-            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-              <Search className="h-4 w-4 text-[#627d98]" />
+          <div className="flex w-full max-w-md gap-3">
+            <div className="relative flex-1">
+              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Search className="h-4 w-4 text-[#627d98]" />
+              </div>
+              <input 
+                type="text" 
+                className="block w-full rounded-xl border border-[#d9e2ec] bg-white p-2.5 pl-10 text-sm font-medium text-[#102a43] outline-none transition-all focus:border-[#4f8a8b] focus:ring-1 focus:ring-[#4f8a8b]" 
+                placeholder="Search by name or account number..." 
+              />
             </div>
-            <input 
-              type="text" 
-              className="block w-full rounded-xl border border-[#d9e2ec] bg-white p-2.5 pl-10 text-sm font-medium text-[#102a43] outline-none transition-all focus:border-[#4f8a8b] focus:ring-1 focus:ring-[#4f8a8b]" 
-              placeholder="Search by name or account number..." 
-            />
+            <a 
+              href="/savings/new"
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-xl bg-[#216e61] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#164e44]"
+            >
+              + Create New
+            </a>
           </div>
         </div>
 
@@ -129,13 +160,21 @@ function SavingsAccountsContent() {
                     {canApprove && (
                       <td className="px-6 py-4 text-center">
                         {(account.status ?? 'pending').toLowerCase() === 'pending' && (
-                          <button 
-                            onClick={() => handleApprove(account.account_number ?? '')}
-                            className="inline-flex items-center gap-1 rounded-md bg-[#216e61] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#164e44]"
-                          >
-                            <CheckCircle className="h-3 w-3" />
-                            Approve
-                          </button>
+                          <div className="flex justify-center gap-2">
+                            <button 
+                              onClick={() => handleApprove(account.account_number ?? '')}
+                              className="inline-flex items-center gap-1 rounded-md bg-[#216e61] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#164e44]"
+                            >
+                              <CheckCircle className="h-3 w-3" />
+                              Approve
+                            </button>
+                            <button 
+                              onClick={() => handleReject(account.account_number ?? '')}
+                              className="inline-flex items-center gap-1 rounded-md bg-[#b65f45] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#914732]"
+                            >
+                              Reject
+                            </button>
+                          </div>
                         )}
                       </td>
                     )}
