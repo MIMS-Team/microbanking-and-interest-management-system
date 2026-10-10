@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import nodemailer from 'nodemailer';
 import type { OtpPurpose } from './db';
 
+// Banking approval codes use the same delivery adapter, with separate storage.
+type EmailPurpose = OtpPurpose | 'banking_approval';
+
 export class OtpDeliveryError extends Error {
   constructor(
     message = 'Failed to deliver one-time password.',
@@ -19,13 +22,13 @@ export interface EmailDispatchOptions {
   subject: string;
   text: string;
   html?: string;
-  purpose: OtpPurpose;
+  purpose: EmailPurpose;
   otpCode: string;
 }
 
 export interface DispatchedEmailRecord {
   to: string;
-  purpose: OtpPurpose;
+  purpose: EmailPurpose;
   code: string;
   subject: string;
   timestamp: string;

@@ -1,0 +1,1 @@
+export { passwordHash as hashPassword } from '../server/auth';

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth/session";
+import { requireUser } from "@/lib/server/api";
 import { getReport } from "@/lib/reports";
 import { errorResponse } from "@/lib/http";
 import { businessDate } from "@/lib/format";
@@ -10,7 +10,14 @@ export async function GET(request: Request) {
   try {
     const query = new URL(request.url).searchParams;
     const today = businessDate();
-    const report = await getReport(await requireUser(), query.get("type") ?? "account-summary", query.get("from") ?? `${today.slice(0, 4)}-01-01`, query.get("to") ?? today);
+    const { user } = await requireUser(request);
+
+    const report = await getReport(
+      user,
+      query.get("type") ?? "account-summary",
+      query.get("from") ?? `${today.slice(0, 4)}-01-01`,
+      query.get("to") ?? today
+    );
     if (query.get("format") === "xlsx") {
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "B-Trust Bank MIMS";

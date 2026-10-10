@@ -28,7 +28,7 @@ npm run dev
 
 The home page redirects to `/login`. Existing authentication, dashboard, profile, savings and fixed-deposit routes keep their URLs. Do not commit `.env.local` or database data.
 
-Authentication uses MySQL in production and SQLite for local tests; the savings/FD pool uses MySQL. The customer, transaction, interest, reporting and generic approval services still contain PostgreSQL/PGlite code. **The organization cleanup does not make these separate implementations compatible.** The combined project currently cannot pass its full typecheck/build because several imported banking/authentication files have not been uploaded.
+Authentication uses MySQL in production and SQLite for local tests; the savings/FD pool uses MySQL. The customer, transaction, interest, reporting and generic approval services still contain PostgreSQL/PGlite code. **These separate implementations still need database integration.** The missing account modules have been recovered and banking routes now use the existing login session. TypeScript and the production build pass; the existing report/maintenance tests still fail because `lib/db.ts` attempts to load the MySQL schema into PostgreSQL. See [the integration verification notes](docs/INTEGRATION_CHECKS.md).
 
 ## Verification commands
 

@@ -35,16 +35,10 @@ The merged manifest keeps the existing nested application's Next.js/React/TypeSc
 
 ## Remaining integration gaps
 
-These files are imported by code already on the original main branch but are absent from that branch and this organized copy:
+The original missing imports are resolved. `lib/auth/password.ts` reuses the existing server password hash; `lib/http.ts` reuses CSRF and error handling. The four generic banking routes now pass their request to `lib/server/api.ts` and use its authenticated user. `lib/auth/approvals.ts` provides request-bound OTPs for the existing generic employee approval workflow without creating another login/session system.
 
-- `lib/auth/password.ts`
-- `lib/auth/session.ts`
-- `lib/http.ts`
-- `lib/banking/accounts.ts`
-- `lib/banking/account-lifecycle.ts`
+`lib/banking/accounts.ts` and `lib/banking/account-lifecycle.ts` were recovered from the original local project. Savings/FD pages and APIs also retain the newer MySQL implementation.
 
-The uploaded authentication implementation lives in `lib/server/` and is a different interface; it cannot be substituted into the older banking calls through a path rename alone. Savings/FD pages and APIs exist, but use their newer MySQL implementation rather than the missing older banking services.
+`lib/db.ts`, `lib/banking/`, `lib/reports.ts`, `database/examples.sql`, and `compose.yaml` still describe PostgreSQL/PGlite behavior. `database/schema.sql`, `lib/mysql.ts`, and production authentication target MySQL. The legacy banking adapter currently attempts to execute that MySQL schema and fails. This mismatch, the schema differences, and shared employee identity must be reconciled before whole-bank runtime validation. No database-engine conversion is included in the missing-module fix.
 
-`lib/db.ts`, `lib/banking/`, `lib/reports.ts`, `database/examples.sql`, and `compose.yaml` still describe PostgreSQL/PGlite behavior. `database/schema.sql`, `lib/mysql.ts`, and production authentication target MySQL. Converting those services and reconciling their session interfaces is a separate integration task. No missing modules were invented and no database-engine conversion was performed here.
-
-Do not claim that a successful authentication test run proves the combined banking application builds or runs. Earlier delivery counts under `docs/DELIVERY.md` describe the historical local PostgreSQL demo; current verification must be run against this checkout.
+The production build now passes, but that does not prove banking requests work. See `docs/INTEGRATION_CHECKS.md` for current results. Earlier delivery counts under `docs/DELIVERY.md` describe the historical local PostgreSQL demo.
