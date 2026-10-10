@@ -1,10 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
+import { requireE2eTarget } from './scripts/auth-test-environment.mjs';
 
 const isCI = !!process.env.CI;
+requireE2eTarget();
+const baseURL = process.env.PLAYWRIGHT_TEST_BASE_URL;
+if (!baseURL || !/^http:\/\/127\.0\.0\.1:\d+$/.test(baseURL)) {
+  throw new Error('Use npm run test:e2e to start an owned, isolated browser test server.');
+}
 
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: isCI ? 60000 : 30000,
+  timeout: 60000,
   expect: {
     timeout: isCI ? 15000 : 5000,
   },
@@ -16,15 +22,12 @@ export default defineConfig({
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
   ],
   use: {
-    baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://127.0.0.1:3000',
+    baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     actionTimeout: isCI ? 15000 : 10000,
     navigationTimeout: isCI ? 30000 : 15000,
-    extraHTTPHeaders: {
-      'x-e2e-test': 'true',
-    },
   },
   projects: [
     {
@@ -34,19 +37,4 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    command: 'npm run dev -- --hostname 127.0.0.1 --port 3000',
-    url: 'http://127.0.0.1:3000',
-    reuseExistingServer: !isCI,
-    timeout: 120000,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: {
-      EMAIL_PROVIDER: 'console',
-      NODE_ENV: 'development',
-      E2E_TEST: 'true',
-      PORT: '3000',
-      HOSTNAME: '127.0.0.1',
-    },
-  },
 });

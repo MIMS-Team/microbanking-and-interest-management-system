@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test';
-import { execSync } from 'node:child_process';
+import { test, expect } from './fixtures';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { requireE2eTarget } from '../../scripts/auth-test-environment.mjs';
 
 /**
  * End-to-End Real Browser Authentication Suite (Playwright)
@@ -27,7 +28,7 @@ import { join } from 'node:path';
 async function getDispatchedOtp(options?: { minTimestamp?: number; timeoutMs?: number }): Promise<string> {
   const timeoutMs = options?.timeoutMs ?? (process.env.CI ? 20000 : 10000);
   const minTimestamp = options?.minTimestamp ?? 0;
-  const jsonPath = join(process.cwd(), '.data', 'latest_otp.json');
+  const jsonPath = join(requireE2eTarget(), 'latest_otp.json');
 
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -49,18 +50,9 @@ async function getDispatchedOtp(options?: { minTimestamp?: number; timeoutMs?: n
 }
 
 test.describe('Real Browser End-to-End Authentication', () => {
-  test.beforeAll(() => {
-    try {
-      execSync('node scripts/seed-dev.mjs', { stdio: 'inherit', cwd: process.cwd() });
-    } catch (e) {
-      console.warn('Auto-seed beforeAll warning:', e);
-    }
-  });
-
-  test.afterAll(() => {
-    try {
-      execSync('node scripts/seed-dev.mjs', { stdio: 'inherit', cwd: process.cwd() });
-    } catch {}
+  test.beforeEach(() => {
+    requireE2eTarget();
+    execFileSync(process.execPath, ['scripts/seed-e2e.mjs'], { stdio: 'inherit', env: process.env });
   });
 
   test('1. Valid login → OTP → role-appropriate dashboard and verifies auth-cookie security attributes', async ({ page, context }) => {
@@ -68,8 +60,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.goto('/login');
 
     // Fill valid agent credentials
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Agent@2026!');
+    await page.fill('input[type="email"]', 'agent@example.test');
+    await page.fill('input[type="password"]', 'AgentTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
 
     // Wait for navigation to OTP challenge page
@@ -102,7 +94,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
   test('2. Wrong password displays credential error and does not advance to OTP', async ({ page }) => {
     await page.goto('/login');
 
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
+    await page.fill('input[type="email"]', 'agent@example.test');
     await page.fill('input[type="password"]', 'CompletelyWrongPassword!123');
     await page.click('button:has-text("Continue with 2FA")');
 
@@ -117,8 +109,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
 
   test('3. Wrong OTP displays verification error and remains on challenge page', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Agent@2026!');
+    await page.fill('input[type="email"]', 'agent@example.test');
+    await page.fill('input[type="password"]', 'AgentTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
 
     await page.waitForURL(/\/otp/);
@@ -138,8 +130,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
   test('4. Deactivated employee cannot log in', async ({ page }) => {
     await page.goto('/login');
 
-    await page.fill('input[type="email"]', 'deactivated.agent@mims.bank');
-    await page.fill('input[type="password"]', 'Deactivated@2026!');
+    await page.fill('input[type="email"]', 'inactive@example.test');
+    await page.fill('input[type="password"]', 'InactiveTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
 
     // Expect generic authentication failure preventing user enumeration
@@ -152,22 +144,19 @@ test.describe('Real Browser End-to-End Authentication', () => {
 
   test('5. Resend → enter replacement OTP → successful login', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Agent@2026!');
+    await page.fill('input[type="email"]', 'agent@example.test');
+    await page.fill('input[type="password"]', 'AgentTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
 
     await page.waitForURL(/\/otp/);
     const initialUrl = page.url();
 
-    // Fast-forward cooldown in sessionStorage so button is enabled
-    await page.evaluate(() => {
-      sessionStorage.setItem('mims_otp_cooldown_until', '0');
-    });
+    // Refresh during the real cooldown; browser tests retain the server protection.
     await page.reload();
 
     const timeBeforeResend = Date.now() - 100;
     const resendBtn = page.locator('button:has-text("Resend verification code")');
-    await expect(resendBtn).toBeEnabled();
+    await expect(resendBtn).toBeEnabled({ timeout: 35000 });
     await resendBtn.click();
 
     // Verify input is cleared and new challenge ID appears in URL
@@ -189,19 +178,20 @@ test.describe('Real Browser End-to-End Authentication', () => {
 
   test('6. Refresh before expiry preserves the remaining countdown', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Agent@2026!');
+    await page.fill('input[type="email"]', 'agent@example.test');
+    await page.fill('input[type="password"]', 'AgentTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
 
     await page.waitForURL(/\/otp/);
 
-    // Set expiration to 180 seconds in the future
-    await page.evaluate(() => {
-      sessionStorage.setItem('mims_otp_expires_at', String(Date.now() + 180000));
-    });
+    const expiresAt = await page.evaluate(() => sessionStorage.getItem('mims_otp_expires_at'));
+    expect(Number(expiresAt)).toBeGreaterThan(Date.now());
+    await page.clock.install();
+    await page.clock.fastForward(120000);
 
     // Refresh page
     await page.reload();
+    expect(await page.evaluate(() => sessionStorage.getItem('mims_otp_expires_at'))).toBe(expiresAt);
 
     // Verify countdown timer reflects preserved remaining duration (e.g. 02:5x or 03:00)
     const timer = page.locator('text=/0[23]:[0-5][0-9]/');
@@ -210,29 +200,30 @@ test.describe('Real Browser End-to-End Authentication', () => {
 
   test('7. Refresh after expiry shows the expired state', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Agent@2026!');
+    await page.fill('input[type="email"]', 'agent@example.test');
+    await page.fill('input[type="password"]', 'AgentTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
 
     await page.waitForURL(/\/otp/);
 
-    // Set expiration to 5 seconds in the past
-    await page.evaluate(() => {
-      sessionStorage.setItem('mims_otp_expires_at', String(Date.now() - 5000));
-    });
+    const expiresAt = await page.evaluate(() => sessionStorage.getItem('mims_otp_expires_at'));
+    await page.clock.install();
+    await page.clock.fastForward(301000);
 
     // Refresh page
     await page.reload();
+    expect(await page.evaluate(() => sessionStorage.getItem('mims_otp_expires_at'))).toBe(expiresAt);
 
     // Verify expired state message is displayed
     const expiredNotice = page.locator('text=/Code has expired/i');
     await expect(expiredNotice).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Verify & Authorize Session' })).toBeDisabled();
   });
 
   test('8. Typing matching reset passwords does NOT prematurely display success before confirmation', async ({ page }) => {
     await page.goto('/passwordreset');
 
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
+    await page.fill('input[type="email"]', 'agent@example.test');
     await page.click('button:has-text("Send Recovery OTP")');
 
     // Wait for step 2 confirmation fields
@@ -258,7 +249,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
   test('9. Failed reset confirmation preserves the form and displays an error', async ({ page }) => {
     await page.goto('/passwordreset');
 
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
+    await page.fill('input[type="email"]', 'agent@example.test');
     await page.click('button:has-text("Send Recovery OTP")');
 
     // Fill invalid recovery code
@@ -281,7 +272,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.goto('/passwordreset');
 
     const timeBeforeRequest = Date.now() - 100;
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
+    await page.fill('input[type="email"]', 'agent@example.test');
     await page.click('button:has-text("Send Recovery OTP")');
 
     const resetOtp = await getDispatchedOtp({ minTimestamp: timeBeforeRequest });
@@ -302,8 +293,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.goto('/login');
 
     // 10A: Old password must be rejected
-    await page.fill('input[type="email"]', 'agent.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Agent@2026!');
+    await page.fill('input[type="email"]', 'agent@example.test');
+    await page.fill('input[type="password"]', 'AgentTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
     await expect(page.locator('text=/Invalid credentials/i')).toBeVisible();
 
@@ -330,8 +321,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     // Log in as Manager (not Admin)
     const timestamp = Date.now() - 100;
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'manager.colombo@mims.bank');
-    await page.fill('input[type="password"]', 'Manager@2026!');
+    await page.fill('input[type="email"]', 'manager@example.test');
+    await page.fill('input[type="password"]', 'ManagerTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
     await page.waitForURL(/\/otp/);
 
@@ -354,8 +345,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     const tab1 = await context.newPage();
     const timestamp = Date.now() - 100;
     await tab1.goto('/login');
-    await tab1.fill('input[type="email"]', 'admin@mims.bank');
-    await tab1.fill('input[type="password"]', 'AdminDev@2026!');
+    await tab1.fill('input[type="email"]', 'admin@example.test');
+    await tab1.fill('input[type="password"]', 'AdminTest@2026!');
     await tab1.click('button:has-text("Continue with 2FA")');
     await tab1.waitForURL(/\/otp/);
 
@@ -377,14 +368,17 @@ test.describe('Real Browser End-to-End Authentication', () => {
     // Tab 2 must automatically detect cross-tab storage revocation and redirect to login!
     await tab2.waitForURL(/\/login\?status=logged_out/, { timeout: 15000 });
     expect(tab2.url()).toContain('/login?status=logged_out');
+    await expect(tab1.getByRole('status')).toContainText('successfully logged out');
+    await tab2.reload();
+    await expect(tab2.getByRole('status')).toContainText('successfully logged out');
   });
 
   test('14. Failed logout displays unconfirmed-revocation message and allows retry', async ({ page }) => {
     // Log in
     const timestamp = Date.now() - 100;
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@mims.bank');
-    await page.fill('input[type="password"]', 'AdminDev@2026!');
+    await page.fill('input[type="email"]', 'admin@example.test');
+    await page.fill('input[type="password"]', 'AdminTest@2026!');
     await page.click('button:has-text("Continue with 2FA")');
     await page.waitForURL(/\/otp/);
 
@@ -422,5 +416,17 @@ test.describe('Real Browser End-to-End Authentication', () => {
     // Successful logout redirect
     await page.waitForURL(/\/login\?status=logged_out/);
     expect(page.url()).toContain('/login?status=logged_out');
+  });
+
+  test('15. Logout notices survive direct navigation and refresh', async ({ page }) => {
+    await page.goto('/login?error=unconfirmed_logout');
+    await expect(page.getByRole('alert').filter({ hasText: 'Local session was cleared' })).toContainText('could not be confirmed');
+    await page.reload();
+    await expect(page.getByRole('alert').filter({ hasText: 'Local session was cleared' })).toContainText('could not be confirmed');
+    await expect(page.getByRole('status')).not.toBeVisible();
+    await page.goto('/login?status=logged_out');
+    await expect(page.getByRole('status')).toContainText('successfully logged out');
+    await page.reload();
+    await expect(page.getByRole('status')).toContainText('successfully logged out');
   });
 });

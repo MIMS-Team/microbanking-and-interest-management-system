@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "seed": "node scripts/seed-dev.mjs",
     "seed:dev": "node scripts/seed-dev.mjs"
   },

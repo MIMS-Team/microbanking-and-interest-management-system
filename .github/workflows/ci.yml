@@ -44,7 +44,7 @@ jobs:
       - name: TypeScript Static Type Checking
         run: npx tsc --noEmit --skipLibCheck
 
-      - name: Run Automated Vitest Test Suite (86 Integration, Security & Unit Tests)
+      - name: Run Automated Vitest Test Suite
         run: npm test
         env:
           NODE_ENV: test
@@ -123,16 +123,11 @@ jobs:
       - name: Install Playwright Browsers
         run: npx playwright install chromium --with-deps
 
-      - name: Seed Development Database
-        run: node scripts/seed-dev.mjs
-
-      - name: Run Playwright E2E Tests
+      - name: Run Isolated Playwright E2E Tests with Browser Error Checks
         run: npm run test:e2e
         env:
           CI: 'true'
           NODE_ENV: development
-          E2E_TEST: 'true'
-          EMAIL_PROVIDER: console
 
       - name: Upload Test Results & Failure Artifacts (Traces & Screenshots)
         if: always()
