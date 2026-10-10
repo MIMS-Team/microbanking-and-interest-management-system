@@ -74,7 +74,7 @@ export async function POST(request: Request) {
 
   } catch (error) {
     console.error("Database connection or query error:", error);
-    const msg = error instanceof Error ? error.message : (error as any).sqlMessage || String(error);
+    const msg = error instanceof Error ? error.message : (error as { sqlMessage?: string }).sqlMessage || String(error);
     return NextResponse.json(
       { error: "DB Error: " + msg },
       { status: 500 }
