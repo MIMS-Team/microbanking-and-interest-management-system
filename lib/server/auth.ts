@@ -848,6 +848,9 @@ export async function confirmEmployeeCreation(
     if (approverActor.role !== 'higher_manager' && approverActor.role !== 'admin') {
       throw new AuthError('Approver is not authorized to approve employee creation.', 403);
     }
+    if (approverActor.id !== challenge.employee_id) {
+      throw new AuthError('Only the assigned approver can confirm this request.', 403, 'WRONG_APPROVER');
+    }
   }
 
   // Re-check email uniqueness at confirmation time
@@ -1137,6 +1140,9 @@ export async function confirmEmployeeDeactivation(
     }
     if (approverActor.role !== 'higher_manager' && approverActor.role !== 'admin') {
       throw new AuthError('Approver is not authorized to approve employee deactivation.', 403);
+    }
+    if (approverActor.id !== challenge.employee_id) {
+      throw new AuthError('Only the assigned approver can confirm this request.', 403, 'WRONG_APPROVER');
     }
   }
 

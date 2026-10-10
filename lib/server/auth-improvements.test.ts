@@ -202,6 +202,25 @@ describe('Authentication & Employee-Management Regression Improvements Suite', (
       ).rejects.toThrow(/not authorized to approve/i);
     });
 
+    it('binds creation and deactivation approval to the employee who received the OTP', async () => {
+      const pending = await initiateEmployeeCreation(admin1, {
+        full_name: 'Fictional Assigned Approval', email: 'assigned@example.test',
+        role: 'agent', branch_id: 1, password: 'Assigned!2026',
+      });
+      expect(pending.hrManagerEmail).toBe(higherManager1.email);
+      const code = getLastDispatchedOtpForTest()!.code;
+      await expect(confirmEmployeeCreation(pending.challengeId, code, higherManager2))
+        .rejects.toMatchObject({ status: 403, code: 'WRONG_APPROVER' });
+      const employee = await confirmEmployeeCreation(pending.challengeId, code, higherManager1);
+      const deactivation = await initiateEmployeeDeactivation(admin1, employee.id);
+      const deactivationCode = getLastDispatchedOtpForTest()!.code;
+      await expect(confirmEmployeeDeactivation(deactivation.challengeId, deactivationCode, higherManager2))
+        .rejects.toMatchObject({ status: 403, code: 'WRONG_APPROVER' });
+      expect((await findEmployeeById(employee.id))?.status).toBe('active');
+      await confirmEmployeeDeactivation(deactivation.challengeId, deactivationCode, higherManager1);
+      expect((await findEmployeeById(employee.id))?.status).toBe('inactive');
+    });
+
     it('prevents privilege escalation: lower authority cannot grant higher roles or edit higher roles', async () => {
       // Branch Manager cannot edit Admin
       await expect(
