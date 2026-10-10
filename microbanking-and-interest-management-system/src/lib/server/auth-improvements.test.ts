@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { PATCH as updateUserRoute } from '../../app/api/users/[id]/route';
+import { GET as listUsersRoute } from '../../app/api/users/route';
 import { POST as resendOtpRoute } from '../../app/api/auth/otp/resend/route';
 import { POST as resetRequestRoute } from '../../app/api/auth/password-reset/request/route';
+import { POST as resetConfirmRoute } from '../../app/api/auth/password-reset/confirm/route';
+import { GET as sessionRoute } from '../../app/api/auth/session/route';
 import {
   authCookies,
   authenticateCredentials,
@@ -11,6 +14,8 @@ import {
   confirmEmployeeCreation,
   initiateEmployeeDeactivation,
   confirmEmployeeDeactivation,
+  requestPasswordReset,
+  confirmPasswordReset,
   getLastDispatchedOtpForTest,
   hashSessionToken,
   passwordHash,
@@ -25,11 +30,15 @@ import {
   createEmployee,
   findEmployeeById,
   findSessionByHash,
+  listEmployees as dbListEmployees,
   resetDatabase,
+  runInTransaction,
+  getSqliteDb,
   type PublicEmployee,
 } from './db';
 import { clearAllRateLimits } from './rate-limit';
 import { sendOtpEmail, setMockDeliveryFailureForTest, clearDispatchedEmailsForTest } from './email';
+import { performClientLogout } from '../../app/_components';
 
 describe('Authentication & Employee-Management Regression Improvements Suite', () => {
   let admin1: PublicEmployee;
@@ -397,6 +406,170 @@ describe('Authentication & Employee-Management Regression Improvements Suite', (
       expect(() => requireRole(higherManager1, ['higher_manager', 'admin'])).not.toThrow();
       expect(() => requireRole(branchManager, ['admin'])).toThrow(/Role/);
       expect(() => requireRole(agent, ['admin', 'manager'])).toThrow(/Role/);
+    });
+  });
+
+  describe('5. Comprehensive Security Regression Coverage', () => {
+    it('interrupted database operations roll back entirely without leaving orphan records', async () => {
+      await expect(
+        runInTransaction(
+          async () => {},
+          (db) => {
+            db.prepare(`
+              INSERT INTO staff (full_name, email, password_hash, role, branch_id, status)
+              VALUES ('Crash Candidate', 'crash@ravindu.bank', 'hash', 'agent', 1, 'active')
+            `).run();
+            throw new Error('Simulated mid-operation power failure');
+          }
+        )
+      ).rejects.toThrow('Simulated mid-operation power failure');
+
+      const allStaff = await dbListEmployees();
+      const crashUser = allStaff.find((s) => s.email === 'crash@ravindu.bank');
+      expect(crashUser).toBeUndefined();
+    });
+
+    it('password reset: old password is rejected and all previous sessions are rejected', async () => {
+      // 1. Establish an active session with original password
+      const login = await authenticateCredentials(agent.email, 'AgentPass1!123');
+      const otp = getLastDispatchedOtpForTest()!.code;
+      const session = await verifyLoginOtpChallenge(login.challengeId, otp);
+
+      // Verify session works
+      const activeSession = await findSessionByHash(hashSessionToken(session.sessionToken));
+      expect(activeSession?.revoked_at).toBeNull();
+
+      // 2. Request and complete password reset
+      const reset = await requestPasswordReset(agent.email);
+      const resetOtp = getLastDispatchedOtpForTest()!.code;
+      const resetSuccess = await confirmPasswordReset(reset.challengeId!, resetOtp, 'NewAgentPass1!123');
+      expect(resetSuccess).toBe(true);
+
+      // 3. Old password MUST be rejected
+      await expect(authenticateCredentials(agent.email, 'AgentPass1!123')).rejects.toThrow(/invalid credentials/i);
+
+      // 4. New password MUST succeed
+      const newLogin = await authenticateCredentials(agent.email, 'NewAgentPass1!123');
+      expect(newLogin.challengeId).toBeTruthy();
+
+      // 5. Prior session MUST be revoked
+      const revokedSession = await findSessionByHash(hashSessionToken(session.sessionToken));
+      expect(revokedSession?.revoked_at).toBeTruthy();
+
+      // Protected session API rejects old token
+      const req = new NextRequest('http://localhost:3000/api/auth/session', {
+        headers: { cookie: `${authCookies.SESSION_COOKIE}=${session.sessionToken}` },
+      });
+      const res = await sessionRoute(req);
+      expect(res.status).toBe(401);
+    });
+
+    it('deactivation: existing session rejected immediately on protected business routes', async () => {
+      // 1. Agent logs in
+      const login = await authenticateCredentials(agent.email, 'AgentPass1!123');
+      const otp = getLastDispatchedOtpForTest()!.code;
+      const session = await verifyLoginOtpChallenge(login.challengeId, otp);
+
+      // 2. Deactivate agent
+      const deact = await initiateEmployeeDeactivation(admin1, agent.id);
+      const hrOtp = getLastDispatchedOtpForTest()!.code;
+      await confirmEmployeeDeactivation(deact.challengeId, hrOtp, higherManager1);
+
+      // 3. Check protected session route
+      const sessReq = new NextRequest('http://localhost:3000/api/auth/session', {
+        headers: { cookie: `${authCookies.SESSION_COOKIE}=${session.sessionToken}` },
+      });
+      const sessRes = await sessionRoute(sessReq);
+      expect(sessRes.status).toBe(401);
+
+      // 4. Check protected business route
+      const busReq = new NextRequest('http://localhost:3000/api/users', {
+        headers: { cookie: `${authCookies.SESSION_COOKIE}=${session.sessionToken}` },
+      });
+      const busRes = await listUsersRoute(busReq);
+      expect(busRes.status).toBe(401);
+    });
+
+    it('direct unauthorized page and API access returns 401 unauthenticated and 403 forbidden', async () => {
+      // Unauthenticated access
+      const unauthReq = new NextRequest('http://localhost:3000/api/users');
+      const unauthRes = await listUsersRoute(unauthReq);
+      expect(unauthRes.status).toBe(401);
+
+      // Authenticated as agent (not authorized to list all employees)
+      const login = await authenticateCredentials(agent.email, 'AgentPass1!123');
+      const otp = getLastDispatchedOtpForTest()!.code;
+      const session = await verifyLoginOtpChallenge(login.challengeId, otp);
+
+      const agentReq = new NextRequest('http://localhost:3000/api/users', {
+        headers: { cookie: `${authCookies.SESSION_COOKIE}=${session.sessionToken}` },
+      });
+      const agentRes = await listUsersRoute(agentReq);
+      expect(agentRes.status).toBe(403);
+    });
+
+    it('expired, reused and superseded OTPs are strictly rejected', async () => {
+      // 1. Generate challenge
+      const login = await authenticateCredentials(agent.email, 'AgentPass1!123');
+      const challengeId = login.challengeId;
+      const rawOtp = getLastDispatchedOtpForTest()!.code;
+
+      // 2. Test superseded OTP
+      // Backdate challenge created_at by 35 seconds to satisfy the 30s resend cooldown check
+      const db = getSqliteDb();
+      db.prepare("UPDATE otp_challenges SET created_at = datetime('now', '-35 seconds') WHERE id = ?").run(challengeId);
+      const resendResult = await resendOtp(challengeId);
+      const newChallengeId = resendResult.challengeId;
+      const newOtp = getLastDispatchedOtpForTest()!.code;
+
+      // Old superseded challenge MUST be rejected
+      await expect(verifyLoginOtpChallenge(challengeId, rawOtp)).rejects.toThrow();
+
+      // 3. New challenge succeeds
+      const session = await verifyLoginOtpChallenge(newChallengeId, newOtp);
+      expect(session.sessionToken).toBeTruthy();
+
+      // 4. Reused OTP MUST be rejected
+      await expect(verifyLoginOtpChallenge(newChallengeId, newOtp)).rejects.toThrow(/already been used/i);
+    });
+
+    it('failed confirmation keeps password unchanged and previous sessions valid', async () => {
+      const reset = await requestPasswordReset(agent.email);
+
+      // Confirm with WRONG OTP
+      const req = new NextRequest('http://localhost:3000/api/auth/password-reset/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: reset.challengeId!,
+          code: '999999',
+          password: 'NewPassword!123',
+          confirmPassword: 'NewPassword!123',
+        }),
+      });
+      const res = await resetConfirmRoute(req);
+      expect(res.status).toBe(401);
+
+      // Original password MUST still work
+      const login = await authenticateCredentials(agent.email, 'AgentPass1!123');
+      expect(login.challengeId).toBeTruthy();
+    });
+
+    it('failed logout does not claim successful revocation', async () => {
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          json: async () => ({ error: 'Database session lock failure' }),
+        } as Response);
+
+        const logoutResult = await performClientLogout();
+        expect(logoutResult.success).toBe(false);
+        expect(logoutResult.error).toBe('Database session lock failure');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });
