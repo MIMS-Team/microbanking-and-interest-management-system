@@ -1115,6 +1115,14 @@ export async function finalizeOtpResend(
 
   if (adapter === 'mysql') {
     return withMySqlTransaction(async (conn) => {
+      // Match acquisition's lock order: original challenge, then reservation.
+      // Reversing these locks can deadlock with another concurrent resend.
+      const [chalRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT consumed_at, expires_at FROM otp_challenges WHERE id = ? FOR UPDATE`,
+        [originalChallengeId]
+      );
+      const orig = chalRows[0] as { consumed_at: string | null; expires_at: string } | undefined;
+
       const [resRows] = await conn.execute<RowDataPacket[]>(
         `SELECT reservation_token, replacement_id FROM otp_resend_reservations WHERE challenge_id = ? FOR UPDATE`,
         [originalChallengeId]
@@ -1123,12 +1131,6 @@ export async function finalizeOtpResend(
       if (!reservation || reservation.reservation_token !== reservationToken) {
         return { finalized: false, reason: 'RESERVATION_LOST' };
       }
-
-      const [chalRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT consumed_at, expires_at FROM otp_challenges WHERE id = ? FOR UPDATE`,
-        [originalChallengeId]
-      );
-      const orig = chalRows[0] as { consumed_at: string | null; expires_at: string } | undefined;
 
       if (!orig || orig.consumed_at !== null || parseDateSafe(String(orig.expires_at)).getTime() <= Date.now()) {
         await conn.execute(`DELETE FROM otp_challenges WHERE id = ?`, [replacementId]);
@@ -2148,4 +2150,3 @@ export async function applyMySqlSchema(connOrPool: { execute: (sql: string, para
     INSERT IGNORE INTO \`branches\` (\`id\`, \`code\`, \`name\`) VALUES (1, 'COL-CEN', 'Colombo Central');
   `);
 }
-

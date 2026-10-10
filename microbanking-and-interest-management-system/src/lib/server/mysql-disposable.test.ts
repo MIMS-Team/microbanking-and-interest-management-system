@@ -455,7 +455,8 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
     expect(challenge?.consumed_at).toBeNull();
   });
 
-  it('guarantees atomic OTP resend under concurrent requests on MySQL', async () => {
+  // Repeat to exercise different lock interleavings between acquisition and finalization.
+  it.each(Array.from({ length: 10 }, (_, index) => index + 1))('guarantees atomic OTP resend under concurrent requests on MySQL (round %i)', async () => {
     clearDispatchedEmailsForTest();
 
     const emp = await createEmployee({
@@ -490,8 +491,9 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
     const successes = results.filter((r) => r.status === 'fulfilled');
     const failures = results.filter((r) => r.status === 'rejected');
 
-    // Exactly one must acquire the reservation and succeed
-    expect(successes.length).toBe(1);
+    // Exactly one must acquire the reservation and succeed. Include rejected
+    // errors in failures so database deadlocks are visible in CI diagnostics.
+    expect(successes.length, failures.map((result) => String(result.reason)).join('\n')).toBe(1);
     expect(failures.length).toBe(4);
 
     // Exactly one email must have been dispatched
@@ -643,4 +645,3 @@ describe.skipIf(!isConfigured)('Disposable MySQL Production Database Verificatio
     expect(verifySuccess.employee.id).toBe(emp.id);
   });
 });
-
