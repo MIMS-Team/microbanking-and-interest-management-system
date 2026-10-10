@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import { RequireSession, RavinduShell, getStoredSession } from '../../_components';
+import { useRouter } from 'next/navigation';
 
 function NewSavingsContent() {
   const [accountNumber, setAccountNumber] = useState('');
   const [rateId, setRateId] = useState('');
   const [customerIds, setCustomerIds] = useState('');
   const [balance, setBalance] = useState('0');
+  const router = useRouter();
 
   const session = getStoredSession();
   const branchId = session?.branch_id ?? '';
@@ -30,7 +32,7 @@ function NewSavingsContent() {
 
       if (response.ok) {
         alert("Account created successfully (Pending Approval)!");
-        window.location.href = '/savings';
+        router.push('/savings');
       } else {
         const data = await response.json();
         alert(data.error || "Failed to create account.");
