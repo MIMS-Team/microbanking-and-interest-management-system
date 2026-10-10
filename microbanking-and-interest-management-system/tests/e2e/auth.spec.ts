@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -50,7 +51,6 @@ async function getDispatchedOtp(options?: { minTimestamp?: number; timeoutMs?: n
 test.describe('Real Browser End-to-End Authentication', () => {
   test.beforeAll(() => {
     try {
-      const { execSync } = require('node:child_process');
       execSync('node scripts/seed-dev.mjs', { stdio: 'inherit', cwd: process.cwd() });
     } catch (e) {
       console.warn('Auto-seed beforeAll warning:', e);
@@ -59,7 +59,6 @@ test.describe('Real Browser End-to-End Authentication', () => {
 
   test.afterAll(() => {
     try {
-      const { execSync } = require('node:child_process');
       execSync('node scripts/seed-dev.mjs', { stdio: 'inherit', cwd: process.cwd() });
     } catch {}
   });
