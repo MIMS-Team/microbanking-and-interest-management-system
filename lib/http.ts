@@ -1,0 +1,1 @@
+export const errorResponse = () => {}; export const readBody = () => {};export class HttpError extends Error {}

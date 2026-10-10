@@ -27,7 +27,7 @@ export async function createTransaction(tx: Queryable,user: Staff,input: Input) 
   if (!source) throw new BusinessError('Source account does not exist.');
   requireAgent(user,source); requireActive(source);
   if (type!=='deposit') {
-    if (input.owner_verified!==true) throw new BusinessError('Confirm the account owner’s identity before withdrawing or transferring.');
+    if (input.owner_verified!==true) throw new BusinessError('Confirm the account owner\'s identity before withdrawing or transferring.');
     const canDebit = await first<{allowed:boolean;available:string}>(tx,'SELECT balance-$1::numeric>=minimum_balance AS allowed,greatest(balance-minimum_balance,0) AS available FROM savings_accounts WHERE id=$2',[amount,source.id]);
     if (!canDebit.allowed) throw new BusinessError(`Available withdrawal is LKR ${canDebit.available}; the minimum balance must remain.`);
   }
