@@ -74,8 +74,9 @@ export async function POST(request: Request) {
 
   } catch (error) {
     console.error("Database connection or query error:", error);
+    const msg = error instanceof Error ? error.message : (error as any).sqlMessage || String(error);
     return NextResponse.json(
-      { error: "An internal server error occurred while creating the account." },
+      { error: "DB Error: " + msg },
       { status: 500 }
     );
   }
