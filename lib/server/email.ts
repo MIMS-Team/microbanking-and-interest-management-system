@@ -2,6 +2,7 @@ import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import nodemailer from 'nodemailer';
 import type { OtpPurpose } from './db';
+import { validateE2eEnvironment } from '../../scripts/e2e-environment.mjs';
 
 // Banking approval codes use the same delivery adapter, with separate storage.
 type EmailPurpose = OtpPurpose | 'banking_approval';
@@ -61,6 +62,10 @@ export function clearDispatchedEmailsForTest(): void {
  * Handles production delivery (SMTP/HTTP relay) and development/test fallback.
  */
 export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ success: boolean; provider: string }> {
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (isProduction && (process.env.EMAIL_PROVIDER?.toLowerCase() === 'test' || process.env.MIMS_TEST_OTP_PATH || process.env.MIMS_E2E_DIR)) {
+    throw new OtpDeliveryError('Test email delivery and OTP capture are prohibited in production.', 502, 'EMAIL_CONFIG_MISSING');
+  }
   if (mockDeliveryDelayMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, mockDeliveryDelayMs));
   }
@@ -69,8 +74,7 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
     throw new OtpDeliveryError('Email delivery service returned an error. Verification code could not be sent.', 502, 'OTP_DELIVERY_FAILED');
   }
 
-  const isProduction = process.env.NODE_ENV === 'production';
-  const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+  const isTest = !isProduction && (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true');
   const provider = (process.env.EMAIL_PROVIDER || (isProduction ? 'smtp' : isTest ? 'test' : 'console')).toLowerCase();
 
   // Test mode adapter: fallback when provider is 'test' or when in test environment without an explicit provider override
@@ -82,18 +86,13 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
       subject: options.subject,
       timestamp: new Date().toISOString(),
     });
-    try {
-      const dataDir = join(process.cwd(), '.data');
-      if (!existsSync(dataDir)) {
-        mkdirSync(dataDir, { recursive: true });
-      }
+    if (process.env.MIMS_TEST_OTP_PATH || process.env.MIMS_E2E_DIR) {
+      const { otpPath } = validateE2eEnvironment();
       writeFileSync(
-        join(dataDir, 'latest_otp.json'),
+        otpPath,
         JSON.stringify({ to: options.to, purpose: options.purpose, code: options.otpCode, timestamp: new Date().toISOString() }),
         'utf8'
       );
-    } catch {
-      // Ignore write failure in test sandbox
     }
     return { success: true, provider: 'test' };
   }
@@ -192,6 +191,9 @@ function sendDevOtp(options: EmailDispatchOptions): { success: boolean; provider
     throw new OtpDeliveryError('Console delivery is prohibited in production.', 502, 'EMAIL_CONFIG_MISSING');
   }
   console.info(`[MIMS-DEV-OTP] Code for ${options.to} (${options.purpose}): ${options.otpCode}`);
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+    return { success: true, provider: 'console' };
+  }
   try {
     const dataDir = join(process.cwd(), '.data');
     if (!existsSync(dataDir)) {

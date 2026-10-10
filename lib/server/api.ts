@@ -11,6 +11,7 @@ import {
   RATE_LIMIT_CONFIGS,
 } from './rate-limit';
 import { OtpDeliveryError } from './email';
+import { hasOwnedE2eEnvironment } from '../../scripts/e2e-environment.mjs';
 
 export class ApiError extends Error {
   constructor(message: string, public status = 400, public code = 'API_ERROR') {
@@ -120,11 +121,8 @@ export function enforceRateLimit(
   action: keyof typeof RATE_LIMIT_CONFIGS,
   identifier?: string
 ): void {
-  const isE2E =
-    process.env.E2E_TEST === 'true' ||
-    request.headers.get('x-e2e-test') === 'true';
   const baseConfig = RATE_LIMIT_CONFIGS[action];
-  const config = isE2E
+  const config = action !== 'OTP_RESEND' && process.env.MIMS_E2E_RELAX_RATE_LIMITS === 'true' && hasOwnedE2eEnvironment()
     ? { maxAttempts: 500, windowMs: baseConfig.windowMs }
     : baseConfig;
 
@@ -291,8 +289,8 @@ export function getClientIp(request: Request | NextRequest): string | null {
     if (realIp) return realIp.trim();
   }
 
-  // When not configured behind trusted proxy, derive from non-forwarded headers or fallback
-  return request.headers.get('cf-connecting-ip') ?? request.headers.get('x-client-ip') ?? '127.0.0.1';
+  // Without a trusted proxy, keep unverified requests in the same IP bucket.
+  return '127.0.0.1';
 }
 
 export function getClientUserAgent(request: Request | NextRequest): string | null {
