@@ -540,3 +540,35 @@ export async function renewEmployeePassword(
     },
   };
 }
+
+export async function changeEmployeePassword(
+  employeeId: number,
+  currentPassword: string,
+  newPassword: string
+): Promise<'invalid-current-password' | 'employee-not-found' | 'success'> {
+  const employees = await sql`
+    SELECT password
+    FROM employee
+    WHERE employee_id = ${employeeId}
+  `;
+  if (employees.length === 0) {
+    return 'employee-not-found';
+  }
+
+  const isCurrentPasswordValid = await bcrypt.compare(
+    currentPassword,
+    String(employees[0].password)
+  );
+  if (!isCurrentPasswordValid) {
+    return 'invalid-current-password';
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const updatedEmployees = await sql`
+    UPDATE employee
+    SET password = ${passwordHash}
+    WHERE employee_id = ${employeeId}
+    RETURNING employee_id
+  `;
+  return updatedEmployees.length > 0 ? 'success' : 'employee-not-found';
+}

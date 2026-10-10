@@ -7,6 +7,8 @@ import {
   Landmark,
   ChevronDown,
   KeyRound,
+  Eye,
+  EyeOff,
   LogOut,
   ShieldCheck,
   Check,
@@ -41,33 +43,78 @@ export default function RoleHeader({
   activeTab,
   onTabChange,
 }: RoleHeaderProps) {
-  const { currentUser, updateUserPassword, logout } = useSession();
+  const { currentUser, logout } = useSession();
 
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [visiblePasswords, setVisiblePasswords] = useState({
+    current: false,
+    new: false,
+    confirm: false,
+  });
   const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
 
-  // Handle self-service password update
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
+    setPasswordSuccess('');
 
     if (newPasswordInput !== confirmPasswordInput) {
       setPasswordError('New passwords do not match.');
       return;
     }
 
-    const result = updateUserPassword(currentPasswordInput, newPasswordInput);
-    if (result.success) {
-      setPasswordModalOpen(false);
+    let employeeId: number;
+    try {
+      const rawSession = sessionStorage.getItem('btrust_session');
+      const session: { employeeId?: unknown } | null = rawSession
+        ? JSON.parse(rawSession)
+        : null;
+      employeeId = Number(session?.employeeId);
+    } catch (error) {
+      console.error('Failed to read employee session:', error);
+      setPasswordError('Your employee session could not be read. Please sign in again.');
+      return;
+    }
+
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+      setPasswordError('Your employee session could not be verified. Please sign in again.');
+      return;
+    }
+
+    setPasswordSubmitting(true);
+    try {
+      const response = await fetch('/api/employees', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'change-password',
+          employeeId,
+          currentPassword: currentPasswordInput,
+          newPassword: newPasswordInput,
+        }),
+      });
+      const result: { success?: boolean; message?: string } = await response.json();
+      if (!response.ok || !result.success) {
+        setPasswordError(result.message || 'Failed to update password.');
+        return;
+      }
+
       setCurrentPasswordInput('');
       setNewPasswordInput('');
       setConfirmPasswordInput('');
-    } else {
-      setPasswordError(result.message);
+      setVisiblePasswords({ current: false, new: false, confirm: false });
+      setPasswordSuccess(result.message || 'Password updated successfully.');
+    } catch (error) {
+      console.error('Failed to update employee password:', error);
+      setPasswordError('Failed to update password. Please try again.');
+    } finally {
+      setPasswordSubmitting(false);
     }
   };
 
@@ -167,6 +214,8 @@ export default function RoleHeader({
                     <button
                       onClick={() => {
                         setProfileDropdownOpen(false);
+                        setPasswordError('');
+                        setPasswordSuccess('');
                         setPasswordModalOpen(true);
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 rounded-xl font-medium transition-colors text-left"
@@ -221,7 +270,15 @@ export default function RoleHeader({
       {/* Self-service Password Change Modal */}
       <Modal
         isOpen={passwordModalOpen}
-        onClose={() => setPasswordModalOpen(false)}
+        onClose={() => {
+          setPasswordModalOpen(false);
+          setPasswordError('');
+          setPasswordSuccess('');
+          setCurrentPasswordInput('');
+          setNewPasswordInput('');
+          setConfirmPasswordInput('');
+          setVisiblePasswords({ current: false, new: false, confirm: false });
+        }}
         title="Change Your Account Password"
         maxWidth="max-w-md"
       >
@@ -235,62 +292,109 @@ export default function RoleHeader({
               {passwordError}
             </div>
           )}
+          {passwordSuccess && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700 font-medium">
+              {passwordSuccess}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Current Password
             </label>
-            <input
-              type="password"
-              required
-              value={currentPasswordInput}
-              onChange={(e) => setCurrentPasswordInput(e.target.value)}
-              placeholder="••••••••"
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-            />
+            <div className="relative">
+              <input
+                type={visiblePasswords.current ? 'text' : 'password'}
+                required
+                value={currentPasswordInput}
+                onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                placeholder="••••••••"
+                className="w-full px-3 py-2 pr-10 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
+              />
+              <button
+                type="button"
+                aria-label={visiblePasswords.current ? 'Hide current password' : 'Show current password'}
+                title={visiblePasswords.current ? 'Hide password' : 'Show password'}
+                onClick={() => setVisiblePasswords((state) => ({ ...state, current: !state.current }))}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-800"
+              >
+                {visiblePasswords.current ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">New Password</label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={newPasswordInput}
-              onChange={(e) => setNewPasswordInput(e.target.value)}
-              placeholder="Minimum 6 characters"
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-            />
+            <div className="relative">
+              <input
+                type={visiblePasswords.new ? 'text' : 'password'}
+                required
+                minLength={6}
+                value={newPasswordInput}
+                onChange={(e) => setNewPasswordInput(e.target.value)}
+                placeholder="Minimum 6 characters"
+                className="w-full px-3 py-2 pr-10 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
+              />
+              <button
+                type="button"
+                aria-label={visiblePasswords.new ? 'Hide new password' : 'Show new password'}
+                title={visiblePasswords.new ? 'Hide password' : 'Show password'}
+                onClick={() => setVisiblePasswords((state) => ({ ...state, new: !state.new }))}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-800"
+              >
+                {visiblePasswords.new ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Confirm New Password
             </label>
-            <input
-              type="password"
-              required
-              value={confirmPasswordInput}
-              onChange={(e) => setConfirmPasswordInput(e.target.value)}
-              placeholder="Re-enter new password"
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-            />
+            <div className="relative">
+              <input
+                type={visiblePasswords.confirm ? 'text' : 'password'}
+                required
+                value={confirmPasswordInput}
+                onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                placeholder="Re-enter new password"
+                className="w-full px-3 py-2 pr-10 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
+              />
+              <button
+                type="button"
+                aria-label={visiblePasswords.confirm ? 'Hide confirmed password' : 'Show confirmed password'}
+                title={visiblePasswords.confirm ? 'Hide password' : 'Show password'}
+                onClick={() => setVisiblePasswords((state) => ({ ...state, confirm: !state.confirm }))}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-800"
+              >
+                {visiblePasswords.confirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
             <button
               type="button"
-              onClick={() => setPasswordModalOpen(false)}
+              onClick={() => {
+                setPasswordModalOpen(false);
+                setPasswordError('');
+                setPasswordSuccess('');
+                setCurrentPasswordInput('');
+                setNewPasswordInput('');
+                setConfirmPasswordInput('');
+                setVisiblePasswords({ current: false, new: false, confirm: false });
+              }}
               className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={passwordSubmitting}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-xs"
             >
               <Check className="w-3.5 h-3.5" />
-              <span>Update Password</span>
+              <span>{passwordSubmitting ? 'Updating...' : 'Update Password'}</span>
             </button>
           </div>
         </form>

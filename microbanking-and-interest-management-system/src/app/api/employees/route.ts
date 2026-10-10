@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   createEmployee,
+  changeEmployeePassword,
   getMissingEmployeeCoverage,
   getEmployees,
   renewEmployeePassword,
@@ -236,10 +237,42 @@ export async function PATCH(request: NextRequest) {
       otpId,
       otpEmployeeId,
       requestingEmployeeId,
+      currentPassword,
+      newPassword,
     } = body as Record<string, unknown>;
 
     if (!isPositiveInteger(employeeId)) {
       return NextResponse.json({ message: 'A valid employee ID is required.' }, { status: 400 });
+    }
+
+    if (action === 'change-password') {
+      if (
+        typeof currentPassword !== 'string' ||
+        currentPassword.length === 0 ||
+        typeof newPassword !== 'string' ||
+        newPassword.length < 6
+      ) {
+        return NextResponse.json(
+          { message: 'Current password and a new password of at least 6 characters are required.' },
+          { status: 400 }
+        );
+      }
+      if (currentPassword === newPassword) {
+        return NextResponse.json(
+          { message: 'The new password must be different from the current password.' },
+          { status: 400 }
+        );
+      }
+
+      const result = await changeEmployeePassword(employeeId, currentPassword, newPassword);
+      if (result === 'employee-not-found') {
+        return NextResponse.json({ message: 'Employee not found.' }, { status: 404 });
+      }
+      if (result === 'invalid-current-password') {
+        return NextResponse.json({ message: 'The current password is incorrect.' }, { status: 403 });
+      }
+
+      return NextResponse.json({ success: true, message: 'Password updated successfully.' });
     }
 
     if (action === 'check-role-change-coverage') {
