@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       request.headers.get('x-anti-enumeration') === 'true' ||
       process.env.ANTI_ENUMERATION === 'true';
 
-    const { challengeId } = await requestPasswordReset(email, {
+    const resetResult = await requestPasswordReset(email, {
       ip_address: ipAddress,
       user_agent: userAgent,
       antiEnumeration,
@@ -39,8 +39,10 @@ export async function POST(request: NextRequest) {
       accepted: true,
       message: 'If the provided email corresponds to an active account, a verification code has been dispatched.',
     };
-    if (challengeId) {
-      responseBody.challengeId = challengeId;
+    if (resetResult.challengeId) {
+      responseBody.challengeId = resetResult.challengeId;
+      if (resetResult.expiresAt) responseBody.expiresAt = resetResult.expiresAt;
+      if (resetResult.cooldownSeconds) responseBody.cooldownSeconds = resetResult.cooldownSeconds;
     }
 
     return NextResponse.json(responseBody, { headers: NO_CACHE_HEADERS });

@@ -26,15 +26,19 @@ export async function POST(request: NextRequest) {
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);
 
-    const { employee, challengeId } = await authenticateCredentials(email, password, {
+    const result = await authenticateCredentials(email, password, {
       ip_address: ipAddress,
       user_agent: userAgent,
     });
+
+    const { challengeId, expiresAt, cooldownSeconds, employee } = result;
 
     const response = NextResponse.json(
       {
         requiresOtp: true,
         challengeId,
+        expiresAt,
+        cooldownSeconds,
         user: {
           id: employee.id,
           full_name: employee.full_name,

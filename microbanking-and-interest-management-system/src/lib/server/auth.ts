@@ -9,6 +9,7 @@ import {
   countActiveAdmins,
   createOtpChallenge as dbCreateOtpChallenge,
   createSession as dbCreateSession,
+  deleteOtpChallenge,
   findEmployeeByEmail,
   findEmployeeById,
   findEmployeeWithAuthByEmail,
@@ -71,23 +72,19 @@ export function getLastDispatchedOtpForTest(): { email: string; purpose: OtpPurp
   return lastDispatchedOtpForTest;
 }
 
-export function dispatchOtp(email: string, purpose: OtpPurpose, code: string): void {
+export async function dispatchOtp(email: string, purpose: OtpPurpose, code: string): Promise<void> {
   lastDispatchedOtpForTest = { email, purpose, code };
   if (testOtpHandler) {
     testOtpHandler({ email, purpose, code });
   }
 
   // Delegate delivery to configurable server-side email delivery adapter
-  sendOtpEmail({
+  await sendOtpEmail({
     to: email,
     purpose,
     otpCode: code,
     subject: `MIMS Microbanking: Your ${purpose.replace('_', ' ').toUpperCase()} Verification Code`,
     text: `Your one-time verification code is: ${code}. It expires in 5 minutes. Do not share this code.`,
-  }).catch((err) => {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('[MIMS-AUTH] Email dispatch error:', err instanceof Error ? err.message : String(err));
-    }
   });
 }
 
@@ -148,7 +145,7 @@ export async function authenticateCredentials(
   email: string,
   passwordInput: string,
   meta?: { ip_address?: string | null; user_agent?: string | null }
-): Promise<{ employee: PublicEmployee; challengeId: string }> {
+): Promise<{ employee: PublicEmployee; challengeId: string; expiresAt: string; cooldownSeconds: number }> {
   const normalizedEmail = email.trim().toLowerCase();
   const employee = await findEmployeeWithAuthByEmail(normalizedEmail);
 
@@ -234,11 +231,18 @@ export async function authenticateCredentials(
     expires_at: expiresAt,
   });
 
-  dispatchOtp(employee.email, 'login', rawOtp);
+  try {
+    await dispatchOtp(employee.email, 'login', rawOtp);
+  } catch (deliveryError) {
+    await deleteOtpChallenge(challengeId);
+    throw deliveryError;
+  }
 
   return {
     employee: publicUser(employee),
     challengeId,
+    expiresAt: expiresAt.toISOString(),
+    cooldownSeconds: 30,
   };
 }
 
@@ -353,7 +357,7 @@ export async function verifyLoginOtpChallenge(
 export async function resendOtp(
   challengeId: string,
   meta?: { ip_address?: string | null; user_agent?: string | null }
-): Promise<{ challengeId: string; email: string; cooldownSeconds: number }> {
+): Promise<{ challengeId: string; email: string; cooldownSeconds: number; expiresAt: string }> {
   let challenge = null;
   const purposes: OtpPurpose[] = ['login', 'password_reset', 'employee_creation', 'employee_deactivation'];
   for (const p of purposes) {
@@ -382,10 +386,7 @@ export async function resendOtp(
     throw new AuthError('Associated employee record not found.', 404);
   }
 
-  // Invalidate old challenge
-  await consumeOtpChallenge(challengeId);
-
-  // Generate fresh challenge
+  // Generate fresh challenge without prematurely destroying the existing usable challenge
   const rawOtp = generateSecureOtp();
   const newChallengeId = randomBytes(24).toString('hex');
   const codeHash = hashOtp(rawOtp);
@@ -399,9 +400,19 @@ export async function resendOtp(
     max_attempts: MAX_OTP_ATTEMPTS,
     expires_at: expiresAt,
     metadata: challenge.metadata ? JSON.parse(challenge.metadata) : null,
+    invalidatePrevious: false,
   });
 
-  dispatchOtp(employee.email, challenge.purpose, rawOtp);
+  try {
+    await dispatchOtp(employee.email, challenge.purpose, rawOtp);
+  } catch (deliveryError) {
+    // If delivery fails, remove un-dispatched new challenge so old challenge remains valid
+    await deleteOtpChallenge(newChallengeId);
+    throw deliveryError;
+  }
+
+  // Only after email dispatch succeeds do we consume the superseded challenge
+  await consumeOtpChallenge(challengeId);
 
   await recordAuthenticationAttempt({
     employee_id: employee.id,
@@ -416,6 +427,7 @@ export async function resendOtp(
     challengeId: newChallengeId,
     email: employee.email,
     cooldownSeconds: 30,
+    expiresAt: expiresAt.toISOString(),
   };
 }
 
@@ -566,7 +578,7 @@ export async function logoutSession(
 export async function requestPasswordReset(
   email: string,
   meta?: { ip_address?: string | null; user_agent?: string | null; antiEnumeration?: boolean }
-): Promise<{ challengeId: string | null }> {
+): Promise<{ challengeId: string | null; expiresAt?: string; cooldownSeconds?: number }> {
   const normalizedEmail = email.trim().toLowerCase();
   const employee = await findEmployeeByEmail(normalizedEmail);
 
@@ -603,9 +615,18 @@ export async function requestPasswordReset(
     expires_at: expiresAt,
   });
 
-  dispatchOtp(employee.email, 'password_reset', rawOtp);
+  try {
+    await dispatchOtp(employee.email, 'password_reset', rawOtp);
+  } catch (deliveryError) {
+    await deleteOtpChallenge(challengeId);
+    throw deliveryError;
+  }
 
-  return { challengeId };
+  return {
+    challengeId,
+    expiresAt: expiresAt.toISOString(),
+    cooldownSeconds: 30,
+  };
 }
 
 export async function confirmPasswordReset(
@@ -736,7 +757,12 @@ export async function initiateEmployeeCreation(
     },
   });
 
-  dispatchOtp(hrApprover.email, 'employee_creation', rawOtp);
+  try {
+    await dispatchOtp(hrApprover.email, 'employee_creation', rawOtp);
+  } catch (deliveryError) {
+    await deleteOtpChallenge(challengeId);
+    throw deliveryError;
+  }
 
   await recordAuthenticationAttempt({
     employee_id: adminActor.id,
@@ -1021,7 +1047,12 @@ export async function initiateEmployeeDeactivation(
     },
   });
 
-  dispatchOtp(hrApprover.email, 'employee_deactivation', rawOtp);
+  try {
+    await dispatchOtp(hrApprover.email, 'employee_deactivation', rawOtp);
+  } catch (deliveryError) {
+    await deleteOtpChallenge(challengeId);
+    throw deliveryError;
+  }
 
   await recordAuthenticationAttempt({
     employee_id: targetId,

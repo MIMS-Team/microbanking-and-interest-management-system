@@ -55,3 +55,46 @@ jobs:
         env:
           NODE_ENV: production
           NEXT_TELEMETRY_DISABLED: '1'
+
+  mysql-production-verification:
+    name: Disposable MySQL 8.0 Integration Verification
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_test_password
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    defaults:
+      run:
+        working-directory: ./microbanking-and-interest-management-system
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'microbanking-and-interest-management-system/package-lock.json'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Disposable MySQL Integration Suite
+        run: npx vitest run src/lib/server/mysql-disposable.test.ts
+        env:
+          NODE_ENV: test
+          VITEST: 'true'
+          TEST_MYSQL_HOST: 127.0.0.1
+          TEST_MYSQL_PORT: 3306
+          TEST_MYSQL_USER: root
+          TEST_MYSQL_PASSWORD: ci_test_password
+          TEST_MYSQL_REQUIRED: 'true'
+
