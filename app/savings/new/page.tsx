@@ -35,7 +35,7 @@ function NewSavingsContent() {
         const data = await response.json();
         alert(data.error || "Failed to create account.");
       }
-    } catch (error) {
+    } catch {
       alert("An error occurred.");
     }
   };

@@ -5,7 +5,7 @@ import { requireSession } from '@/lib/server/auth';
 
 export async function PUT(request: NextRequest) {
   try {
-    const { user } = await requireSession(request, ['manager', 'higher_manager', 'admin']);
+    await requireSession(request, ['manager', 'higher_manager', 'admin']);
 
     const body = await request.json() as { fdNumber?: string };
     const { fdNumber } = body; 

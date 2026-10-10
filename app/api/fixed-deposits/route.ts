@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const { user } = await requireSession(request);
+    await requireSession(request);
 
     const connection = await pool.getConnection();
     

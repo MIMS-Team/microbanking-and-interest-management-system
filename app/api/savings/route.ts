@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 // GET API - To fetch all savings accounts and their owners
 export async function GET(request: NextRequest) {
   try {
-    const { user } = await requireSession(request);
+    await requireSession(request);
 
     // Write the SQL query to join 3 tables and get meaningful data
     const query = `

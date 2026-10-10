@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { RequireSession, RavinduShell, getStoredSession } from '../../_components';
+import { RequireSession, RavinduShell } from '../../_components';
 
 function NewFixedDepositContent() {
   const [fdNumber, setFdNumber] = useState('');
@@ -34,7 +34,7 @@ function NewFixedDepositContent() {
         const data = await response.json();
         alert(data.error || "Failed to create FD.");
       }
-    } catch (error) {
+    } catch {
       alert("An error occurred.");
     }
   };
