@@ -1,5 +1,6 @@
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import nodemailer from 'nodemailer';
 import type { OtpPurpose } from './db';
 
 export class OtpDeliveryError extends Error {
@@ -90,30 +91,64 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
           text: options.text,
           purpose: options.purpose,
         }),
+        signal: AbortSignal.timeout(10000),
       });
       if (!response.ok) {
         throw new Error(`Email provider responded with status ${response.status}`);
       }
       return { success: true, provider: 'webhook' };
     } catch (error) {
-      throw new OtpDeliveryError(`Failed to send verification email via provider: ${error instanceof Error ? error.message : 'Unknown error'}`, 502, 'OTP_DELIVERY_FAILED');
+      throw new OtpDeliveryError(
+        `Failed to send verification email via provider: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        502,
+        'OTP_DELIVERY_FAILED'
+      );
     }
   }
 
-  // Production SMTP adapter configuration check
+  // Production SMTP adapter with actual nodemailer delivery
   if (provider === 'smtp') {
     const smtpHost = process.env.SMTP_HOST;
     if (!smtpHost) {
       if (isProduction || process.env.EMAIL_PROVIDER === 'smtp') {
         throw new OtpDeliveryError('Production SMTP server is not configured (missing SMTP_HOST).', 502, 'EMAIL_CONFIG_MISSING');
       }
-      // In development fallback to console if SMTP is unconfigured
+      // In non-production fallback to console if SMTP is unconfigured
       return sendDevOtp(options);
     }
 
-    // If SMTP is configured, simulate connection / relay or dispatch
-    // In production with credentials:
-    return { success: true, provider: 'smtp' };
+    try {
+      const port = Number(process.env.SMTP_PORT || 587);
+      const isSecure = process.env.SMTP_SECURE === 'true' || port === 465;
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port,
+        secure: isSecure,
+        auth: process.env.SMTP_USER ? {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS || '',
+        } : undefined,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+      });
+
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || 'MIMS Security <security@mims.bank>',
+        to: options.to,
+        subject: options.subject,
+        text: options.text,
+        html: options.html,
+      });
+
+      return { success: true, provider: 'smtp' };
+    } catch (error) {
+      throw new OtpDeliveryError(
+        `Failed to send verification email via SMTP: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        502,
+        'OTP_DELIVERY_FAILED'
+      );
+    }
   }
 
   // Development & Console mode: safe local logging, NEVER used in production
@@ -125,6 +160,9 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
 }
 
 function sendDevOtp(options: EmailDispatchOptions): { success: boolean; provider: string } {
+  if (process.env.NODE_ENV === 'production') {
+    throw new OtpDeliveryError('Console delivery is prohibited in production.', 502, 'EMAIL_CONFIG_MISSING');
+  }
   console.info(`[MIMS-DEV-OTP] Code for ${options.to} (${options.purpose}): ${options.otpCode}`);
   try {
     const dataDir = join(process.cwd(), '.data');
