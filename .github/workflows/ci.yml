@@ -123,11 +123,15 @@ jobs:
       - name: Install Playwright Browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Seed Development Database
+        run: node scripts/seed-dev.mjs
+
       - name: Run Playwright E2E Tests
         run: npm run test:e2e
         env:
           CI: 'true'
           NODE_ENV: development
+          E2E_TEST: 'true'
           EMAIL_PROVIDER: console
 
       - name: Upload Test Results & Failure Artifacts (Traces & Screenshots)

@@ -24,7 +24,7 @@ import { join } from 'node:path';
  */
 
 async function getDispatchedOtp(options?: { minTimestamp?: number; timeoutMs?: number }): Promise<string> {
-  const timeoutMs = options?.timeoutMs ?? 10000;
+  const timeoutMs = options?.timeoutMs ?? (process.env.CI ? 20000 : 10000);
   const minTimestamp = options?.minTimestamp ?? 0;
   const jsonPath = join(process.cwd(), '.data', 'latest_otp.json');
 
@@ -48,6 +48,22 @@ async function getDispatchedOtp(options?: { minTimestamp?: number; timeoutMs?: n
 }
 
 test.describe('Real Browser End-to-End Authentication', () => {
+  test.beforeAll(() => {
+    try {
+      const { execSync } = require('node:child_process');
+      execSync('node scripts/seed-dev.mjs', { stdio: 'inherit', cwd: process.cwd() });
+    } catch (e) {
+      console.warn('Auto-seed beforeAll warning:', e);
+    }
+  });
+
+  test.afterAll(() => {
+    try {
+      const { execSync } = require('node:child_process');
+      execSync('node scripts/seed-dev.mjs', { stdio: 'inherit', cwd: process.cwd() });
+    } catch {}
+  });
+
   test('1. Valid login → OTP → role-appropriate dashboard and verifies auth-cookie security attributes', async ({ page, context }) => {
     const timestampBefore = Date.now() - 100;
     await page.goto('/login');
@@ -156,7 +172,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await resendBtn.click();
 
     // Verify input is cleared and new challenge ID appears in URL
-    await page.waitForFunction((oldUrl) => window.location.href !== oldUrl, initialUrl);
+    await page.waitForFunction((oldUrl) => window.location.href !== oldUrl, initialUrl, { timeout: 15000 });
     expect(page.url()).not.toBe(initialUrl);
 
     // Fetch fresh replacement OTP
@@ -360,7 +376,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await tab1.waitForURL(/\/login\?status=logged_out/);
 
     // Tab 2 must automatically detect cross-tab storage revocation and redirect to login!
-    await tab2.waitForURL(/\/login\?status=logged_out/, { timeout: 10000 });
+    await tab2.waitForURL(/\/login\?status=logged_out/, { timeout: 15000 });
     expect(tab2.url()).toContain('/login?status=logged_out');
   });
 

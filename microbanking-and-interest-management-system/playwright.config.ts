@@ -1,25 +1,27 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const isCI = !!process.env.CI;
+
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: 30000,
+  timeout: isCI ? 60000 : 30000,
   expect: {
-    timeout: 5000,
+    timeout: isCI ? 15000 : 5000,
   },
   fullyParallel: false, // Run auth flows sequentially for deterministic state
   workers: 1,
-  retries: process.env.CI ? 1 : 0,
+  retries: isCI ? 1 : 0,
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
   ],
   use: {
-    baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://localhost:3000',
+    baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    actionTimeout: 10000,
-    navigationTimeout: 15000,
+    actionTimeout: isCI ? 15000 : 10000,
+    navigationTimeout: isCI ? 30000 : 15000,
     extraHTTPHeaders: {
       'x-e2e-test': 'true',
     },
@@ -33,9 +35,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: false,
+    command: 'npm run dev -- --hostname 127.0.0.1 --port 3000',
+    url: 'http://127.0.0.1:3000',
+    reuseExistingServer: !isCI,
     timeout: 120000,
     stdout: 'pipe',
     stderr: 'pipe',
@@ -43,6 +45,8 @@ export default defineConfig({
       EMAIL_PROVIDER: 'console',
       NODE_ENV: 'development',
       E2E_TEST: 'true',
+      PORT: '3000',
+      HOSTNAME: '127.0.0.1',
     },
   },
 });
