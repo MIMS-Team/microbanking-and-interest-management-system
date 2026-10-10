@@ -18,6 +18,25 @@ export interface Branch {
   openedDate: string;
 }
 
+//Branch ID and Name
+export interface BranchOption {
+  id: string;
+  name: string;
+};
+
+export interface RoleOption {
+  id: string;
+  title: string;
+}
+
+export interface EmployeeRecord extends Omit<Employee, 'role'> {
+  username: string;
+  roleId: string;
+  role: string;
+  secondaryOtpRoles: Array<'BM' | 'HRM'>;
+}
+
+
 // Staff and employee account entity
 export interface Employee {
   id: string;

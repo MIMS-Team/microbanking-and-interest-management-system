@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getBranches, createBranch, updateBranch, toggleBranchStatus } from '@/services/branchService';
+import { getBranches, createBranch, updateBranch, toggleBranchStatus, getBranchName } from '@/services/branchService';
 
 // GET /api/branches — fetch paginated branch list with optional search
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
+
+  //take only name and ID
+  if (searchParams.get('type') === 'names') {
+    const result = await getBranchName();
+    return NextResponse.json(result);
+  }
+
+  //take every branch detail
   const page = Number(searchParams.get('page')) || 1;
   const pageSize = Number(searchParams.get('pageSize')) || 5;
   const search = searchParams.get('search') || '';

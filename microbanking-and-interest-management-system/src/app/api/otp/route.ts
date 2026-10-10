@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createOtp } from '@/services/otpService';
 import type { OtpPurpose } from '@/services/otpService';
 
-// Valid OTP purpose codes for branch management operations
-const otpPurposes: OtpPurpose[] = ['BC', 'BU', 'BT'];
+// Valid OTP purpose codes for administrative operations
+const otpPurposes: OtpPurpose[] = ['BC', 'BU', 'BT', 'EC', 'EU', 'ET'];
 
 // POST /api/otp — generate and send an OTP
 export async function POST(request: NextRequest) {
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     // Handle unexpected server errors
-    console.error('Error generating branch OTP:', error);
+    console.error('Error generating administrative OTP:', error);
 
     return NextResponse.json(
       {

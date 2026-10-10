@@ -8,7 +8,10 @@ import { sendOtpEmail } from "./emailService";
 export type OtpPurpose =
   | 'BC'          //create branch
   | 'BU'          //update branch
-  | 'BT';         // toggle branch status
+  | 'BT'          // toggle branch status
+  | 'EC'        // create employee
+  | 'EU'        // update employee
+  | 'ET';       // toggle employee status
 
 // Get the OTP sender role using the purpose
 function getOtpSenderRole(purpose: OtpPurpose): string | null {
@@ -16,6 +19,10 @@ function getOtpSenderRole(purpose: OtpPurpose): string | null {
     case 'BC':
     case 'BU':
     case 'BT':
+      return 'BM';
+    case 'EC':
+    case 'EU':
+    case 'ET':
       return 'HRM';
     default:
       return null;
@@ -164,7 +171,7 @@ export async function validateOtp(
   try {
     // Find the OTP belonging to the specified employee
     const result = await sql`
-      SELECT otp_id, employee_id, otp_hash, purpose, is_success, expires_at
+      SELECT otp_hash
       FROM otpe
       WHERE otp_id = ${otpId}
         AND employee_id = ${employeeId}

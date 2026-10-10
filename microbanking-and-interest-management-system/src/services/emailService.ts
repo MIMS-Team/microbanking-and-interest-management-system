@@ -19,6 +19,17 @@ function decodePurpose(purpose: string, details?: string): string {
       return "Toggle Branch Operational Status";
     }
 
+    case "EC":
+      return "Create Employee";
+
+    case "EU":
+      return "Update Employee";
+
+    case "ET":
+      if (details && /suspend/i.test(details)) return "Suspend Employee";
+      if (details && /reactivate/i.test(details)) return "Reactivate Employee";
+      return "Toggle Employee Status";
+
     default:
       return "Administrative Operation";
   }
@@ -168,12 +179,12 @@ export async function sendOtpEmail(
       success: true,
       message: "Email sent successfully.",
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Email service error:", error);
 
     return {
       success: false,
-      message: error?.message || "Failed to send email.",
+      message: error instanceof Error ? error.message : "Failed to send email.",
     };
   }
 }

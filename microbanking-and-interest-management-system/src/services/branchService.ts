@@ -4,6 +4,22 @@ import { Branch } from '@/types';
 import sql from '@/lib/db';
 import { validateOtp } from '@/services/otpService';
 
+
+//to get branch names with ID
+
+export async function getBranchName(){
+
+
+  const rows = await sql`SELECT branch_id, name FROM branch ORDER BY branch_id `;
+
+  const branches = rows.map((row) => ({ id: String(row.branch_id), name: String(row.name), }));
+
+  return { branches };
+
+}
+
+
+
 // Retrieve paginated branch records from the database with optional search filtering
 export async function getBranches(
   page: number,
@@ -36,11 +52,11 @@ export async function getBranches(
   const branches: Branch[] = rows.map((row) => {
     const openedDateValue = row.opened_date;
     const openedDate = openedDateValue instanceof Date
-      ? openedDateValue.toISOString()
-      : typeof openedDateValue === 'string' || typeof openedDateValue === 'number'
-        ? new Date(openedDateValue).toISOString()
-        : '';
-
+    ? openedDateValue.toISOString().split('T')[0]
+    : typeof openedDateValue === 'string'
+      ? openedDateValue.split('T')[0]
+      : '';
+      
     return {
       id: String(row.branch_id ?? ''),
       name: typeof row.name === 'string' ? row.name : '',
