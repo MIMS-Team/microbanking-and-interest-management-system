@@ -1,9 +1,9 @@
 # Five-person exclusive file ownership
 
-This is the canonical division for the MIMS project. The repository currently has
-84 project files. Every path below appears exactly once: one person edits, stages
-and commits it; the other four may review it but must not change it on their own
-branches.
+This document records the original 84-file allocation and module responsibilities.
+Uploaded contributions also use the paths listed in [the current structure guide](../PROJECT_STRUCTURE.md).
+The paths below are the original implementation plan, not a claim that every file is uploaded.
+Keep one editor per physical file and request changes from its owner.
 
 | Person | Main ownership | Branch | Files |
 | --- | --- | --- | ---: |
@@ -11,7 +11,7 @@ branches.
 | 2 | Customer management and shared form UI | `person-2/customer-management` | 10 |
 | 3 | Savings accounts and fixed deposits | `person-3/savings-fixed-deposits` | 8 |
 | 4 | Transactions and interest | `person-4/transactions-interest` | 14 |
-| 5 | Manager/admin, approvals, branches, reports and integration | `person-5/admin-reports-branch` | 32 |
+| 5 | Manager/admin, approvals, branches, reports and integration | `person5/admin-reports-branch` | 32 |
 
 The number of files is not a workload score. Persons 3 and 4 own fewer but more
 SQL- and finance-heavy files. Person 5 has more small integration and documentation

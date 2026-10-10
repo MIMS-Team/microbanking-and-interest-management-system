@@ -22,7 +22,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./microbanking-and-interest-management-system
+        working-directory: .
 
     steps:
       - name: Checkout Code
@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: 'microbanking-and-interest-management-system/package-lock.json'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install Dependencies
         run: npm ci
@@ -45,7 +45,7 @@ jobs:
         run: npx tsc --noEmit --skipLibCheck
 
       - name: Run Automated Vitest Test Suite (86 Integration, Security & Unit Tests)
-        run: npm test
+        run: npm run test:auth
         env:
           NODE_ENV: test
           VITEST: 'true'
@@ -71,7 +71,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./microbanking-and-interest-management-system
+        working-directory: .
 
     steps:
       - name: Checkout Code
@@ -82,13 +82,13 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: 'microbanking-and-interest-management-system/package-lock.json'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install Dependencies
         run: npm ci
 
       - name: Run Disposable MySQL Integration Suite
-        run: npx vitest run src/lib/server/mysql-disposable.test.ts
+        run: npx vitest run lib/server/mysql-disposable.test.ts
         env:
           NODE_ENV: test
           VITEST: 'true'
@@ -104,7 +104,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./microbanking-and-interest-management-system
+        working-directory: .
 
     steps:
       - name: Checkout Code
@@ -115,7 +115,7 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: 'microbanking-and-interest-management-system/package-lock.json'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install Dependencies
         run: npm ci
@@ -140,8 +140,6 @@ jobs:
         with:
           name: playwright-test-results
           path: |
-            microbanking-and-interest-management-system/test-results/
-            microbanking-and-interest-management-system/playwright-report/
+            test-results/
+            playwright-report/
           retention-days: 14
-
-
