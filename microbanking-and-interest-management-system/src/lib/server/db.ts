@@ -101,6 +101,7 @@ export interface CreateOtpData {
   max_attempts?: number;
   expires_at: Date;
   metadata?: Record<string, unknown> | null;
+  invalidatePrevious?: boolean;
 }
 
 export interface AuditAttemptData {
@@ -660,11 +661,13 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
     const pool = getMySqlPool();
     const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
 
-    // Invalidate earlier unconsumed OTPs for same employee and purpose
-    await pool.execute(
-      `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND purpose = ? AND consumed_at IS NULL`,
-      [data.employee_id, data.purpose]
-    );
+    // Invalidate earlier unconsumed OTPs for same employee and purpose only if requested
+    if (data.invalidatePrevious !== false) {
+      await pool.execute(
+        `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND purpose = ? AND consumed_at IS NULL`,
+        [data.employee_id, data.purpose]
+      );
+    }
 
     await pool.execute(
       `INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, created_at)
@@ -685,11 +688,13 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
 
   const db = getSqliteDb();
   const nowIso = new Date().toISOString();
-  db.prepare(`
-    UPDATE otp_challenges
-    SET consumed_at = ?
-    WHERE employee_id = ? AND purpose = ? AND consumed_at IS NULL
-  `).run(nowIso, data.employee_id, data.purpose);
+  if (data.invalidatePrevious !== false) {
+    db.prepare(`
+      UPDATE otp_challenges
+      SET consumed_at = ?
+      WHERE employee_id = ? AND purpose = ? AND consumed_at IS NULL
+    `).run(nowIso, data.employee_id, data.purpose);
+  }
 
   db.prepare(`
     INSERT INTO otp_challenges (id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, metadata, created_at)
@@ -795,6 +800,18 @@ export async function consumeOtpChallenge(id: string): Promise<boolean> {
     WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts
   `).run(new Date().toISOString(), id);
   return result.changes > 0;
+}
+
+export async function deleteOtpChallenge(id: string): Promise<void> {
+  const adapter = getActiveDbAdapterName();
+  if (adapter === 'mysql') {
+    const pool = getMySqlPool();
+    await pool.execute('DELETE FROM otp_challenges WHERE id = ?', [id]);
+    return;
+  }
+
+  const db = getSqliteDb();
+  db.prepare('DELETE FROM otp_challenges WHERE id = ?').run(id);
 }
 
 export async function createSession(data: CreateSessionData): Promise<void> {
@@ -1621,3 +1638,112 @@ export async function getAuditLogsForTest(
     created_at: toIso(r.created_at),
   }));
 }
+
+/**
+ * Reusable helper to execute production MySQL DDL schema.
+ * Shared between migration script and MySQL integration test suite.
+ */
+export async function applyMySqlSchema(connOrPool: { execute: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
+  await connOrPool.execute(`
+    CREATE TABLE IF NOT EXISTS \`branches\` (
+      \`id\` INT NOT NULL AUTO_INCREMENT,
+      \`code\` VARCHAR(12) NOT NULL,
+      \`name\` VARCHAR(100) NOT NULL,
+      \`address\` TEXT DEFAULT NULL,
+      \`phone\` VARCHAR(12) DEFAULT NULL,
+      \`email\` VARCHAR(254) DEFAULT NULL,
+      \`status\` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (\`id\`),
+      UNIQUE KEY \`code\` (\`code\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await connOrPool.execute(`
+    CREATE TABLE IF NOT EXISTS \`staff\` (
+      \`id\` INT NOT NULL AUTO_INCREMENT,
+      \`full_name\` VARCHAR(120) NOT NULL,
+      \`email\` VARCHAR(254) NOT NULL,
+      \`password_hash\` TEXT NOT NULL,
+      \`role\` ENUM('admin', 'higher_manager', 'manager', 'agent') NOT NULL,
+      \`branch_id\` INT DEFAULT NULL,
+      \`status\` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (\`id\`),
+      UNIQUE KEY \`email\` (\`email\`),
+      KEY \`branch_id\` (\`branch_id\`),
+      CONSTRAINT \`staff_ibfk_branch\` FOREIGN KEY (\`branch_id\`) REFERENCES \`branches\` (\`id\`) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await connOrPool.execute(`
+    CREATE TABLE IF NOT EXISTS \`staff_authentication\` (
+      \`employee_id\` INT NOT NULL,
+      \`password_hash\` TEXT NOT NULL,
+      \`failed_attempts\` INT NOT NULL DEFAULT 0,
+      \`locked_until\` TIMESTAMP NULL DEFAULT NULL,
+      \`last_login_at\` TIMESTAMP NULL DEFAULT NULL,
+      \`updated_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (\`employee_id\`),
+      CONSTRAINT \`fk_staff_auth_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await connOrPool.execute(`
+    CREATE TABLE IF NOT EXISTS \`employee_sessions\` (
+      \`token_hash\` VARCHAR(64) NOT NULL,
+      \`employee_id\` INT NOT NULL,
+      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      \`last_activity_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      \`expires_at\` TIMESTAMP NOT NULL,
+      \`revoked_at\` TIMESTAMP NULL DEFAULT NULL,
+      \`ip_address\` VARCHAR(45) DEFAULT NULL,
+      \`user_agent\` TEXT DEFAULT NULL,
+      PRIMARY KEY (\`token_hash\`),
+      KEY \`idx_sessions_employee\` (\`employee_id\`),
+      KEY \`idx_sessions_expires_at\` (\`expires_at\`),
+      CONSTRAINT \`fk_sessions_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await connOrPool.execute(`
+    CREATE TABLE IF NOT EXISTS \`otp_challenges\` (
+      \`id\` VARCHAR(64) NOT NULL,
+      \`employee_id\` INT NOT NULL,
+      \`purpose\` ENUM('login', 'password_reset', 'employee_creation', 'employee_deactivation') NOT NULL,
+      \`code_hash\` VARCHAR(128) NOT NULL,
+      \`attempts\` INT NOT NULL DEFAULT 0,
+      \`max_attempts\` INT NOT NULL DEFAULT 5,
+      \`expires_at\` TIMESTAMP NOT NULL,
+      \`consumed_at\` TIMESTAMP NULL DEFAULT NULL,
+      \`metadata\` JSON DEFAULT NULL,
+      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (\`id\`),
+      KEY \`idx_otp_employee_purpose\` (\`employee_id\`, \`purpose\`, \`created_at\`),
+      CONSTRAINT \`fk_otp_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await connOrPool.execute(`
+    CREATE TABLE IF NOT EXISTS \`authentication_audit\` (
+      \`id\` BIGINT NOT NULL AUTO_INCREMENT,
+      \`employee_id\` INT DEFAULT NULL,
+      \`email\` VARCHAR(254) NOT NULL,
+      \`event_type\` VARCHAR(50) NOT NULL,
+      \`ip_address\` VARCHAR(45) DEFAULT NULL,
+      \`user_agent\` TEXT DEFAULT NULL,
+      \`details\` JSON DEFAULT NULL,
+      \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (\`id\`),
+      KEY \`idx_audit_email\` (\`email\`, \`created_at\`),
+      KEY \`idx_audit_employee\` (\`employee_id\`, \`created_at\`),
+      KEY \`idx_audit_event\` (\`event_type\`, \`created_at\`),
+      CONSTRAINT \`fk_audit_employee\` FOREIGN KEY (\`employee_id\`) REFERENCES \`staff\` (\`id\`) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await connOrPool.execute(`
+    INSERT IGNORE INTO \`branches\` (\`id\`, \`code\`, \`name\`) VALUES (1, 'COL-CEN', 'Colombo Central');
+  `);
+}
+

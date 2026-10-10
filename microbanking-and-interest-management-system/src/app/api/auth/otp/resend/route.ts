@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
       {
         success: true,
         challengeId: result.challengeId,
+        expiresAt: result.expiresAt,
         message: 'A fresh verification code has been dispatched. Previous code has been invalidated.',
         cooldownSeconds: result.cooldownSeconds,
       },
