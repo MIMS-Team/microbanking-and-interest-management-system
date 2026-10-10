@@ -42,6 +42,7 @@ export async function disposableDatabase() {
     created = true;
     await connection.changeUser({ database: name });
     await migrateAuthTables(connection, { importSqlite: false });
+    await connection.query("INSERT INTO branches(id,code,name) VALUES(1,'BROWSER','Fictional browser branch')");
     const salt = randomBytes(16).toString('hex');
     const hash = `${salt}:${scryptSync('ProductionFixture!2026', salt, 64).toString('hex')}`;
     const [row] = await connection.execute(
