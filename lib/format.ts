@@ -1,7 +1,16 @@
 import type { Money } from './types';
 
 export function money(value: Money | null | undefined): string {
-  return new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', minimumFractionDigits: 2 }).format(Number(value ?? 0));
+  const text=String(value??'0');
+  if(!/^-?[0-9]+(?:\.[0-9]{1,2})?$/.test(text))return '—';
+  const [whole,fraction='']=text.split('.'),integer=BigInt(whole);
+  const parts=new Intl.NumberFormat('en-LK',{style:'currency',currency:'LKR',minimumFractionDigits:2}).formatToParts(integer);
+  const result=parts.map(part=>part.type==='fraction'?fraction.padEnd(2,'0'):part.value).join('');
+  return text.startsWith('-')&&integer===BigInt(0)?'-'+result:result;
+}
+export function addMoney(...values:Money[]):string{
+  let total=BigInt(0);for(const value of values){const text=String(value),[whole,fraction='']=text.replace('-','').split('.');if(!/^-?\d+(?:\.\d{1,2})?$/.test(text))throw new Error('Invalid decimal balance.');const units=BigInt(whole)*BigInt(100)+BigInt(fraction.padEnd(2,'0'));total+=text.startsWith('-')?-units:units;}
+  const negative=total<BigInt(0),absolute=negative?-total:total;return `${negative?'-':''}${absolute/BigInt(100)}.${String(absolute%BigInt(100)).padStart(2,'0')}`;
 }
 export function number(value: number | string): string { return new Intl.NumberFormat('en-LK').format(Number(value)); }
 /** Forms and reports follow the bank's calendar, even on a computer abroad. */
@@ -10,7 +19,8 @@ export function businessDate(): string {
 }
 export function date(value: string | null | undefined): string {
   if (!value) return '—';
-  const parsed = new Date(value);
+  const utc=/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(value)&&!/(Z|[+-]\d{2}:?\d{2})$/.test(value)?value.replace(' ','T')+'Z':value;
+  const parsed = new Date(utc);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', year: 'numeric' });
 }
 export function label(value: string): string { return value.replaceAll('_', ' ').replaceAll('.', ' · ').replace(/\b\w/g, (letter) => letter.toUpperCase()); }

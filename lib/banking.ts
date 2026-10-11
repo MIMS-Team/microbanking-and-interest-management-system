@@ -6,6 +6,7 @@ import type { Staff } from './types';
 import { BusinessError, requiredText } from './validation';
 import { requirePermission, actionPermission } from './permissions';
 import { first } from './banking/shared';
+import { actionReceipt } from './banking/action-receipt';
 import type { Input } from './banking/shared';
 import { createCustomer, updateCustomer, customerStatus } from './banking/customers';
 import { createAccount, updateAccount, closeAccount, accountStatus, createFixedDeposit, closeFixedDeposit } from './banking/accounts';
@@ -30,8 +31,10 @@ export async function performAction(sessionUser: Staff, input: Input, jobClaim?:
         if(guard.rows.length!==1) throw new BusinessError('Administrator database guard is missing; apply the reviewed migrations.',409);
       }
       // Authorization is rechecked inside the same transaction as every write.
-      const user = await first<Staff>(tx,'SELECT id,full_name,email,role,branch_id,status FROM staff WHERE id=$1 AND status=\'active\' FOR SHARE',[sessionUser.id]);
+      const user = await first<Staff>(tx,'SELECT id,full_name,email,role,branch_id,status FROM staff WHERE id=$1 AND status=\'active\' AND must_change_password=0 FOR SHARE',[sessionUser.id]);
       await requirePermission(tx,user.id,actionPermission[action]??'unknown');
+      const receipt=await actionReceipt(tx,user.id,input);
+      if(receipt?.result)return receipt.result;
       const result=await (async()=>{switch (action) {
         case 'customer.create': return createCustomer(tx,user,input);
         case 'customer.update': return updateCustomer(tx,user,input);
@@ -56,6 +59,7 @@ export async function performAction(sessionUser: Staff, input: Input, jobClaim?:
         default: throw new BusinessError('Unknown action.');
       }})();
       if(jobClaim) await fenceJob(tx,jobClaim);
+      if(receipt)await tx.query('UPDATE action_receipts SET result=$1 WHERE actor_id=$2 AND operation_key=$3',[JSON.stringify(result),user.id,receipt.key]);
       return result;
     });
   } catch (error) {

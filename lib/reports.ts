@@ -1,3 +1,4 @@
+import {fdPeriods,nextFdPayout} from './banking/fd-payout';
 import { requirePermission } from './permissions';
 import { getDb } from "./db";
 import type { Staff } from "./types";
@@ -68,12 +69,8 @@ export async function getReport(user: Staff, type: string, from: string, to: str
       title: "Active fixed deposits and next payouts",
       columns: ["fixed_deposit", "savings_account", "owners", "principal", "annual_rate", "next_payout", "maturity_date"],
       note: "Shows currently active deposits whose term overlaps the selected dates. Next payout is the earliest unpaid calendar-month interest date, capped at principal maturity; an overdue date means processing is due.",
-      sql: `WITH RECURSIVE periods AS (
-        SELECT id,CAST(DATE_FORMAT(opened_at+INTERVAL 330 MINUTE,'%Y-%m-01') AS DATE) AS starts,maturity_date FROM fixed_deposits WHERE status='active'
-        UNION ALL SELECT id,DATE_ADD(starts,INTERVAL 1 MONTH),maturity_date FROM periods WHERE DATE_ADD(starts,INTERVAL 1 MONTH)<maturity_date)
-        SELECT f.fd_number AS fixed_deposit,a.account_number AS savings_account,a.owner_names AS owners,f.principal,f.annual_rate,
-        DATE_FORMAT(COALESCE((SELECT MIN(LEAST(DATE_ADD(p.starts,INTERVAL 1 MONTH),p.maturity_date)) FROM periods p WHERE p.id=f.id
-          AND NOT EXISTS(SELECT 1 FROM interest_credits ic WHERE ic.fixed_deposit_id=f.id AND ic.period=DATE_FORMAT(p.starts,'%Y-%m'))),f.maturity_date),'%Y-%m-%d') AS next_payout,
+      sql: `${fdPeriods('AND ($1 IS NULL OR a.branch_id=$1)')} SELECT f.fd_number AS fixed_deposit,a.account_number AS savings_account,a.owner_names AS owners,f.principal,f.annual_rate,
+        ${nextFdPayout} AS next_payout,
         DATE_FORMAT(f.maturity_date,'%Y-%m-%d') AS maturity_date FROM fixed_deposits f JOIN account_summary a ON a.id=f.source_account_id
         WHERE f.status='active' AND ($1 IS NULL OR a.branch_id=$1) AND f.maturity_date >= $2
           AND f.opened_at<CAST($3 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE ORDER BY f.maturity_date`,

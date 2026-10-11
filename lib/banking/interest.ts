@@ -26,13 +26,19 @@ export async function updateRate(tx:Queryable,user:Staff,input:Input) {
   const id=positiveId(input.id); const rate=String(input.annual_rate??'');
   if(!/^\d{1,3}(\.\d{1,3})?$/.test(rate)||Number(rate)>100) throw new BusinessError('Annual rate must be between 0 and 100 with at most three decimal places.');
   const current=await first<RateRow>(tx,'SELECT * FROM rates WHERE id=$1 FOR UPDATE',[id]);
+  let effectiveDate:string|undefined;
+  if(input.effective_date!==undefined){
+    effectiveDate=String(input.effective_date);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||Number.isNaN(Date.parse(effectiveDate+'T00:00:00Z'))||new Date(effectiveDate+'T00:00:00Z').toISOString().slice(0,10)!==effectiveDate)throw new BusinessError('Use a valid future rate date.');
+    const check=await first<{valid:number}>(tx,'SELECT $1>DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE) AS valid',[effectiveDate]);if(!check.valid)throw new BusinessError('A scheduled rate must start on a future Colombo date.');
+  }
   const retained=input.minimum_balance===undefined?current.minimum_balance:money(input.minimum_balance,'Minimum retained balance',true);
   const deposit=input.minimum_deposit===undefined?current.minimum_deposit:money(input.minimum_deposit,'Minimum deposit',true);
   await tx.query('UPDATE rates SET minimum_balance=$1,minimum_deposit=$2 WHERE id=$3',[retained,deposit,id]);
   await tx.query(`INSERT INTO rate_history(rate_id,annual_rate,effective_at,changed_by)
-    VALUES($1,$2,DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE)+INTERVAL 1 DAY-INTERVAL 330 MINUTE,$3)`,[id,rate,user.id]);
+    VALUES($1,$2,COALESCE($4,DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE)+INTERVAL 1 DAY)-INTERVAL 330 MINUTE,$3)`,[id,rate,user.id,effectiveDate??null]);
   await audit(tx,user,'rate.updated','rate',id,null,{previous_rate:await effectiveRate(tx,id),annual_rate:rate});
-  return {message:'Rate updated for tomorrow. Existing FDs retain their contracted rate.'};
+  return {message:`Rate scheduled for ${effectiveDate||'tomorrow'}. Product minimum settings apply to new contracts now; existing FDs retain their contracted rate.`};
 }
 export async function recordDailyAccruals(tx:Queryable,throughDate:string,branchId:number|null,accountId:number|null=null):Promise<number> {
   requireInterestPolicy();
