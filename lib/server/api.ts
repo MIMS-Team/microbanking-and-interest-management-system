@@ -12,6 +12,9 @@ import {
 } from './rate-limit';
 import { OtpDeliveryError } from './email';
 import { hasOwnedE2eEnvironment } from '../../scripts/e2e-environment.mjs';
+import { getActiveDbAdapterName, getMySqlPool } from './db';
+import { sharedRateLimit } from './shared-rate-limit';
+import { isIP } from 'node:net';
 
 export class ApiError extends Error {
   constructor(message: string, public status = 400, public code = 'API_ERROR') {
@@ -82,8 +85,9 @@ export function jsonError(error: unknown): NextResponse {
       {
         error: sanitizeErrorMessage(error.message),
         code,
+        ...(error.retryAfter?{retryAfter:error.retryAfter}:{}),
       },
-      { status: error.status, headers: NO_CACHE_HEADERS }
+      { status: error.status, headers: {...NO_CACHE_HEADERS,...(error.retryAfter?{'Retry-After':String(error.retryAfter)}:{})} }
     );
   }
   if (error instanceof ApiError) {
@@ -120,13 +124,24 @@ export function enforceRateLimit(
   request: Request | NextRequest,
   action: keyof typeof RATE_LIMIT_CONFIGS,
   identifier?: string
-): void {
+): void | Promise<void> {
   const baseConfig = RATE_LIMIT_CONFIGS[action];
   const config = action !== 'OTP_RESEND' && process.env.MIMS_E2E_RELAX_RATE_LIMITS === 'true' && hasOwnedE2eEnvironment()
     ? { maxAttempts: 500, windowMs: baseConfig.windowMs }
     : baseConfig;
 
   const ip = getClientIp(request) ?? '127.0.0.1';
+
+  if (getActiveDbAdapterName() === 'mysql') {
+    const keys = [`${action}:ip:${ip}`];
+    if (identifier?.trim()) keys.push(`${action}:id:${identifier.trim().toLowerCase()}`);
+    return Promise.resolve().then(()=>sharedRateLimit(getMySqlPool(), keys, config.maxAttempts, config.windowMs)).then(result => {
+      if (!result.allowed) throw new RateLimitError(undefined, result.resetInSeconds);
+    }).catch(error => {
+      if (error instanceof RateLimitError) throw error;
+      throw new ApiError('Authentication protection is temporarily unavailable. Please retry later.', 503, 'LIMITER_UNAVAILABLE');
+    });
+  }
 
   // 1. IP-based sliding window rate limit
   const ipCheck = checkRateLimit(`${action}:ip:${ip}`, config.maxAttempts, config.windowMs);
@@ -283,10 +298,11 @@ export function getClientIp(request: Request | NextRequest): string | null {
   if (trustProxy) {
     const forwarded = request.headers.get('x-forwarded-for');
     if (forwarded) {
-      return forwarded.split(',')[0].trim();
+      const candidate=forwarded.split(',')[0].trim();
+      return isIP(candidate)?candidate:'127.0.0.1';
     }
     const realIp = request.headers.get('x-real-ip');
-    if (realIp) return realIp.trim();
+    if (realIp) return isIP(realIp.trim())?realIp.trim():'127.0.0.1';
   }
 
   // Without a trusted proxy, keep unverified requests in the same IP bucket.

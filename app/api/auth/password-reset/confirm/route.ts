@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     const { challengeId, code, newPassword } = validatePasswordResetConfirmPayload(rawBody);
 
     // Enforce rate limiting per IP and per reset challenge ID
-    enforceRateLimit(request, 'PASSWORD_RESET_CONFIRM', challengeId);
+    await enforceRateLimit(request, 'PASSWORD_RESET_CONFIRM', challengeId);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

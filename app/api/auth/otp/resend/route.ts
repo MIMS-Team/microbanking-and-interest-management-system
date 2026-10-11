@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Enforce rate limiting / cooldown per IP and challenge ID
-    enforceRateLimit(request, 'OTP_RESEND', challengeId);
+    await enforceRateLimit(request, 'OTP_RESEND', challengeId);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

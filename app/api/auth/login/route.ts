@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     const { email, password } = validateLoginPayload(rawBody);
 
     // Enforce rate limit per IP and per target email
-    enforceRateLimit(request, 'LOGIN', email);
+    await enforceRateLimit(request, 'LOGIN', email);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

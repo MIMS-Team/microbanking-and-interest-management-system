@@ -168,8 +168,8 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
       });
 
       return { success: true, provider: 'smtp' };
-    } catch (error) {
-      console.error('[EMAIL-SMTP-ERROR]', error instanceof Error ? error.message : error);
+    } catch {
+      console.error('[EMAIL-SMTP-ERROR] Verification delivery failed.');
       throw new OtpDeliveryError(
         'Failed to deliver verification email via SMTP server. Please try again later.',
         502,

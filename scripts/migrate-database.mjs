@@ -10,10 +10,10 @@ export function statements(sql) {
   return sql.includes('-- statement-break') ? sql.split('-- statement-break').map(s=>s.trim()).filter(Boolean)
     : sql.split(/;\s*(?:\r?\n|$)/).map(s=>s.trim()).filter(Boolean);
 }
-const files = ['001-auth.sql', '002-banking.sql', '003-integrity.sql', '004-security.sql', '005-rate-corrections.sql', '006-durable-jobs.sql'];
+const files = ['001-auth.sql', '002-banking.sql', '003-integrity.sql', '004-security.sql', '005-rate-corrections.sql', '006-durable-jobs.sql', '007-workspace.sql', '008-employee-delivery.sql', '009-operations.sql', '010-export-verification.sql', '011-pending-invitations.sql'];
 /** @param {import('mysql2/promise').Connection} connection
  * @param {{openingBalanceActorId?: number|null, throughVersion?:string}} options */
-export async function migrateDatabase(connection, {openingBalanceActorId=null,throughVersion='006-durable-jobs.sql'}={}) {
+export async function migrateDatabase(connection, {openingBalanceActorId=null,throughVersion='011-pending-invitations.sql'}={}) {
   const target=files.indexOf(throughVersion);
   if(target<0) throw new Error('Unknown migration target version.');
   await connection.query("SET time_zone = '+00:00'");

@@ -37,6 +37,7 @@ export interface PublicEmployee {
   branch_id: number | null;
   status: EmployeeStatus;
   created_at: string;
+  onboarding_required?:boolean;
 }
 
 export interface EmployeeWithAuth extends PublicEmployee {
@@ -49,7 +50,7 @@ export interface EmployeeWithAuth extends PublicEmployee {
 }
 
 export class AuthError extends Error {
-  constructor(message: string, public status = 400, public code = 'AUTH_ERROR') {
+  constructor(message: string, public status = 400, public code = 'AUTH_ERROR',public retryAfter?:number) {
     super(message);
     this.name = 'AuthError';
   }
@@ -144,6 +145,7 @@ export function setDbAdapterForTest(adapter: 'mysql' | 'sqlite' | null): void {
 
 export function getActiveDbAdapterName(): 'mysql' | 'sqlite' {
   if (testAdapterOverride) return testAdapterOverride;
+  if(process.env.NODE_ENV==='production'&&process.env.MIMS_AUTH_DB_ADAPTER==='sqlite')throw new AuthError('Production requires the canonical MySQL authentication database.',503,'DB_CONFIG_INVALID');
   if (process.env.MIMS_AUTH_DB_ADAPTER === 'mysql') return 'mysql';
   if (process.env.MIMS_AUTH_DB_ADAPTER === 'sqlite') return 'sqlite';
   if (process.env.NODE_ENV === 'production') return 'mysql';
@@ -326,6 +328,13 @@ export function getSqliteDb(): DatabaseSync {
   const staffColumns=db.prepare('PRAGMA table_info(staff)').all() as Array<{name:string}>;
   if(!staffColumns.some(c=>c.name==='must_change_password')) db.exec('ALTER TABLE staff ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
   if(!staffColumns.some(c=>c.name==='temporary_password_expires_at')) db.exec('ALTER TABLE staff ADD COLUMN temporary_password_expires_at TEXT');
+  db.exec(`CREATE TABLE IF NOT EXISTS employee_invitations(token_hash TEXT PRIMARY KEY,employee_id INTEGER NOT NULL REFERENCES staff(id),purpose TEXT NOT NULL,binding_hash TEXT NOT NULL,expires_at TEXT NOT NULL,consumed_at TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS employee_notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,employee_id INTEGER NOT NULL REFERENCES staff(id),kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,owner TEXT,available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,lease_until TEXT,delivered_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,error_code TEXT);`);
+  const versionColumns=db.prepare('PRAGMA table_info(staff)').all() as Array<{name:string}>;
+  if(!versionColumns.some(c=>c.name==='version'))db.exec('ALTER TABLE staff ADD COLUMN version INTEGER NOT NULL DEFAULT 0');
+  db.exec(`CREATE TRIGGER IF NOT EXISTS invitation_account_version AFTER UPDATE ON staff WHEN OLD.email IS NOT NEW.email OR OLD.full_name IS NOT NEW.full_name OR OLD.role IS NOT NEW.role OR OLD.branch_id IS NOT NEW.branch_id OR OLD.status IS NOT NEW.status OR OLD.password_hash IS NOT NEW.password_hash OR OLD.must_change_password IS NOT NEW.must_change_password BEGIN UPDATE staff SET version=OLD.version+1 WHERE id=NEW.id; END;`);
+  const invitationColumns=db.prepare('PRAGMA table_info(employee_invitations)').all() as Array<{name:string}>;
+  if(!invitationColumns.some(c=>c.name==='is_pending'))db.exec('ALTER TABLE employee_invitations ADD COLUMN is_pending INTEGER NOT NULL DEFAULT 0');
   sqliteDbInstance = db;
   return db;
 }
@@ -395,6 +404,7 @@ export async function runInTransaction<T>(
 // ---------------------------------------------------------
 
 export async function resetDatabase(): Promise<void> {
+  if(process.env.NODE_ENV!=='test'&&process.env.VITEST!=='true')throw new AuthError('Database reset is restricted to isolated test fixtures.',403);
   const adapter = getActiveDbAdapterName();
   if (adapter === 'mysql') {
     const pool = getMySqlPool();
@@ -403,6 +413,8 @@ export async function resetDatabase(): Promise<void> {
     await pool.execute('DELETE FROM otp_resend_reservations');
     await pool.execute('DELETE FROM otp_challenges');
     await pool.execute('DELETE FROM staff_authentication');
+    await pool.execute('DELETE FROM employee_notifications');
+    await pool.execute('DELETE FROM employee_invitations');
     await pool.execute('DELETE FROM staff');
     return;
   }
@@ -414,6 +426,8 @@ export async function resetDatabase(): Promise<void> {
     DELETE FROM otp_resend_reservations;
     DELETE FROM otp_challenges;
     DELETE FROM staff_authentication;
+    DELETE FROM employee_notifications;
+    DELETE FROM employee_invitations;
     DELETE FROM staff;
   `);
 }
@@ -953,7 +967,7 @@ export async function acquireOtpResendReservation(
       const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
       if (elapsedSeconds < 30) {
         const wait = 30 - elapsedSeconds;
-        throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
+        throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE',wait);
       }
 
       // 2. Lock and inspect existing reservation
@@ -977,7 +991,7 @@ export async function acquireOtpResendReservation(
       if (existing) {
         const leaseUntilMs = parseDateSafe(String(existing.lease_expires_at)).getTime();
         if (leaseUntilMs > Date.now()) {
-          throw new AuthError('A verification resend is currently in progress. Please wait before retrying.', 429, 'CONCURRENT_RESEND_IN_PROGRESS');
+          throw new AuthError('A verification resend is currently in progress. Please wait before retrying.', 429, 'CONCURRENT_RESEND_IN_PROGRESS',Math.max(1,Math.ceil((leaseUntilMs-Date.now())/1000)));
         }
         // Abandoned lease recovery: clean up stale pending challenge
         await conn.execute(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`, [existing.replacement_id]);
@@ -1059,7 +1073,7 @@ export async function acquireOtpResendReservation(
     const elapsedSeconds = Math.floor((Date.now() - createdAtMs) / 1000);
     if (elapsedSeconds < 30) {
       const wait = 30 - elapsedSeconds;
-      throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE');
+      throw new AuthError(`Please wait ${wait} seconds before requesting a new code.`, 429, 'COOLDOWN_ACTIVE',wait);
     }
 
     const existing = db.prepare(`
@@ -1079,7 +1093,7 @@ export async function acquireOtpResendReservation(
     if (existing) {
       const leaseUntilMs = parseDateSafe(String(existing.lease_expires_at)).getTime();
       if (leaseUntilMs > Date.now()) {
-        throw new AuthError('A verification resend is currently in progress. Please wait before retrying.', 429, 'CONCURRENT_RESEND_IN_PROGRESS');
+        throw new AuthError('A verification resend is currently in progress. Please wait before retrying.', 429, 'CONCURRENT_RESEND_IN_PROGRESS',Math.max(1,Math.ceil((leaseUntilMs-Date.now())/1000)));
       }
       db.prepare(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`).run(existing.replacement_id);
       db.prepare(`
@@ -1281,7 +1295,8 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
     const pool = getMySqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT s.token_hash, s.employee_id, s.created_at, s.last_activity_at, s.expires_at, s.revoked_at, s.ip_address, s.user_agent,
-              e.id, e.full_name, e.email, e.role, e.branch_id, e.status, e.created_at as emp_created_at
+              e.id, e.full_name, e.email, e.role, e.branch_id, e.status, e.created_at as emp_created_at,
+              (e.must_change_password=1 OR (e.temporary_password_expires_at IS NOT NULL AND e.temporary_password_expires_at<=UTC_TIMESTAMP())) AS onboarding_required
        FROM employee_sessions s
        JOIN staff e ON e.id = s.employee_id
        WHERE s.token_hash = ?
@@ -1324,6 +1339,7 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
         branch_id: row.branch_id !== null ? Number(row.branch_id) : null,
         status: row.status,
         created_at: toIso(row.emp_created_at),
+        onboarding_required:Boolean(row.onboarding_required),
       },
     };
   }
@@ -1331,7 +1347,8 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
   const db = getSqliteDb();
   const stmt = db.prepare(`
     SELECT s.token_hash, s.employee_id, s.created_at, s.last_activity_at, s.expires_at, s.revoked_at, s.ip_address, s.user_agent,
-           e.id, e.full_name, e.email, e.role, e.branch_id, e.status, e.created_at as emp_created_at
+           e.id, e.full_name, e.email, e.role, e.branch_id, e.status, e.created_at as emp_created_at,
+           (e.must_change_password=1 OR (e.temporary_password_expires_at IS NOT NULL AND datetime(e.temporary_password_expires_at)<=datetime('now'))) AS onboarding_required
     FROM employee_sessions s
     JOIN staff e ON e.id = s.employee_id
     WHERE s.token_hash = ?
@@ -1353,6 +1370,7 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
     branch_id: number | null;
     status: EmployeeStatus;
     emp_created_at: string;
+    onboarding_required:number;
   } | undefined;
 
   if (!row) return null;
@@ -1374,6 +1392,7 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
       branch_id: row.branch_id,
       status: row.status,
       created_at: toIso(row.emp_created_at),
+      onboarding_required:Boolean(row.onboarding_required),
     },
   };
 }
@@ -1603,12 +1622,18 @@ export async function createEmployee(data: CreateEmployeeData): Promise<PublicEm
   );
 }
 
-export async function updateEmployee(id: number, data: UpdateEmployeeData): Promise<PublicEmployee | null> {
+export async function updateEmployee(id: number, data: UpdateEmployeeData,actor?:PublicEmployee): Promise<PublicEmployee | null> {
   return runInTransaction(
     async (conn) => {
       if(data.role!==undefined || data.status!==undefined) await lockAdministratorGuard(conn);
-      const [staff]=await conn.execute<RowDataPacket[]>('SELECT * FROM staff WHERE id=? FOR UPDATE',[id]);
-      const current=staff[0]; if(!current) return null;
+      const [staff]=await conn.query<RowDataPacket[]>('SELECT * FROM staff WHERE id IN (?) ORDER BY id FOR UPDATE',[[id,...(actor?[actor.id]:[])]]);
+      if(actor){
+        const currentActor=staff.find(row=>row.id===actor.id);
+        if(!currentActor||currentActor.status!=='active'||currentActor.role!=='admin')throw new AuthError('Administrator authority changed.',403);
+        const [grants]=await conn.query<RowDataPacket[]>(`SELECT s.id FROM staff s JOIN role_catalog r ON r.code=s.permission_role AND r.active=1 AND r.business_role=s.role JOIN role_permissions p ON p.role_code=r.code AND p.permission_code='employees.manage' WHERE s.id=? FOR SHARE`,[actor.id]);
+        if(!grants.length)throw new AuthError('Employee management permission is no longer granted.',403);
+      }
+      const current=staff.find(row=>row.id===id); if(!current) return null;
       const nextName = data.full_name !== undefined ? data.full_name.trim() : current.full_name;
       const nextEmail = data.email !== undefined ? data.email.trim().toLowerCase() : current.email;
       const nextRole = data.role !== undefined ? data.role : current.role;
@@ -1643,6 +1668,9 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
         );
       }
 
+      await conn.execute("INSERT INTO employee_notifications(employee_id,kind) VALUES(?,'account_update')",[id]);
+      if(nextStatus!==current.status) await conn.execute("INSERT INTO employee_notifications(employee_id,kind) VALUES(?,'account_status')",[id]);
+      if(current.must_change_password && nextStatus==='active') await conn.execute("INSERT INTO employee_notifications(employee_id,kind) VALUES(?,'onboarding')",[id]);
       const [rows] = await conn.execute<RowDataPacket[]>(
         `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ? LIMIT 1`,
         [id]
@@ -1660,6 +1688,7 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
       };
     },
     (db) => {
+      if(actor){const currentActor=db.prepare('SELECT role,status FROM staff WHERE id=?').get(actor.id);if(currentActor?.role!=='admin'||currentActor?.status!=='active')throw new AuthError('Administrator authority changed.',403);}
       const current=db.prepare('SELECT * FROM staff WHERE id=?').get(id) as unknown as PublicEmployee|undefined;
       if(!current) return null;
       const nextName = data.full_name !== undefined ? data.full_name.trim() : current.full_name;
@@ -1694,6 +1723,7 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
         `).run(new Date().toISOString(), id);
       }
 
+      db.prepare("INSERT INTO employee_notifications(employee_id,kind,available_at) VALUES(?,'account_update',?)").run(id,new Date().toISOString());
       const row = db.prepare(`SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ?`)
         .get(id) as unknown as PublicEmployee | undefined;
       if (!row) return null;
@@ -1817,6 +1847,7 @@ export async function confirmPasswordResetTransaction(
         [employeeId]
       );
 
+      await conn.execute("INSERT INTO employee_notifications(employee_id,kind) VALUES(?,'password_change')",[employeeId]);
       return true;
     },
     (db) => {
@@ -1898,7 +1929,10 @@ export async function confirmEmployeeCreationTransaction(
       );
       const newId = insertRes.insertId;
       await completeEmployeeApproval(conn,request,newId);
-      if(employeeData.must_change_password) await conn.execute('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?',[newId]);
+      if(employeeData.must_change_password) {
+        await conn.execute('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?',[newId]);
+        await conn.execute("INSERT INTO employee_notifications(employee_id,kind) VALUES(?,'onboarding')",[newId]);
+      }
 
       await conn.execute(
         `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
@@ -1958,7 +1992,10 @@ export async function confirmEmployeeCreationTransaction(
         VALUES (?, ?, 0, CURRENT_TIMESTAMP)
       `).run(row.id, employeeData.password_hash);
 
-      if(employeeData.must_change_password) db.prepare('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?').run(row.id);
+      if(employeeData.must_change_password){
+        db.prepare('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?').run(row.id);
+        db.prepare("INSERT INTO employee_notifications(employee_id,kind,available_at) VALUES(?,'onboarding',?)").run(row.id,new Date().toISOString());
+      }
       sqliteConfirmationAudit(db,row.id,row.email,'employee_creation_confirmed',{approver_id:actor.id},meta);
       return {
         ...row,
@@ -2006,6 +2043,7 @@ export async function confirmEmployeeDeactivationTransaction(
         [targetEmployeeId]
       );
 
+      await conn.execute("INSERT INTO employee_notifications(employee_id,kind) VALUES(?,'account_status')",[targetEmployeeId]);
       await completeEmployeeApproval(conn,request,targetEmployeeId);
       const [auditTarget]=await conn.execute<RowDataPacket[]>('SELECT email FROM staff WHERE id=?',[targetEmployeeId]);
       await confirmationAudit(conn,targetEmployeeId,auditTarget[0].email,'employee_deactivation_confirmed',{approver_id:actor.id},meta);
@@ -2041,6 +2079,7 @@ export async function confirmEmployeeDeactivationTransaction(
         WHERE employee_id = ? AND revoked_at IS NULL
       `).run(nowIso, targetEmployeeId);
 
+      db.prepare("INSERT INTO employee_notifications(employee_id,kind,available_at) VALUES(?,'account_status',?)").run(targetEmployeeId,new Date().toISOString());
       const auditTarget=db.prepare('SELECT email FROM staff WHERE id=?').get(targetEmployeeId) as {email:string};
       sqliteConfirmationAudit(db,targetEmployeeId,auditTarget.email,'employee_deactivation_confirmed',{approver_id:actor.id},meta);
       sqliteConfirmationAudit(db,targetEmployeeId,auditTarget.email,'session_revoked',{reason:'deactivation'},meta);

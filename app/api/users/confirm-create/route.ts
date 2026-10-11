@@ -9,6 +9,7 @@ import {
   verifyCsrf,
 } from '@/lib/server/api';
 import { otpCode } from '@/lib/server/validation';
+import { deliverEmployeeNotifications } from '@/lib/server/employee-delivery';
 
 export const runtime = 'nodejs';
 
@@ -36,10 +37,12 @@ export async function POST(request: NextRequest) {
       user_agent: userAgent,
     });
 
+    const delivery=await deliverEmployeeNotifications(newEmployee.id);
     return NextResponse.json(
       {
         user: newEmployee,
-        message: `Employee account for ${newEmployee.full_name} (${newEmployee.email}) successfully approved and activated.`,
+        deliveryStatus:delivery.status,
+        message: `Employee account for ${newEmployee.full_name} successfully approved. Personal password setup is required where onboarding is pending. Notification delivery: ${delivery.status}.`,
       },
       { status: 201, headers: NO_CACHE_HEADERS }
     );
