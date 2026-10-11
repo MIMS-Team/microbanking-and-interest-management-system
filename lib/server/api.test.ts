@@ -405,7 +405,7 @@ describe('HTTP Route Integration & Authorization Tests', () => {
           code: hrOtp,
         }),
       });
-      const confirmRes = await confirmDeactivateRoute(confirmReq);
+      const confirmRes = await confirmDeactivateRoute(confirmReq,{params:Promise.resolve({id:String(agent.id)})});
       expect(confirmRes.status).toBe(200);
 
       // Agent session is immediately revoked
