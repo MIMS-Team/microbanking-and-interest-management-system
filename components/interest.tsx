@@ -11,8 +11,8 @@ type MaintenanceTask = 'monthly' | 'daily' | 'maturity' | 'inactivity';
 export function Interest({ data, onAction }: ModuleProps) {
   const [task, setTask] = useState<MaintenanceTask | null>(null);
   const [editing, setEditing] = useState<Rate | null>(null);
-  const canRun = ['manager', 'higher_manager', 'admin'].includes(data.user.role);
-  const canSetRates = data.user.role === 'admin';
+  const canRun = ['manager', 'higher_manager'].includes(data.user.role) && data.permissions?.includes('interest.manage') === true;
+  const canSetRates = data.user.role === 'higher_manager' && data.permissions?.includes('rate.manage') === true;
   const today = businessDate();
   const yesterday = new Date(`${today}T12:00:00Z`);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
@@ -58,6 +58,7 @@ export function Interest({ data, onAction }: ModuleProps) {
           </div>
         </Panel>
       </div>
+      <Panel title="Rate schedule and history" subtitle="Latest 100 immutable effective dates, including future rates"><DataTable rows={data.rateHistory||[]} search={row=>row.name} columns={[{key:'product',label:'Product',render:row=>row.name},{key:'rate',label:'APR',render:row=>String(row.annual_rate)+'%'},{key:'effective',label:'Effective in Colombo',render:row=>new Date(row.effective_at.replace(' ','T')+'Z').toLocaleString('en-GB',{timeZone:'Asia/Colombo'})}]}/></Panel>
       <Panel title="Interest run history" subtitle="Monthly savings and fixed deposit postings">
         <DataTable rows={data.interestRuns} search={run => run.period} exportName="btrust-interest-runs.csv" columns={[
           { key: 'period', label: 'Period', render: run => <strong>{run.period}</strong> },
@@ -69,7 +70,7 @@ export function Interest({ data, onAction }: ModuleProps) {
       {task && <FormModal title={{ monthly: 'Process monthly interest', daily: 'Accrue daily savings interest', maturity: 'Process fixed deposit maturities', inactivity: 'Review account inactivity' }[task]} onClose={() => setTask(null)} submitLabel="Run processing" onSubmit={process}>
         {task === 'monthly' && <Field label="Completed month *" wide><input type="month" name="period" required max={completedMonth} defaultValue={completedMonth} /></Field>}
         {task === 'daily' && <Field label="Accrue through *" wide><input type="date" name="through_date" required min="2000-01-01" max={yesterday.toISOString().slice(0, 10)} defaultValue={yesterday.toISOString().slice(0, 10)} /></Field>}
-        {task === 'inactivity' && <Field label="Days without customer transactions *" wide><input type="number" name="days" required min="30" max="3650" step="1" defaultValue="180" /></Field>}
+        {task === 'inactivity' && <Notice>The server uses the configured inactivity period and qualifying activity. This form cannot override financial policy.</Notice>}
         <div className="field-wide"><Notice>{
           task === 'monthly' ? 'Interest is posted only for a completed month. Existing credits are preserved on repeated runs.' :
           task === 'daily' ? 'This records daily accruals without adding them to spendable savings balances.' :
@@ -81,8 +82,8 @@ export function Interest({ data, onAction }: ModuleProps) {
         await onAction({ action: 'rate.update', id: editing.id, ...formValues(form) });
       }}>
         <Field label="Annual rate (%) *"><input name="annual_rate" type="number" required min="0" max="100" step="0.001" defaultValue={editing.annual_rate} /></Field>
-        <Field label="Minimum balance / principal (LKR) *"><input name="minimum_balance" type="number" required min="0" step="0.01" defaultValue={editing.minimum_balance} /></Field>
-        <div className="field-wide"><Notice>Savings rate changes take effect tomorrow. Existing accounts retain their agreed minimum balance, and existing fixed deposits retain their agreed annual rate.</Notice></div>
+        <Field label={editing.product==='fixed'?'New FD minimum principal (LKR) *':'New savings minimum balance (LKR) *'}><input name={editing.product==='fixed'?'minimum_deposit':'minimum_balance'} type="number" required min="0" step="0.01" defaultValue={editing.product==='fixed'?editing.minimum_deposit:editing.minimum_balance}/></Field><Field label="Future effective date (Colombo)"><input name="effective_date" type="date" min={new Date(new Date(today+'T12:00:00Z').getTime()+86400000).toISOString().slice(0,10)} defaultValue={new Date(new Date(today+'T12:00:00Z').getTime()+86400000).toISOString().slice(0,10)} required/></Field>
+        <div className="field-wide"><Notice>APR changes take effect on the selected Colombo date. Product minimum settings apply to new contracts immediately after approval. Existing accounts retain their agreed minimum balance, and existing fixed deposits retain their agreed annual rate.</Notice></div>
       </FormModal>}
     </>
   );

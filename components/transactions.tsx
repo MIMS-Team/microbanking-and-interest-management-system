@@ -9,10 +9,11 @@ import { Badge, DataTable, Field, FormModal, Notice, Panel, SectionHeading } fro
 type TransactionType = 'deposit' | 'withdrawal' | 'transfer';
 
 export function Transactions({ data, onAction }: ModuleProps) {
+  const [correcting,setCorrecting]=useState<number|null>(null);
   const [kind, setKind] = useState<TransactionType | null>(null);
   const [sourceId, setSourceId] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
-  const canPost = data.user.role === 'agent';
+  const canPost = data.user.role === 'agent' && data.permissions?.includes('transaction.post') === true;
   const activeAccounts = data.accounts.filter(account => account.status === 'active');
   const assignedAccounts = activeAccounts.filter(account => account.agent_id === data.user.id);
 
@@ -70,8 +71,7 @@ export function Transactions({ data, onAction }: ModuleProps) {
       ) : <Notice>Assigned agents post transactions. Your role can inspect the ledger below.</Notice>}
 
       <Panel title="Transaction ledger" subtitle="Successful postings appear here after the database commits them">
-        <DataTable
-          rows={data.transactions}
+        <DataTable resource="transactions"           rows={data.transactions}
           search={transaction => `${transaction.reference} ${transaction.account_number} ${transaction.customer_name} ${transaction.description}`}
           filters={[{ key: 'type', label: 'types', value: transaction => transaction.type }]}
           exportName="btrust-transactions.csv"
@@ -81,11 +81,13 @@ export function Transactions({ data, onAction }: ModuleProps) {
             { key: 'type', label: 'Type', render: transaction => <Badge value={transaction.type} /> },
             { key: 'amount', label: 'Amount', className: 'align-right', render: transaction => <strong>{money(transaction.amount)}</strong> },
             { key: 'balance', label: 'Balance after', className: 'align-right', render: transaction => money(transaction.balance_after) },
+            { key:'correction',label:'Correction',render:transaction=>canPost&&['deposit','withdrawal','transfer_out','transfer_in'].includes(transaction.type)&&<button onClick={()=>setCorrecting(transaction.id)}>Request correction</button> },
             { key: 'description', label: 'Description', render: transaction => <span className="truncate" title={transaction.description}>{transaction.description}</span> },
           ]}
         />
       </Panel>
 
+      {correcting&&<FormModal title="Request cash correction" description="A full compensating reversal requires independent management approval and the configured correction policy." onClose={()=>setCorrecting(null)} submitLabel="Submit correction request" onSubmit={async form=>{const selected=data.transactions.find(t=>t.id===correcting);await onAction({action:'transaction.reverse',operation_id:selected?.operation_id, ...formValues(form)});}}><Field label="Correction reason" wide><textarea name="reason" required minLength={5} maxLength={300}/></Field></FormModal>}
       {kind && (
         <FormModal
           title={kind === 'deposit' ? 'Record a cash deposit' : kind === 'withdrawal' ? 'Record a cash withdrawal' : 'Transfer between accounts'}

@@ -2,13 +2,14 @@
 
 import { ArrowDownLeft, ArrowRight, ArrowUpRight, Building2, Clock3, Landmark, Users, WalletCards } from 'lucide-react';
 import type { Bootstrap, ModuleName } from '@/lib/types';
-import { date, initials, label, money, number } from '@/lib/format';
+import { addMoney, date, initials, label, money, number } from '@/lib/format';
 import { Badge, EmptyState, Metric, Panel, SectionHeading } from './ui';
 
 export function Dashboard({ data, navigate }: { data: Bootstrap; navigate: (module: ModuleName) => void }) {
   const pending = data.approvals.filter(approval => approval.status === 'pending');
   const totalDeposits = Number(data.metrics.savings_balance) + Number(data.metrics.fixed_deposit_balance);
   const savingsShare = totalDeposits ? Number(data.metrics.savings_balance) / totalDeposits * 100 : 0;
+  const fixedDepositShare = totalDeposits ? 100 - savingsShare : 0;
   return (
     <>
       <SectionHeading
@@ -43,8 +44,8 @@ export function Dashboard({ data, navigate }: { data: Bootstrap; navigate: (modu
         </Panel>
         <Panel title="Deposit portfolio" subtitle="Balances from the current account register">
           <div className="portfolio-card">
-            <small>Total savings and FD principal</small><strong>{money(totalDeposits)}</strong>
-            <div className="portfolio-bar" role="img" aria-label={`Savings ${savingsShare.toFixed(1)} percent, fixed deposits ${(100 - savingsShare).toFixed(1)} percent`}><span style={{ width: `${savingsShare}%` }} /></div>
+            <small>Total savings and FD principal</small><strong>{money(addMoney(data.metrics.savings_balance,data.metrics.fixed_deposit_balance))}</strong>
+            <div className="portfolio-bar" role="img" aria-label={`Savings ${savingsShare.toFixed(1)} percent, fixed deposits ${fixedDepositShare.toFixed(1)} percent`}><span style={{ width: `${savingsShare}%` }} /></div>
             <div className="portfolio-legend"><span><i />Savings accounts</span><strong>{money(data.metrics.savings_balance)}</strong></div>
             <div className="portfolio-legend"><span><i className="purple-dot" />Fixed deposits</span><strong>{money(data.metrics.fixed_deposit_balance)}</strong></div>
             <button className="button button-secondary full-width" onClick={() => navigate('Savings Accounts')}>View account register<ArrowRight size={16} /></button>
