@@ -1,5 +1,8 @@
 # Database integration review
 
+This report records the earlier integration. See [the current hardening notes](database-hardening.md)
+and [current verification results](database-verification.md) for the local follow-up.
+
 ## Baseline and sources
 
 Task began on `Ravindu-feature/auth-imp` at `96f0291` with a clean tree.
