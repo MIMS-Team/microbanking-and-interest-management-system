@@ -41,7 +41,8 @@ export async function getEmployees(
   search = '',
   roleId = '',
   searchColumn = 'name',
-  status = ''
+  status = '',
+  branchId = '',
 ): Promise<{ employees: EmployeeRecord[]; total: number }> {
   const offset = (page - 1) * pageSize;
   const searchTerm = `%${search.trim()}%`;
@@ -50,6 +51,7 @@ export async function getEmployees(
   const isOtpRole = roleId.startsWith('otp:');
   const otpRole = isOtpRole ? roleId.slice(4) : '';
 
+  // Apply identical filters to the page and count queries so totals include every matching employee.
   const [rows, countRows] = await Promise.all([
     sql`
       SELECT e.employee_id, e.branch_id, b.name AS branch_name, e.name,
@@ -88,12 +90,14 @@ export async function getEmployees(
         OR (${status === 'Active'} AND e.is_active = true)
         OR (${status === 'Suspended'} AND e.is_active = false)
       )
+      AND (${branchId === ''} OR e.branch_id::text = ${branchId})
       ORDER BY e.employee_id
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`
       SELECT COUNT(*) AS total
       FROM employee e
+      JOIN branch b ON b.branch_id = e.branch_id
       WHERE (
         ${!hasSearch}
         OR (${searchColumn === 'name'} AND e.name ILIKE ${searchTerm})
@@ -116,6 +120,7 @@ export async function getEmployees(
         OR (${status === 'Active'} AND e.is_active = true)
         OR (${status === 'Suspended'} AND e.is_active = false)
       )
+      AND (${branchId === ''} OR e.branch_id::text = ${branchId})
     `,
   ]);
 
@@ -243,7 +248,7 @@ export async function createEmployee(
   }
 
   const temporaryPassword = randomBytes(12).toString('base64url');
-  const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
   const employeeRows = data.secondaryOtpRoles.length > 0
     ? await sql`
     WITH created_employee AS (
@@ -518,7 +523,7 @@ export async function renewEmployeePassword(
   }
 
   const temporaryPassword = randomBytes(12).toString('base64url');
-  const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+  const passwordHash = await bcrypt.hash(temporaryPassword, 12);
   const updatedEmployees = await sql`
     UPDATE employee
     SET password = ${passwordHash}
@@ -563,7 +568,7 @@ export async function changeEmployeePassword(
     return 'invalid-current-password';
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const passwordHash = await bcrypt.hash(newPassword, 12);
   const updatedEmployees = await sql`
     UPDATE employee
     SET password = ${passwordHash}

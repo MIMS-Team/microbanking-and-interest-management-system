@@ -36,6 +36,7 @@ export interface EmployeeRecord extends Omit<Employee, 'role'> {
   secondaryOtpRoles: Array<'BM' | 'HRM'>;
 }
 
+//Data for admin dashboard
 export interface AdminDashboardData {
   employees: { total: number; active: number };
   customers: { total: number; active: number };
@@ -79,8 +80,30 @@ export interface Customer {
   assignedBranchId: string;
   assignedAgentId: string;
   assignedAgentName: string;
-  status: 'Active' | 'Inactive';
+  status: 'Active' | 'Inactive' | 'Blocked';
+  assignedBranchName?: string;
   registeredDate: string;
+}
+
+export interface AdminCustomerPage {
+  customers: Customer[];
+  total: number;
+}
+
+export interface EmployeeLoginSession {
+  sessionId: string;
+  employeeId: string;
+  employeeName: string;
+  role: string;
+  loginTime: string;
+  logoutTime: string | null;
+  status: string;
+  ipAddress: string;
+}
+
+export interface EmployeeLoginSessionPage {
+  sessions: EmployeeLoginSession[];
+  total: number;
 }
 
 // Savings account tier configurations

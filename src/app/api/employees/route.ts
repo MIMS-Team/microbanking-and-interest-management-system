@@ -9,6 +9,7 @@ import {
   updateEmployee,
 } from '@/services/employeeService';
 import { sendEmployeePasswordResetEmail } from '@/services/passwordEmailService';
+import { getEmployeeLoginSessions } from '@/services/employeeSessionService';
 
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
@@ -64,12 +65,44 @@ function isValidEmployeeData(
 // GET /api/employees — retrieve a paginated employee list
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
+  if (params.get('view') === 'sessions') {
+    const page = Number(params.get('page') ?? 1);
+    const pageSize = Number(params.get('pageSize') ?? 5);
+    const search = params.get('search') ?? '';
+    const searchType = params.get('searchType') ?? 'name';
+    const status = params.get('status') ?? '';
+
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(pageSize) ||
+      pageSize < 1 ||
+      pageSize > 100 ||
+      search.length > 200 ||
+      !['name', 'employee_id', 'session_id', 'ip_address'].includes(searchType) ||
+      !['', 'A', 'I', 'L', 'E', 'B'].includes(status)
+    ) {
+      return NextResponse.json({ message: 'Invalid employee session search or pagination values.' }, { status: 400 });
+    }
+
+    try {
+      return NextResponse.json(
+        await getEmployeeLoginSessions(page, pageSize, search, searchType, status),
+        { headers: { 'Cache-Control': 'no-store' } }
+      );
+    } catch (error) {
+      console.error('Error fetching employee login sessions:', error);
+      return NextResponse.json({ message: 'Failed to fetch employee login sessions.' }, { status: 500 });
+    }
+  }
+
   const page = Number(params.get('page') ?? 1);
   const pageSize = Number(params.get('pageSize') ?? 5);
   const search = params.get('search') ?? '';
   const roleId = params.get('roleId') ?? '';
   const searchColumn = params.get('searchColumn') ?? 'name';
   const status = params.get('status') ?? '';
+  const branchId = params.get('branchId') ?? '';
 
   if (
     !Number.isInteger(page) ||
@@ -79,6 +112,7 @@ export async function GET(request: NextRequest) {
     pageSize > 100 ||
     !['name', 'employee_id'].includes(searchColumn) ||
     !['', 'Active', 'Suspended'].includes(status) ||
+    (branchId !== '' && !/^\d+$/.test(branchId)) ||
     (roleId !== '' && !/^[A-Za-z0-9]$/.test(roleId) && !['otp:BM', 'otp:HRM'].includes(roleId))
   ) {
     return NextResponse.json({ message: 'Invalid pagination values.' }, { status: 400 });
@@ -86,7 +120,7 @@ export async function GET(request: NextRequest) {
 
   try {
     return NextResponse.json(
-      await getEmployees(page, pageSize, search, roleId, searchColumn, status)
+      await getEmployees(page, pageSize, search, roleId, searchColumn, status, branchId)
     );
   } catch (error) {
     console.error('Error fetching employees:', error);

@@ -66,6 +66,7 @@ export default function AdminDashboardView({ onNavigateTab }: AdminDashboardView
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Load live dashboard aggregates from the server; abort stale requests when refreshing or unmounting.
   useEffect(() => {
     const controller = new AbortController();
 
@@ -83,6 +84,7 @@ export default function AdminDashboardView({ onNavigateTab }: AdminDashboardView
         }
 
         const data: unknown = await response.json();
+        // Validate API data before rendering database values in the dashboard.
         if (!isAdminDashboardData(data)) {
           throw new Error('Dashboard API returned an invalid data format.');
         }
@@ -101,6 +103,7 @@ export default function AdminDashboardView({ onNavigateTab }: AdminDashboardView
     return () => controller.abort();
   }, [refreshKey]);
 
+  // Keep missing database values distinct from real zero counts.
   const displayCount = (count: number | undefined) =>
     isLoading ? 'Loading...' : loadError || count === undefined ? 'Unavailable' : count.toLocaleString();
 

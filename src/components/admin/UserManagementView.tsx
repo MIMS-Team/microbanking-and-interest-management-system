@@ -1,14 +1,11 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Customer, EmployeeRecord, BranchOption, RoleOption } from '@/types';
-import {
-  getCustomers,
-  renewCustomerPassword,
-} from '@/services/customerService';
+import type { Customer, EmployeeRecord, BranchOption, RoleOption } from '@/types';
 import Pagination from '@/components/common/Pagination';
 import Modal from '@/components/common/Modal';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   Users,
   UserCheck,
@@ -34,6 +31,12 @@ export default function UserManagementView() {
   const [employeeError, setEmployeeError] = useState('');
   const [rolesError, setRolesError] = useState('');
   const [totalEmployees, setTotalEmployees] = useState(0);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerError, setCustomerError] = useState('');
+  const [customerResettingId, setCustomerResettingId] = useState<string | null>(null);
+  const [totalCustomers, setTotalCustomers] = useState(0);
+  const [customerRefreshKey, setCustomerRefreshKey] = useState(0);
 
   useEffect(() => {
     const loadBranches = async () => {
@@ -79,16 +82,19 @@ export default function UserManagementView() {
 
   // Datasets
   const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
-  const [customers] = useState<Customer[]>(getCustomers());
 
-  // Search and filter states
+  // Text search and branch selection are independent filters sent to the paginated account queries.
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [employeeSearchInput, setEmployeeSearchInput] = useState('');
   const [employeeSearchColumn, setEmployeeSearchColumn] = useState<'name' | 'employee_id'>('name');
   const [employeeRoleFilter, setEmployeeRoleFilter] = useState<string>('All');
   const [employeeStatusFilter, setEmployeeStatusFilter] = useState<'All' | 'Active' | 'Suspended'>('All');
+  const [employeeBranchFilter, setEmployeeBranchFilter] = useState('');
 
   const [customerSearch, setCustomerSearch] = useState('');
+  const [customerSearchType, setCustomerSearchType] = useState('name');
+  const [customerStatusFilter, setCustomerStatusFilter] = useState('');
+  const [customerBranchFilter, setCustomerBranchFilter] = useState('');
 
   // Pagination states
   const [empPage, setEmpPage] = useState(1);
@@ -108,6 +114,7 @@ export default function UserManagementView() {
         searchColumn: employeeSearchColumn,
         roleId: employeeRoleFilter === 'All' ? '' : employeeRoleFilter,
         status: employeeStatusFilter === 'All' ? '' : employeeStatusFilter,
+        branchId: employeeBranchFilter,
       });
 
       try {
@@ -136,7 +143,52 @@ export default function UserManagementView() {
 
     loadEmployees();
     return () => controller.abort();
-  }, [empPage, empPageSize, employeeSearch, employeeSearchColumn, employeeRoleFilter, employeeStatusFilter, employeeRefreshKey]);
+  }, [empPage, empPageSize, employeeSearch, employeeSearchColumn, employeeRoleFilter, employeeStatusFilter, employeeBranchFilter, employeeRefreshKey]);
+
+  // Load customer rows and search results from Neon using server-side pagination.
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      page: String(custPage),
+      pageSize: String(custPageSize),
+      search: customerSearch,
+      searchType: customerSearchType,
+      status: customerStatusFilter,
+      branchId: customerBranchFilter,
+    });
+
+    async function loadCustomers() {
+      setCustomerLoading(true);
+      setCustomerError('');
+      try {
+        const response = await fetch(`/api/customers?${params.toString()}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const result: {
+          customers?: Customer[];
+          total?: number;
+          message?: string;
+        } = await response.json();
+        if (!response.ok || !Array.isArray(result.customers) || typeof result.total !== 'number') {
+          throw new Error(result.message || 'Failed to load customer accounts from the database.');
+        }
+        setCustomers(result.customers);
+        setTotalCustomers(result.total);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        console.error('Error loading admin customer accounts:', error);
+        setCustomerError(error instanceof Error ? error.message : 'Failed to load customer accounts.');
+        setCustomers([]);
+        setTotalCustomers(0);
+      } finally {
+        if (!controller.signal.aborted) setCustomerLoading(false);
+      }
+    }
+
+    void loadCustomers();
+    return () => controller.abort();
+  }, [custPage, custPageSize, customerSearch, customerSearchType, customerStatusFilter, customerBranchFilter, customerRefreshKey]);
 
   // Modals state
   const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
@@ -201,18 +253,7 @@ export default function UserManagementView() {
 
   const paginatedEmployees = employees;
 
-  // Filter customers
-  const filteredCustomers = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      c.nationalId.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      c.phone.includes(customerSearch)
-  );
-
-  const paginatedCustomers = filteredCustomers.slice(
-    (custPage - 1) * custPageSize,
-    custPage * custPageSize
-  );
+  const paginatedCustomers = customers;
 
   const openAddEmployeeModal = () => {
     setFormName('');
@@ -613,18 +654,47 @@ export default function UserManagementView() {
     });
   };
 
-  // Reset customer password
-  const handleRenewCustPassword = (c: Customer) => {
-    const res = renewCustomerPassword(c.id);
-    if (res.success) {
+  // Reset customer credentials through the customer-only API and email flow.
+  const confirmCustomerPasswordReset = async (customer: Customer) => {
+    setCustomerResettingId(customer.id);
+    setCustomerError('');
+    try {
+      const response = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: customer.id }),
+      });
+      const result: { success?: boolean; message?: string } = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Failed to reset the customer password.');
+      }
+
       setPasswordResetInfo({
         isOpen: true,
-        name: c.name,
-        tempPass: res.temporaryPassword,
-        message: res.message,
+        name: customer.name,
+        tempPass: '',
+        message: result.message || `A new password was emailed to ${customer.email}.`,
         type: 'Customer',
       });
+      setCustomerRefreshKey((key) => key + 1);
+    } catch (error) {
+      console.error('Error resetting customer password:', error);
+      setCustomerError(error instanceof Error ? error.message : 'Failed to reset the customer password.');
+    } finally {
+      setCustomerResettingId(null);
     }
+  };
+
+  const handleRenewCustPassword = (customer: Customer) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Confirm Customer Password Reset',
+      message: `Reset the password for ${customer.name} and email the new password to ${customer.email}?`,
+      onConfirm: () => {
+        setConfirmDialog((previous) => ({ ...previous, isOpen: false }));
+        void confirmCustomerPasswordReset(customer);
+      },
+    });
   };
 
   // Role badge styling
@@ -730,7 +800,7 @@ export default function UserManagementView() {
           }`}
         >
           <Users className="w-4 h-4 text-emerald-600" />
-          <span>Customer Accounts ({customers.length})</span>
+          <span>Customer Accounts ({totalCustomers})</span>
         </button>
       </div>
 
@@ -744,41 +814,72 @@ export default function UserManagementView() {
               setEmployeeSearch(employeeSearchInput.trim());
               setEmpPage(1);
             }}
-            className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs flex flex-wrap items-center justify-between gap-4"
+            className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-12 items-end gap-3"
           >
-            <div className="relative w-full max-w-sm">
-              <input
-                type="text"
-                placeholder={`Search employees by ${employeeSearchColumn === 'employee_id' ? 'ID' : 'name'}...`}
-                value={employeeSearchInput}
-                onChange={(e) => setEmployeeSearchInput(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-blue-500 text-slate-800"
-              />
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <div className="sm:col-span-2 xl:col-span-5">
+              <label htmlFor="employee-search" className="mb-1 block text-xs font-semibold text-slate-700">
+                Search employees
+              </label>
+              <div className="flex min-w-0">
+                <div className="relative min-w-0 flex-1">
+                  <input
+                    id="employee-search"
+                    type="text"
+                    placeholder={`Search by ${employeeSearchColumn === 'employee_id' ? 'ID' : 'name'}...`}
+                    value={employeeSearchInput}
+                    onChange={(e) => setEmployeeSearchInput(e.target.value)}
+                    className="h-10 w-full rounded-l-xl border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-hidden"
+                  />
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                </div>
+                <select
+                  value={employeeSearchColumn}
+                  onChange={(e) => {
+                    setEmployeeSearchColumn(e.target.value as 'name' | 'employee_id');
+                    setEmpPage(1);
+                  }}
+                  aria-label="Employee search field"
+                  className="h-10 w-32 shrink-0 rounded-r-xl border border-l-0 border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+                >
+                  <option value="name">Name</option>
+                  <option value="employee_id">Employee ID</option>
+                </select>
+              </div>
             </div>
 
-            <select
-              value={employeeSearchColumn}
-              onChange={(e) => {
-                setEmployeeSearchColumn(e.target.value as 'name' | 'employee_id');
-                setEmpPage(1);
-              }}
-              aria-label="Employee search field"
-              className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-800"
-            >
-              <option value="name">Name</option>
-              <option value="employee_id">Employee ID</option>
-            </select>
+            <div className="xl:col-span-3">
+              <SearchableSelect
+                label="Branch"
+                options={[
+                  { value: '', label: 'All Branches' },
+                  ...branches.map((branch) => ({
+                    value: branch.id,
+                    label: branch.name,
+                    sublabel: `Branch ID: ${branch.id}`,
+                  })),
+                ]}
+                value={employeeBranchFilter}
+                onChange={(branchId) => {
+                  setEmployeeBranchFilter(branchId);
+                  setEmpPage(1);
+                }}
+                placeholder="Search branches..."
+                disabled={branches.length === 0}
+              />
+            </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Role Category:</span>
+            <div className="xl:col-span-2">
+              <label htmlFor="employee-role-filter" className="mb-1 block text-xs font-semibold text-slate-700">
+                Role category
+              </label>
               <select
+                id="employee-role-filter"
                 value={employeeRoleFilter}
                 onChange={(e) => {
                   setEmployeeRoleFilter(e.target.value);
                   setEmpPage(1);
                 }}
-                className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-800"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
               >
                 <option value="All">All Roles</option>
                 {roles.map((role) => (
@@ -790,15 +891,18 @@ export default function UserManagementView() {
               </select>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Status:</span>
+            <div className="xl:col-span-2">
+              <label htmlFor="employee-status-filter" className="mb-1 block text-xs font-semibold text-slate-700">
+                Status
+              </label>
               <select
+                id="employee-status-filter"
                 value={employeeStatusFilter}
                 onChange={(e) => {
                   setEmployeeStatusFilter(e.target.value as 'All' | 'Active' | 'Suspended');
                   setEmpPage(1);
                 }}
-                className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-800"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
               >
                 <option value="All">All Statuses</option>
                 <option value="Active">Active</option>
@@ -808,7 +912,7 @@ export default function UserManagementView() {
 
             <button
               type="submit"
-              className="inline-flex items-center gap-2 px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold cursor-pointer"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-xs font-semibold text-white transition-colors hover:bg-slate-800 sm:col-span-2 xl:col-span-12 xl:justify-self-end cursor-pointer"
             >
               <Search className="w-3.5 h-3.5" />
               Search
@@ -934,25 +1038,98 @@ export default function UserManagementView() {
       {activeAccountType === 'customers' && (
         <div className="space-y-4">
           {/* Customer Search Bar */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs flex items-center justify-between gap-4">
-            <div className="relative w-full max-w-sm">
-              <input
-                type="text"
-                placeholder="Search customers by name, NIC, or phone..."
-                value={customerSearch}
-                onChange={(e) => {
-                  setCustomerSearch(e.target.value);
-                  setCustPage(1);
-                }}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-blue-500 text-slate-800"
-              />
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-12 items-end gap-3">
+              <div className="sm:col-span-2 xl:col-span-6">
+                <label htmlFor="customer-search" className="mb-1 block text-xs font-semibold text-slate-700">
+                  Search customers or assigned agents
+                </label>
+                <div className="flex min-w-0">
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      id="customer-search"
+                      type="text"
+                      aria-label="Search customers"
+                      placeholder="Enter a name, ID, or NIC..."
+                      maxLength={200}
+                      value={customerSearch}
+                      onChange={(e) => {
+                        setCustomerSearch(e.target.value);
+                        setCustPage(1);
+                      }}
+                      className="h-10 w-full rounded-l-xl border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs text-slate-800 focus:border-blue-500 focus:bg-white focus:outline-hidden"
+                    />
+                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  </div>
+                  <select
+                    aria-label="Customer search field"
+                    value={customerSearchType}
+                    onChange={(event) => {
+                      setCustomerSearchType(event.target.value);
+                      setCustPage(1);
+                    }}
+                    className="h-10 w-40 shrink-0 rounded-r-xl border border-l-0 border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+                  >
+                    <option value="name">Customer name</option>
+                    <option value="customer_id">Customer ID</option>
+                    <option value="nic">NIC</option>
+                    <option value="agent_name">Agent name</option>
+                    <option value="agent_id">Agent ID</option>
+                  </select>
+                </div>
+              </div>
+              <div className="xl:col-span-2">
+                <label htmlFor="customer-status-filter" className="mb-1 block text-xs font-semibold text-slate-700">
+                  Status
+                </label>
+                <select
+                  id="customer-status-filter"
+                  aria-label="Filter customers by status"
+                  value={customerStatusFilter}
+                  onChange={(event) => {
+                    setCustomerStatusFilter(event.target.value);
+                    setCustPage(1);
+                  }}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+                >
+                  <option value="">All statuses</option>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                  <option value="Blocked">Blocked</option>
+                </select>
+              </div>
+              <div className="xl:col-span-4">
+                <SearchableSelect
+                  label="Branch"
+                  options={[
+                    { value: '', label: 'All Branches' },
+                    ...branches.map((branch) => ({
+                      value: branch.id,
+                      label: branch.name,
+                      sublabel: `Branch ID: ${branch.id}`,
+                    })),
+                  ]}
+                  value={customerBranchFilter}
+                  onChange={(branchId) => {
+                    setCustomerBranchFilter(branchId);
+                    setCustPage(1);
+                  }}
+                  placeholder="Search branches..."
+                  disabled={branches.length === 0}
+                />
+              </div>
             </div>
 
-            <div className="text-xs text-slate-500">
-              Registered Customer Accounts: <span className="font-bold text-slate-800">{customers.length}</span>
+            <div className="mt-3 text-right text-xs text-slate-500">
+              Matching customers: <span className="font-bold text-slate-800">{totalCustomers}</span>
             </div>
           </div>
+
+          {customerError && (
+            <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
+              {customerError}
+            </div>
+          )}
 
           {/* Customer Table */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
@@ -963,29 +1140,57 @@ export default function UserManagementView() {
                     <th className="py-3 px-4">Account Holder</th>
                     <th className="py-3 px-4">National ID (NIC)</th>
                     <th className="py-3 px-4">Registered Branch</th>
+                    <th className="py-3 px-4">Assigned Agent</th>
                     <th className="py-3 px-4">Contact Phone & Email</th>
-                    <th className="py-3 px-4">KYC Status</th>
+                    <th className="py-3 px-4">Account Status</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {paginatedCustomers.map((cust) => (
+                  {customerLoading ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                        Loading customer records from Neon...
+                      </td>
+                    </tr>
+                  ) : customerError ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-rose-600">
+                        Customer records could not be displayed.
+                      </td>
+                    </tr>
+                  ) : paginatedCustomers.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                        No customer records match this search.
+                      </td>
+                    </tr>
+                  ) : paginatedCustomers.map((cust) => (
                     <tr key={cust.id} className="hover:bg-slate-50/60 transition-colors">
                       <td className="py-3 px-4 font-semibold text-slate-900">
                         <div>{cust.name}</div>
                         <div className="text-[10px] text-slate-400 font-mono">ID: {cust.id}</div>
                       </td>
                       <td className="py-3 px-4 font-mono font-bold text-slate-800">{cust.nationalId}</td>
-                      <td className="py-3 px-4 font-medium text-slate-800">{cust.assignedBranchId}</td>
+                      <td className="py-3 px-4 font-medium text-slate-800">
+                        <div>{cust.assignedBranchName || `Branch ${cust.assignedBranchId}`}</div>
+                        <div className="text-[10px] text-slate-400">ID: {cust.assignedBranchId}</div>
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-800">
+                        <div>{cust.assignedAgentName || 'Unassigned'}</div>
+                        <div className="text-[10px] text-slate-400">ID: {cust.assignedAgentId}</div>
+                      </td>
                       <td className="py-3 px-4">
                         <div className="text-slate-700">{cust.phone}</div>
-                        <div className="text-[10px] text-slate-400">{cust.email}</div>
+                        <div className="text-[10px] text-slate-400">{cust.email || 'No email on record'}</div>
                       </td>
                       <td className="py-3 px-4">
                         <span
                           className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
                             cust.status === 'Active'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : cust.status === 'Blocked'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
                               : 'bg-slate-100 text-slate-600 border border-slate-200'
                           }`}
                         >
@@ -995,10 +1200,13 @@ export default function UserManagementView() {
                       <td className="py-3 px-4 text-right">
                         <button
                           onClick={() => handleRenewCustPassword(cust)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-semibold text-[11px] transition-colors cursor-pointer"
+                          disabled={!cust.email || customerResettingId === cust.id}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-semibold text-[11px] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          <KeyRound className="w-3 h-3" />
-                          <span>Reset Password (SMS)</span>
+                          {customerResettingId === cust.id
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <KeyRound className="w-3 h-3" />}
+                          <span>{cust.email ? 'Reset Password (Email)' : 'Email Unavailable'}</span>
                         </button>
                       </td>
                     </tr>
@@ -1009,10 +1217,13 @@ export default function UserManagementView() {
 
             <Pagination
               currentPage={custPage}
-              totalItems={filteredCustomers.length}
+              totalItems={totalCustomers}
               pageSize={custPageSize}
               onPageChange={setCustPage}
-              onPageSizeChange={setCustPageSize}
+              onPageSizeChange={(size) => {
+                setCustPageSize(size);
+                setCustPage(1);
+              }}
             />
           </div>
         </div>
@@ -1127,24 +1338,21 @@ export default function UserManagementView() {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Branch</label>
-              <select
-                required
-                value={formBranchId}
-                onChange={(e) => {
-                  setFormBranchId(e.target.value);
-                  clearEmployeeOtp();
-                }}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              >
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="Assigned Branch"
+              options={branches.map((branch) => ({
+                value: branch.id,
+                label: branch.name,
+                sublabel: `Branch ID: ${branch.id}`,
+              }))}
+              value={formBranchId}
+              onChange={(branchId) => {
+                setFormBranchId(branchId);
+                clearEmployeeOtp();
+              }}
+              placeholder="Search and select a branch..."
+              disabled={branches.length === 0}
+            />
           </div>
 
           {roles.find((role) => role.id === formRoleId)?.title === 'Higher Management' && (
@@ -1354,24 +1562,21 @@ export default function UserManagementView() {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Branch</label>
-              <select
-                required
-                value={formBranchId}
-                onChange={(e) => {
-                  setFormBranchId(e.target.value);
-                  clearActionOtp();
-                }}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              >
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <SearchableSelect
+              label="Assigned Branch"
+              options={branches.map((branch) => ({
+                value: branch.id,
+                label: branch.name,
+                sublabel: `Branch ID: ${branch.id}`,
+              }))}
+              value={formBranchId}
+              onChange={(branchId) => {
+                setFormBranchId(branchId);
+                clearActionOtp();
+              }}
+              placeholder="Search and select a branch..."
+              disabled={branches.length === 0}
+            />
           </div>
 
           {roles.find((role) => role.id === formRoleId)?.title === 'Higher Management' && (
@@ -1500,7 +1705,7 @@ export default function UserManagementView() {
               <span>
                 {passwordResetInfo.type === 'Employee'
                   ? 'Password reset email sent for'
-                  : 'Temporary credentials for'}{' '}
+                  : 'Customer password reset email sent for'}{' '}
                 {passwordResetInfo.name}
               </span>
             </div>
