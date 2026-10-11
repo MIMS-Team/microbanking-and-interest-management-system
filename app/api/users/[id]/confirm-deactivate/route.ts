@@ -12,7 +12,7 @@ import { otpCode } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest, context:{params:Promise<{id:string}>}) {
   try {
     verifyCsrf(request);
     const { user: actor } = await requireUser(request, ['admin', 'higher_manager']);
@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const targetId=Number((await context.params).id);
+    if(!Number.isSafeInteger(targetId)||targetId<=0) return NextResponse.json({error:'Invalid employee target.'},{status:400,headers:NO_CACHE_HEADERS});
     const code = otpCode(body?.code);
 
     const ipAddress = getClientIp(request);
@@ -34,7 +36,7 @@ export async function POST(request: NextRequest) {
     await confirmEmployeeDeactivation(challengeId, code, actor, {
       ip_address: ipAddress,
       user_agent: userAgent,
-    });
+    },targetId);
 
     return NextResponse.json(
       {

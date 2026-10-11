@@ -1,3 +1,4 @@
+import { requirePermission } from './permissions';
 import { getDb } from "./db";
 import type { Staff } from "./types";
 import { HttpError } from "./http";
@@ -12,6 +13,7 @@ export async function getReport(user: Staff, type: string, from: string, to: str
     }
   }
   if (from > to) throw new HttpError(400, "The start date must be before the end date.");
+  await requirePermission(await getDb(),user.id,'reports.read');
   const branch = user.role === "manager" ? user.branch_id : null;
   const parameters = [branch, from, to];
   // Calendar-day reports use Sri Lankan midnight, independently of the database
@@ -97,10 +99,11 @@ export async function getReport(user: Staff, type: string, from: string, to: str
         COALESCE((SELECT sum(a.balance) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id
           WHERE ca.customer_id=c.id AND ($1 IS NULL OR a.branch_id=$1)),0) AS current_owned_balance
         FROM customers c LEFT JOIN (
-          SELECT oh.customer_id,SUM(CASE WHEN l.type='deposit' THEN l.amount ELSE 0 END) AS deposits,
-            -SUM(CASE WHEN l.type='withdrawal' THEN l.amount ELSE 0 END) AS withdrawals
+          SELECT oh.customer_id,SUM(CASE WHEN COALESCE(original.type,l.type)='deposit' THEN l.amount ELSE 0 END) AS deposits,
+            -SUM(CASE WHEN COALESCE(original.type,l.type)='withdrawal' THEN l.amount ELSE 0 END) AS withdrawals
           FROM ownership_history oh JOIN ledger_entries l ON l.account_id=oh.account_id
             AND l.created_at>=oh.valid_from AND (oh.valid_to IS NULL OR l.created_at<oh.valid_to)
+          LEFT JOIN ledger_entries original ON original.id=l.reverses_entry_id
           JOIN savings_accounts a ON a.id=l.account_id WHERE ($1 IS NULL OR a.branch_id=$1)
             AND l.created_at>=CAST($2 AS DATETIME)-INTERVAL 330 MINUTE
             AND l.created_at<CAST($3 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE

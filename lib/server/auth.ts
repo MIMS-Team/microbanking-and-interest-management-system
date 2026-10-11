@@ -1,3 +1,5 @@
+import { employeeHasPermission } from './db';
+import { hashOtp, otpMatches } from './otp-verifier';
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import {
@@ -103,23 +105,7 @@ export function generateSecureOtp(): string {
   return randomInt(100000, 1000000).toString();
 }
 
-export function hashOtp(code: string): string {
-  const salt=randomBytes(16).toString('hex');
-  return 's1$'+salt+'$'+scryptSync(code.trim(),salt,32).toString('hex');
-}
-export function otpMatches(code: string, verifier: string): boolean {
-  let actual: string;
-  if (verifier.startsWith('s1$')) {
-    const [,salt,digest]=verifier.split('$');
-    if (!/^[a-f0-9]{32}$/.test(salt??'') || !/^[a-f0-9]{64}$/.test(digest??'')) return false;
-    actual='s1$'+salt+'$'+scryptSync(code.trim(),salt,32).toString('hex');
-  } else {
-    // Only outstanding legacy challenges use this verifier until their existing expiry.
-    actual=createHash('sha256').update('mims_salt:'+code.trim()).digest('hex');
-  }
-  return actual.length===verifier.length && timingSafeEqual(Buffer.from(actual),Buffer.from(verifier));
-}
-
+export { hashOtp, otpMatches } from './otp-verifier';
 export function hashSessionToken(token: string): string {
   return createHash('sha256').update(token.trim()).digest('hex');
 }
@@ -200,6 +186,8 @@ export async function authenticateCredentials(
     });
     throw new AuthError('Invalid credentials.', 401);
   }
+
+  if(!await employeeHasPermission(employee.id,'auth.login')) throw new AuthError('Invalid credentials.',401);
 
   // Verify password
   const isMatch = passwordMatches(passwordInput, employee.password_hash);
@@ -488,6 +476,7 @@ export async function validateSessionToken(
   // Check if employee account is active
   if (sessionWithEmp.employee.status !== 'active') return null;
 
+  if(!await employeeHasPermission(sessionWithEmp.employee.id,'auth.login')) return null;
   const now = new Date();
 
   // Check absolute expiration (8 hours)
@@ -734,6 +723,7 @@ export async function initiateEmployeeCreation(
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<{ challengeId: string; hrManagerEmail: string }> {
   requireAdministrator(adminActor);
+  if(!await employeeHasPermission(adminActor.id,'employees.manage')) throw new AuthError('Employee management permission is not granted.',403);
 
   // Validate hierarchy & privilege boundaries
   if (ROLE_HIERARCHY[adminActor.role] < ROLE_HIERARCHY[employeeData.role]) {
@@ -804,106 +794,12 @@ export async function initiateEmployeeCreation(
   };
 }
 
-export async function confirmEmployeeCreation(
-  challengeId: string,
-  rawOtp: string,
-  approverActor?: PublicEmployee,
-  meta?: { ip_address?: string | null; user_agent?: string | null }
-): Promise<PublicEmployee> {
-  const challenge = await findOtpChallenge(challengeId, 'employee_creation');
-
-  if (!challenge) {
-    throw new AuthError('Invalid or expired employee creation challenge.', 401);
-  }
-
-  if (challenge.consumed_at) {
-    throw new AuthError('This creation approval has already been confirmed.', 401);
-  }
-
-  if (parseDateSafe(challenge.expires_at) < new Date()) {
-    throw new AuthError('This creation approval code has expired.', 401);
-  }
-
-  if (challenge.attempts >= challenge.max_attempts) {
-    throw new AuthError('Maximum verification attempts exceeded.', 401);
-  }
-
-  await incrementOtpAttempts(challengeId);
-
-  if (!otpMatches(rawOtp, challenge.code_hash)) {
-    await recordAuthenticationAttempt({
-      employee_id: challenge.employee_id,
-      email: 'approver@system',
-      event_type: 'wrong_otp',
-      ip_address: meta?.ip_address,
-      user_agent: meta?.user_agent,
-      details: { purpose: 'employee_creation' },
-    });
-    throw new AuthError('Invalid HR manager approval code.', 401);
-  }
-
-  const payload = JSON.parse(challenge.metadata ?? '{}') as {
-    full_name: string;
-    email: string;
-    password_hash: string;
-    role: Role;
-    branch_id: number | null;
-    createdByAdminId: number;
-    intendedApproverId?: number;
-    must_change_password?:boolean;
-  };
-
-  // Dual Control enforcement: Requester cannot approve their own creation request
-  if (approverActor) {
-    if (approverActor.id === payload.createdByAdminId) {
-      throw new AuthError('Dual control violation: Requester cannot approve their own creation request.', 403, 'SELF_APPROVAL_PROHIBITED');
-    }
-    if (approverActor.status !== 'active') {
-      throw new AuthError('Approver account is inactive.', 403);
-    }
-    if (approverActor.role !== 'higher_manager' && approverActor.role !== 'admin') {
-      throw new AuthError('Approver is not authorized to approve employee creation.', 403);
-    }
-    if (approverActor.id !== challenge.employee_id) {
-      throw new AuthError('Only the assigned approver can confirm this request.', 403, 'WRONG_APPROVER');
-    }
-  }
-
-  // Re-check email uniqueness at confirmation time
-  const existing = await findEmployeeByEmail(payload.email);
-  if (existing) {
-    throw new AuthError('A user with this email has already been registered.', 409);
-  }
-
-  // Atomically consume challenge and create staff + auth records in a transaction
-  const newEmployee = await confirmEmployeeCreationTransaction(challengeId, {
-    full_name: payload.full_name,
-    email: payload.email,
-    password_hash: payload.password_hash,
-    must_change_password:payload.must_change_password,
-    role: payload.role,
-    branch_id: payload.branch_id,
-    status: 'active',
-  });
-
-  if (!newEmployee) {
-    throw new AuthError('This creation approval has already been confirmed or invalidated.', 401);
-  }
-
-  await recordAuthenticationAttempt({
-    employee_id: newEmployee.id,
-    email: newEmployee.email,
-    event_type: 'employee_creation_confirmed',
-    ip_address: meta?.ip_address,
-    user_agent: meta?.user_agent,
-    details: {
-      requesting_admin: payload.createdByAdminId,
-      approver_id: approverActor?.id ?? challenge.employee_id,
-      role: newEmployee.role,
-    },
-  });
-
-  return newEmployee;
+export async function confirmEmployeeCreation(challengeId:string,rawOtp:string,approverActor:PublicEmployee,
+  meta?:{ip_address?:string|null;user_agent?:string|null}):Promise<PublicEmployee> {
+  if(!approverActor?.id) throw new AuthError('An authenticated approver is required.',401);
+  const employee=await confirmEmployeeCreationTransaction(challengeId,rawOtp,approverActor,meta);
+  if(!employee) throw new AuthError('Invalid HR manager approval code.',401);
+  return employee;
 }
 
 export async function updateEmployeeDetails(
@@ -919,6 +815,7 @@ export async function updateEmployeeDetails(
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<PublicEmployee> {
   requireAdministrator(adminActor);
+  if(!await employeeHasPermission(adminActor.id,'employees.manage')) throw new AuthError('Employee management permission is not granted.',403);
 
   const target = await findEmployeeById(targetId);
   if (!target) {
@@ -1031,6 +928,7 @@ export async function initiateEmployeeDeactivation(
   meta?: { ip_address?: string | null; user_agent?: string | null }
 ): Promise<{ challengeId: string; hrManagerEmail: string }> {
   requireAdministrator(adminActor);
+  if(!await employeeHasPermission(adminActor.id,'employees.manage')) throw new AuthError('Employee management permission is not granted.',403);
 
   const target = await findEmployeeById(targetId);
   if (!target) {
@@ -1098,116 +996,13 @@ export async function initiateEmployeeDeactivation(
   };
 }
 
-export async function confirmEmployeeDeactivation(
-  challengeId: string,
-  rawOtp: string,
-  approverActor?: PublicEmployee,
-  meta?: { ip_address?: string | null; user_agent?: string | null }
-): Promise<boolean> {
-  const challenge = await findOtpChallenge(challengeId, 'employee_deactivation');
-
-  if (!challenge) {
-    throw new AuthError('Invalid or expired deactivation challenge.', 401);
-  }
-
-  if (challenge.consumed_at) {
-    throw new AuthError('This deactivation approval has already been confirmed.', 401);
-  }
-
-  if (parseDateSafe(challenge.expires_at) < new Date()) {
-    throw new AuthError('This deactivation approval code has expired.', 401);
-  }
-
-  if (challenge.attempts >= challenge.max_attempts) {
-    throw new AuthError('Maximum verification attempts exceeded.', 401);
-  }
-
-  await incrementOtpAttempts(challengeId);
-
-  if (!otpMatches(rawOtp, challenge.code_hash)) {
-    await recordAuthenticationAttempt({
-      employee_id: challenge.employee_id,
-      email: 'approver@system',
-      event_type: 'wrong_otp',
-      ip_address: meta?.ip_address,
-      user_agent: meta?.user_agent,
-      details: { purpose: 'employee_deactivation' },
-    });
-    throw new AuthError('Invalid HR manager approval code.', 401);
-  }
-
-  const payload = JSON.parse(challenge.metadata ?? '{}') as {
-    targetId: number;
-    targetEmail: string;
-    requestedByAdminId: number;
-    intendedApproverId?: number;
-  };
-
-  // Dual Control enforcement: Requester CANNOT approve their own request
-  if (approverActor) {
-    if (approverActor.id === payload.requestedByAdminId) {
-      throw new AuthError('Dual control violation: Requester cannot approve their own deactivation request.', 403, 'SELF_APPROVAL_PROHIBITED');
-    }
-    if (approverActor.id === payload.targetId) {
-      throw new AuthError('Self-deactivation approval is prohibited.', 403, 'SELF_DEACTIVATION_PROHIBITED');
-    }
-    if (approverActor.status !== 'active') {
-      throw new AuthError('Approver account is inactive.', 403);
-    }
-    if (approverActor.role !== 'higher_manager' && approverActor.role !== 'admin') {
-      throw new AuthError('Approver is not authorized to approve employee deactivation.', 403);
-    }
-    if (approverActor.id !== challenge.employee_id) {
-      throw new AuthError('Only the assigned approver can confirm this request.', 403, 'WRONG_APPROVER');
-    }
-  }
-
-  // Re-check target employee and active admin count at confirmation time
-  const target = await findEmployeeById(payload.targetId);
-  if (!target) {
-    throw new AuthError('Target employee record no longer exists.', 404);
-  }
-  if (target.status === 'inactive') {
-    throw new AuthError('Employee is already inactive.', 400);
-  }
-  if (target.role === 'admin') {
-    const activeAdmins = await countActiveAdmins();
-    if (activeAdmins <= 1) {
-      throw new AuthError('Cannot deactivate the last active Administrator.', 400);
-    }
-  }
-
-  // Atomically consume challenge, deactivate staff, and revoke all sessions in a single transaction
-  const success = await confirmEmployeeDeactivationTransaction(challengeId, payload.targetId);
-  if (!success) {
-    throw new AuthError('This deactivation approval has already been confirmed or invalidated.', 401);
-  }
-
-  await recordAuthenticationAttempt({
-    employee_id: payload.targetId,
-    email: payload.targetEmail,
-    event_type: 'employee_deactivation_confirmed',
-    ip_address: meta?.ip_address,
-    user_agent: meta?.user_agent,
-    details: {
-      requested_by: payload.requestedByAdminId,
-      approver_id: approverActor?.id ?? challenge.employee_id,
-    },
-  });
-
-  await recordAuthenticationAttempt({
-    employee_id: payload.targetId,
-    email: payload.targetEmail,
-    event_type: 'session_revoked',
-    ip_address: meta?.ip_address,
-    user_agent: meta?.user_agent,
-    details: { reason: 'deactivation' },
-  });
-
+export async function confirmEmployeeDeactivation(challengeId:string,rawOtp:string,approverActor:PublicEmployee,
+  meta?:{ip_address?:string|null;user_agent?:string|null},expectedTargetId?:number):Promise<boolean> {
+  if(!approverActor?.id) throw new AuthError('An authenticated approver is required.',401);
+  const success=await confirmEmployeeDeactivationTransaction(challengeId,rawOtp,approverActor,expectedTargetId,meta);
+  if(!success) throw new AuthError('Invalid HR manager approval code.',401);
   return true;
 }
-
-// --- Helpers & Guards ---
 
 export function requireAdministrator(actor: PublicEmployee): void {
   if (actor.role !== 'admin' && actor.role !== 'higher_manager') {

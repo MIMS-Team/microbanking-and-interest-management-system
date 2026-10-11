@@ -13,7 +13,7 @@ import {
   requireUser,
   verifyCsrf,
 } from '@/lib/server/api';
-import { findEmployeeById } from '@/lib/server/db';
+import { findEmployeeById, employeeHasPermission } from '@/lib/server/db';
 import { validateUpdateEmployeePayload } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
@@ -31,7 +31,8 @@ async function getTargetId(context: RouteContext): Promise<number> {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
-    await requireUser(request, ['admin', 'higher_manager']);
+    const {user}=await requireUser(request, ['admin', 'higher_manager']);
+    if(!await employeeHasPermission(user.id,'employees.read')) throw new ApiError('Employee read permission is not granted.',403,'FORBIDDEN');
     const id = await getTargetId(context);
     const employee = await findEmployeeById(id);
     if (!employee) throw new ApiError('User not found.', 404, 'NOT_FOUND');

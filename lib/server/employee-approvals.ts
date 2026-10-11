@@ -36,13 +36,7 @@ export async function lockEmployeeApproval(conn:PoolConnection,challengeId:strin
   const [requests]=await conn.execute<RowDataPacket[]>('SELECT * FROM approvals WHERE id=? FOR UPDATE',[metadata.approval_id]);
   const request=requests[0];
   if(!request || request.status!=='pending') throw new Error('Employee approval has already been decided.');
-  const [reviewers]=await conn.execute<RowDataPacket[]>("SELECT id FROM staff WHERE id=? AND role='higher_manager' AND status='active' FOR SHARE",[challenge.employee_id]);
-  const [requesters]=await conn.execute<RowDataPacket[]>("SELECT id FROM staff WHERE id=? AND role='admin' AND status='active' FOR SHARE",[request.requested_by]);
-  if(!reviewers.length || !requesters.length || request.requested_by===challenge.employee_id || request.intended_approver_id!==challenge.employee_id) throw new Error('Employee approval authority changed.');
-  if(request.employee_id!==null) {
-    const [targets]=await conn.execute<RowDataPacket[]>('SELECT version FROM staff WHERE id=? FOR UPDATE',[request.employee_id]);
-    if(targets[0]?.version!==request.target_version) throw new Error('Employee changed after approval was requested.');
-  }
+  if(request.intended_approver_id!==challenge.employee_id) throw new Error('Employee approval authority changed.');
   return request;
 }
 

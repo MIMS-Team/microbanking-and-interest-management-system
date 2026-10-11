@@ -1,4 +1,5 @@
-import { recordEmployeeApproval, lockEmployeeApproval, completeEmployeeApproval, assertNoAgentPortfolio } from './employee-approvals';
+import { validateMySqlConfirmation, validateSqliteConfirmation, lockAdministratorGuard, protectLastAdministrator, protectSqliteAdministrator, confirmationAudit, sqliteConfirmationAudit, type ConfirmationMeta } from './employee-confirmation';
+import { recordEmployeeApproval, completeEmployeeApproval, assertNoAgentPortfolio } from './employee-approvals';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -346,6 +347,7 @@ export async function withMySqlTransaction<T>(
   const pool = getMySqlPool();
   const conn = await pool.getConnection();
   try {
+    await conn.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
     await conn.beginTransaction();
     const result = await callback(conn);
     await conn.commit();
@@ -1602,18 +1604,18 @@ export async function createEmployee(data: CreateEmployeeData): Promise<PublicEm
 }
 
 export async function updateEmployee(id: number, data: UpdateEmployeeData): Promise<PublicEmployee | null> {
-  const current = await findEmployeeById(id);
-  if (!current) return null;
-
-  const nextName = data.full_name !== undefined ? data.full_name.trim() : current.full_name;
-  const nextEmail = data.email !== undefined ? data.email.trim().toLowerCase() : current.email;
-  const nextRole = data.role !== undefined ? data.role : current.role;
-  const nextBranch = data.branch_id !== undefined ? data.branch_id : current.branch_id;
-  const nextStatus = data.status !== undefined ? data.status : current.status;
-
   return runInTransaction(
     async (conn) => {
-      await conn.execute('SELECT id FROM staff WHERE id=? FOR UPDATE',[id]);
+      if(data.role!==undefined || data.status!==undefined) await lockAdministratorGuard(conn);
+      const [staff]=await conn.execute<RowDataPacket[]>('SELECT * FROM staff WHERE id=? FOR UPDATE',[id]);
+      const current=staff[0]; if(!current) return null;
+      const nextName = data.full_name !== undefined ? data.full_name.trim() : current.full_name;
+      const nextEmail = data.email !== undefined ? data.email.trim().toLowerCase() : current.email;
+      const nextRole = data.role !== undefined ? data.role : current.role;
+      const nextBranch = data.branch_id !== undefined ? data.branch_id : current.branch_id;
+      const nextStatus = data.status !== undefined ? data.status : current.status;
+
+      await protectLastAdministrator(conn,id,nextRole,nextStatus);
       if(nextRole!==current.role || nextBranch!==current.branch_id || nextStatus!==current.status) await assertNoAgentPortfolio(conn,id);
       if(nextBranch!==null) {
         const [branches]=await conn.execute<RowDataPacket[]>("SELECT id FROM branches WHERE id=? AND status='active' FOR SHARE",[nextBranch]);
@@ -1658,6 +1660,15 @@ export async function updateEmployee(id: number, data: UpdateEmployeeData): Prom
       };
     },
     (db) => {
+      const current=db.prepare('SELECT * FROM staff WHERE id=?').get(id) as unknown as PublicEmployee|undefined;
+      if(!current) return null;
+      const nextName = data.full_name !== undefined ? data.full_name.trim() : current.full_name;
+      const nextEmail = data.email !== undefined ? data.email.trim().toLowerCase() : current.email;
+      const nextRole = data.role !== undefined ? data.role : current.role;
+      const nextBranch = data.branch_id !== undefined ? data.branch_id : current.branch_id;
+      const nextStatus = data.status !== undefined ? data.status : current.status;
+
+      protectSqliteAdministrator(db,id,nextRole,nextStatus);
       db.prepare(`
         UPDATE staff
         SET full_name = ?, email = ?, role = ?, branch_id = ?, status = ?
@@ -1853,12 +1864,14 @@ export async function confirmPasswordResetTransaction(
  */
 export async function confirmEmployeeCreationTransaction(
   challengeId: string,
-  employeeData: CreateEmployeeData
+  rawOtp:string, actor:PublicEmployee,meta?:ConfirmationMeta
 ): Promise<PublicEmployee | null> {
-  const normalizedEmail = employeeData.email.trim().toLowerCase();
   return runInTransaction(
     async (conn) => {
-      const request = await lockEmployeeApproval(conn,challengeId);
+      const checked=await validateMySqlConfirmation(conn,challengeId,'employee_creation',rawOtp,actor,undefined,meta);
+      if(!checked.valid) return null;
+      const {payload:employeeData,request}=checked;
+      const normalizedEmail=employeeData.email.trim().toLowerCase();
       const [otpRes] = await conn.execute<ResultSetHeader>(
         `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts AND is_pending=0 AND expires_at>CURRENT_TIMESTAMP`,
         [challengeId]
@@ -1899,6 +1912,7 @@ export async function confirmEmployeeCreationTransaction(
       );
       const row = rows[0] as (PublicEmployee & RowDataPacket) | undefined;
       if (!row) throw new Error('Failed to retrieve newly confirmed employee.');
+      await confirmationAudit(conn,newId,normalizedEmail,'employee_creation_confirmed',{approver_id:actor.id},meta);
       return {
         id: Number(row.id),
         full_name: row.full_name,
@@ -1910,6 +1924,9 @@ export async function confirmEmployeeCreationTransaction(
       };
     },
     (db) => {
+      const checked=validateSqliteConfirmation(db,challengeId,'employee_creation',rawOtp,actor,undefined,meta);
+      if(!checked.valid) return null;
+      const employeeData=checked.payload,normalizedEmail=employeeData.email.trim().toLowerCase();
       const nowIso = new Date().toISOString();
       const otpRes = db.prepare(`
         UPDATE otp_challenges
@@ -1942,6 +1959,7 @@ export async function confirmEmployeeCreationTransaction(
       `).run(row.id, employeeData.password_hash);
 
       if(employeeData.must_change_password) db.prepare('UPDATE staff SET must_change_password=1,temporary_password_expires_at=CURRENT_TIMESTAMP WHERE id=?').run(row.id);
+      sqliteConfirmationAudit(db,row.id,row.email,'employee_creation_confirmed',{approver_id:actor.id},meta);
       return {
         ...row,
         created_at: toIso(row.created_at),
@@ -1956,11 +1974,16 @@ export async function confirmEmployeeCreationTransaction(
  */
 export async function confirmEmployeeDeactivationTransaction(
   challengeId: string,
-  targetEmployeeId: number
+  rawOtp:string, actor:PublicEmployee,expectedTargetId?:number,meta?:ConfirmationMeta
 ): Promise<boolean> {
   return runInTransaction(
     async (conn) => {
-      const request = await lockEmployeeApproval(conn,challengeId);
+      const checked=await validateMySqlConfirmation(conn,challengeId,'employee_deactivation',rawOtp,actor,expectedTargetId,meta);
+      if(!checked.valid) return false;
+      const {request,payload}=checked,targetEmployeeId=payload.targetId!;
+      const [targets]=await conn.execute<RowDataPacket[]>('SELECT role,status FROM staff WHERE id=? FOR UPDATE',[targetEmployeeId]);
+      if(!targets[0]||targets[0].status!=='active') throw new AuthError('Target employee is no longer active.',409);
+      await protectLastAdministrator(conn,targetEmployeeId,targets[0].role,'inactive');
       const [otpRes] = await conn.execute<ResultSetHeader>(
         `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts AND is_pending=0 AND expires_at>CURRENT_TIMESTAMP`,
         [challengeId]
@@ -1984,9 +2007,18 @@ export async function confirmEmployeeDeactivationTransaction(
       );
 
       await completeEmployeeApproval(conn,request,targetEmployeeId);
+      const [auditTarget]=await conn.execute<RowDataPacket[]>('SELECT email FROM staff WHERE id=?',[targetEmployeeId]);
+      await confirmationAudit(conn,targetEmployeeId,auditTarget[0].email,'employee_deactivation_confirmed',{approver_id:actor.id},meta);
+      await confirmationAudit(conn,targetEmployeeId,auditTarget[0].email,'session_revoked',{reason:'deactivation'},meta);
       return true;
     },
     (db) => {
+      const checked=validateSqliteConfirmation(db,challengeId,'employee_deactivation',rawOtp,actor,expectedTargetId,meta);
+      if(!checked.valid) return false;
+      const targetEmployeeId=checked.payload.targetId!;
+      const target=db.prepare('SELECT role,status FROM staff WHERE id=?').get(targetEmployeeId) as {role:string;status:string}|undefined;
+      if(!target||target.status!=='active') throw new AuthError('Target employee is no longer active.',409);
+      protectSqliteAdministrator(db,targetEmployeeId,target.role,'inactive');
       const nowIso = new Date().toISOString();
       const otpRes = db.prepare(`
         UPDATE otp_challenges
@@ -2009,6 +2041,9 @@ export async function confirmEmployeeDeactivationTransaction(
         WHERE employee_id = ? AND revoked_at IS NULL
       `).run(nowIso, targetEmployeeId);
 
+      const auditTarget=db.prepare('SELECT email FROM staff WHERE id=?').get(targetEmployeeId) as {email:string};
+      sqliteConfirmationAudit(db,targetEmployeeId,auditTarget.email,'employee_deactivation_confirmed',{approver_id:actor.id},meta);
+      sqliteConfirmationAudit(db,targetEmployeeId,auditTarget.email,'session_revoked',{reason:'deactivation'},meta);
       return true;
     }
   );
@@ -2087,3 +2122,19 @@ export async function getAuditLogsForTest(
 }
 
 // Canonical MySQL DDL lives in scripts/migrate-database.mjs; runtime performs no DDL.
+
+// SQLite supports only isolated compatibility fixtures. Production permissions
+// always come from the canonical MySQL catalogue and current employee state.
+export async function employeeHasPermission(id:number,permission:string):Promise<boolean> {
+  if(getActiveDbAdapterName()==='mysql') {
+    const [rows]=await getMySqlPool().execute<RowDataPacket[]>(`SELECT s.id FROM staff s
+      JOIN role_catalog r ON r.code=s.permission_role AND r.business_role=s.role AND r.active=1
+      JOIN role_permissions p ON p.role_code=r.code AND p.permission_code=?
+      WHERE s.id=? AND s.status='active'`,[permission,id]);
+    return rows.length>0;
+  }
+  const person=getSqliteDb().prepare('SELECT role,status FROM staff WHERE id=?').get(id) as {role:string;status:string}|undefined;
+  const grants:Record<string,string[]>={'auth.login':['admin','higher_manager','manager','agent'],
+    'employees.read':['admin','higher_manager'],'employees.manage':['admin','higher_manager'],'employees.approve':['higher_manager']};
+  return person?.status==='active' && (grants[permission]??[]).includes(person.role);
+}
