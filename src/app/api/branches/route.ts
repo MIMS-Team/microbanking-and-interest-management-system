@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBranches, createBranch, updateBranch, toggleBranchStatus, getBranchName } from '@/services/branchService';
+import { getAdminDashboardData } from '@/services/adminDashboardService';
 
 // GET /api/branches — fetch paginated branch list with optional search
 export async function GET(request: NextRequest) {
@@ -10,6 +11,22 @@ export async function GET(request: NextRequest) {
   if (searchParams.get('type') === 'names') {
     const result = await getBranchName();
     return NextResponse.json(result);
+  }
+
+  // The active App Router forwards this registered API route from the root app directory.
+  if (searchParams.get('type') === 'admin-dashboard') {
+    try {
+      const result = await getAdminDashboardData();
+      return NextResponse.json(result, {
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    } catch (error) {
+      console.error('Error loading admin dashboard data:', error);
+      return NextResponse.json(
+        { error: 'Failed to load admin dashboard data.' },
+        { status: 500 }
+      );
+    }
   }
 
   //take every branch detail
@@ -133,4 +150,3 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
-

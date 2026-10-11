@@ -36,6 +36,22 @@ export interface EmployeeRecord extends Omit<Employee, 'role'> {
   secondaryOtpRoles: Array<'BM' | 'HRM'>;
 }
 
+export interface AdminDashboardData {
+  employees: { total: number; active: number };
+  customers: { total: number; active: number };
+  branches: { total: number; active: number };
+  pendingApprovals: number;
+  activeEmployeeSessions: number;
+  otpRecordCount: number;
+  databaseLatencyMs: number;
+  roleDistribution: {
+    higherManagement: number;
+    branchManagers: number;
+    agents: number;
+    administrators: number;
+  };
+}
+
 
 // Staff and employee account entity
 export interface Employee {

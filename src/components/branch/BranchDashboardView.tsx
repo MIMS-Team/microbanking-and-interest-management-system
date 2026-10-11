@@ -172,7 +172,7 @@ export default function BranchDashboardView({ onNavigateTab }: BranchDashboardVi
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Recent Transactions</h3>
-              <p className="text-xs text-slate-400">Processed within {currentBranch.name}</p>
+              <p className="text-xs text-slate-400">Processed within {currentBranch?.name ?? 'your branch'}</p>
             </div>
             <button
               onClick={() => onNavigateTab('transactions')}
