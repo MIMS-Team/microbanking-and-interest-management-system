@@ -234,6 +234,12 @@ export async function PUT(request: NextRequest) {
     if (updated === 'invalid-otp') {
       return NextResponse.json({ message: 'Invalid or expired HRM OTP.' }, { status: 403 });
     }
+    if (updated === 'missing-ceo-replacement') {
+      return NextResponse.json(
+        { message: 'Assign another active CEO before changing this CEO to a different role.' },
+        { status: 409 }
+      );
+    }
     if (updated === 'missing-otp-role-replacement') {
       return NextResponse.json(
         { message: 'Assign another active employee to cover every Admin, BM, or HRM responsibility being removed before saving these changes.' },
@@ -360,6 +366,12 @@ export async function PATCH(request: NextRequest) {
       const isActive = await toggleEmployeeStatus(employeeId, otpCode.trim(), otpId, otpEmployeeId);
       if (isActive === 'invalid-otp') {
         return NextResponse.json({ message: 'Invalid or expired HRM OTP.' }, { status: 403 });
+      }
+      if (isActive === 'missing-ceo-replacement') {
+        return NextResponse.json(
+          { message: 'Another active CEO must be assigned before suspending this CEO.' },
+          { status: 409 }
+        );
       }
       if (isActive === 'missing-otp-role-replacement') {
         return NextResponse.json(

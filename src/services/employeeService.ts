@@ -171,9 +171,13 @@ export async function getMissingEmployeeCoverage(
     current.has_hrm_otp_role === true &&
     requestedOtpRoles !== null &&
     !requestedOtpRoles.includes('HRM');
+  const losesCeo = remainsActive &&
+    current.role_title === 'CEO' &&
+    targetRoleId !== null &&
+    targetRoleRows[0]?.title !== 'CEO';
   const losesAnyOnDeactivation = current.is_active === true && deactivate;
 
-  if (!losesAdmin && !losesBm && !losesHrm && !losesAnyOnDeactivation) {
+  if (!losesAdmin && !losesBm && !losesHrm && !losesCeo && !losesAnyOnDeactivation) {
     return [];
   }
 
@@ -199,7 +203,14 @@ export async function getMissingEmployeeCoverage(
         WHERE os.otprole = 'HRM'
           AND e.is_active = true
           AND e.employee_id <> ${employeeId}
-      ) AS has_hrm_replacement
+      ) AS has_hrm_replacement,
+      EXISTS (
+        SELECT 1 FROM employee e
+        JOIN role r ON r.role_id = e.role_id
+        WHERE r.title = 'CEO'
+          AND e.is_active = true
+          AND e.employee_id <> ${employeeId}
+      ) AS has_ceo_replacement
   `;
   const replacements = replacementRows[0];
   const missing: string[] = [];
@@ -216,6 +227,10 @@ export async function getMissingEmployeeCoverage(
   if ((losesHrm || (losesAnyOnDeactivation && current.has_hrm_otp_role === true)) &&
       !replacements.has_hrm_replacement) {
     missing.push('HRM');
+  }
+  if ((losesCeo || (losesAnyOnDeactivation && current.role_title === 'CEO')) &&
+      !replacements.has_ceo_replacement) {
+    missing.push('CEO');
   }
   return missing;
 }
@@ -319,7 +334,7 @@ export async function updateEmployee(
   otpCode: string,
   otpId: number,
   otpEmployeeId: number
-): Promise<boolean | null | 'invalid-otp' | 'invalid-secondary-role' | 'missing-otp-role-replacement'> {
+): Promise<boolean | null | 'invalid-otp' | 'invalid-secondary-role' | 'missing-otp-role-replacement' | 'missing-ceo-replacement'> {
   const roleRows = await sql`SELECT title FROM role WHERE role_id = ${data.roleId}`;
   const isHigherManagement = roleRows[0]?.title === 'Higher Management';
   if (roleRows.length === 0 || (!isHigherManagement && data.secondaryOtpRoles.length > 0)) {
@@ -332,6 +347,7 @@ export async function updateEmployee(
     data.secondaryOtpRoles
   );
   if (missingCoverage === null) return null;
+  if (missingCoverage.includes('CEO')) return 'missing-ceo-replacement';
   if (missingCoverage.length > 0) return 'missing-otp-role-replacement';
 
   const otpValid = await validateOtp(otpCode, otpId, otpEmployeeId, 'EU');
@@ -355,8 +371,12 @@ export async function updateEmployee(
     currentEmployeeRows[0].is_active === true &&
     currentEmployeeRows[0].role_title === 'Admin' &&
     roleRows[0].title !== 'Admin';
+  const losesCeo =
+    currentEmployeeRows[0].is_active === true &&
+    currentEmployeeRows[0].role_title === 'CEO' &&
+    roleRows[0].title !== 'CEO';
 
-  if (!hasExistingAssignments && !hasRequestedAssignments && !losesAdmin) {
+  if (!hasExistingAssignments && !hasRequestedAssignments && !losesAdmin && !losesCeo) {
     const result = await sql`
       UPDATE employee
       SET branch_id = ${data.branchId},
@@ -417,7 +437,22 @@ export async function updateEmployee(
               AND replacement.is_active = true
               AND replacement.employee_id <> previous.employee_id
           )
-      ) AS replacement_missing
+      ) AS replacement_missing,
+      EXISTS (
+        SELECT 1
+        FROM previous_employee previous
+        JOIN role target_role ON target_role.role_id = ${data.roleId}
+        WHERE previous.is_active = true
+          AND previous.role_title = 'CEO'
+          AND target_role.title <> 'CEO'
+          AND NOT EXISTS (
+            SELECT 1 FROM employee replacement
+            JOIN role replacement_role ON replacement_role.role_id = replacement.role_id
+            WHERE replacement_role.title = 'CEO'
+              AND replacement.is_active = true
+              AND replacement.employee_id <> previous.employee_id
+          )
+      ) AS ceo_missing
     ),
     updated_employee AS (
       UPDATE employee e
@@ -431,6 +466,7 @@ export async function updateEmployee(
       CROSS JOIN replacement_check check_result
       WHERE e.employee_id = previous.employee_id
         AND check_result.replacement_missing = false
+        AND check_result.ceo_missing = false
       RETURNING e.employee_id
     ),
     removed_sender_roles AS (
@@ -459,8 +495,10 @@ export async function updateEmployee(
     )
     SELECT
       (SELECT replacement_missing FROM replacement_check) AS replacement_missing,
+      (SELECT ceo_missing FROM replacement_check) AS ceo_missing,
       (SELECT employee_id FROM updated_employee) AS employee_id
   `;
+  if (result[0]?.ceo_missing) return 'missing-ceo-replacement';
   if (result[0]?.replacement_missing) {
     return 'missing-otp-role-replacement';
   }
@@ -475,9 +513,10 @@ export async function toggleEmployeeStatus(
   otpCode: string,
   otpId: number,
   otpEmployeeId: number
-): Promise<boolean | null | 'invalid-otp' | 'missing-otp-role-replacement'> {
+): Promise<boolean | null | 'invalid-otp' | 'missing-otp-role-replacement' | 'missing-ceo-replacement'> {
   const missingCoverage = await getMissingEmployeeCoverage(employeeId, null, null, true);
   if (missingCoverage === null) return null;
+  if (missingCoverage.includes('CEO')) return 'missing-ceo-replacement';
   if (missingCoverage.length > 0) return 'missing-otp-role-replacement';
 
   const otpValid = await validateOtp(otpCode, otpId, otpEmployeeId, 'ET');
@@ -486,12 +525,41 @@ export async function toggleEmployeeStatus(
   }
 
   const result = await sql`
-    UPDATE employee
-    SET is_active = NOT is_active
-    WHERE employee_id = ${employeeId}
-    RETURNING is_active
+    WITH current_employee AS (
+      SELECT e.employee_id, e.is_active, r.title AS role_title
+      FROM employee e
+      JOIN role r ON r.role_id = e.role_id
+      WHERE e.employee_id = ${employeeId}
+    ),
+    ceo_check AS (
+      SELECT EXISTS (
+        SELECT 1 FROM current_employee current
+        WHERE current.is_active = true
+          AND current.role_title = 'CEO'
+          AND NOT EXISTS (
+            SELECT 1 FROM employee replacement
+            JOIN role replacement_role ON replacement_role.role_id = replacement.role_id
+            WHERE replacement_role.title = 'CEO'
+              AND replacement.is_active = true
+              AND replacement.employee_id <> current.employee_id
+          )
+      ) AS replacement_missing
+    ),
+    updated_employee AS (
+      UPDATE employee e
+      SET is_active = NOT e.is_active
+      FROM current_employee current
+      CROSS JOIN ceo_check
+      WHERE e.employee_id = current.employee_id
+        AND ceo_check.replacement_missing = false
+      RETURNING e.is_active
+    )
+    SELECT ceo_check.replacement_missing, updated_employee.is_active
+    FROM ceo_check
+    LEFT JOIN updated_employee ON true
   `;
-  return result.length > 0 ? Boolean(result[0].is_active) : null;
+  if (result[0]?.replacement_missing) return 'missing-ceo-replacement';
+  return result[0]?.is_active == null ? null : Boolean(result[0].is_active);
 }
 
 export type EmployeePasswordReset = {

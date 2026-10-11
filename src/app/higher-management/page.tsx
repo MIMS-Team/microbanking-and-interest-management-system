@@ -3,12 +3,12 @@
 import { useState } from 'react';
 import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
 import HigherMgmtDashboardView from '@/components/higher-mgmt/HigherMgmtDashboardView';
-import HrmApprovalsView from '@/components/higher-mgmt/HrmApprovalsView';
+import BranchNetworkView from '@/components/higher-mgmt/BranchNetworkView';
+import EmployeeDirectoryView from '@/components/higher-mgmt/EmployeeDirectoryView';
 import ReportsView from '@/components/common/ReportsView';
-import BranchesView from '@/components/common/BranchesView';
 import {
   LayoutDashboard,
-  ShieldCheck,
+  Users,
   FileSpreadsheet,
   Building2,
 } from 'lucide-react';
@@ -19,7 +19,7 @@ export default function HigherManagementPage() {
 
   const navTabs: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'hrm-approvals', label: 'HRM Authorization', icon: ShieldCheck },
+    { id: 'employees', label: 'Employees', icon: Users },
     { id: 'reports', label: 'Executive Reports', icon: FileSpreadsheet },
     { id: 'branches', label: 'Branch Network', icon: Building2 },
   ];
@@ -38,9 +38,9 @@ export default function HigherManagementPage() {
       {/* 2. Workspace Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'dashboard' && <HigherMgmtDashboardView onNavigateTab={setActiveTab} />}
-        {activeTab === 'hrm-approvals' && <HrmApprovalsView />}
+        {activeTab === 'employees' && <EmployeeDirectoryView />}
         {activeTab === 'reports' && <ReportsView />}
-        {activeTab === 'branches' && <BranchesView />}
+        {activeTab === 'branches' && <BranchNetworkView />}
       </main>
     </div>
   );

@@ -742,6 +742,12 @@ export default function UserManagementView() {
             <span>Admin</span>
           </span>
         );
+      case 'CEO':
+        return (
+          <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-amber-800">
+            CEO
+          </span>
+        );
       default:
         return (
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
@@ -855,7 +861,6 @@ export default function UserManagementView() {
                   ...branches.map((branch) => ({
                     value: branch.id,
                     label: branch.name,
-                    sublabel: `Branch ID: ${branch.id}`,
                   })),
                 ]}
                 value={employeeBranchFilter}
@@ -1106,7 +1111,6 @@ export default function UserManagementView() {
                     ...branches.map((branch) => ({
                       value: branch.id,
                       label: branch.name,
-                      sublabel: `Branch ID: ${branch.id}`,
                     })),
                   ]}
                   value={customerBranchFilter}
@@ -1343,7 +1347,6 @@ export default function UserManagementView() {
               options={branches.map((branch) => ({
                 value: branch.id,
                 label: branch.name,
-                sublabel: `Branch ID: ${branch.id}`,
               }))}
               value={formBranchId}
               onChange={(branchId) => {
@@ -1567,7 +1570,6 @@ export default function UserManagementView() {
               options={branches.map((branch) => ({
                 value: branch.id,
                 label: branch.name,
-                sublabel: `Branch ID: ${branch.id}`,
               }))}
               value={formBranchId}
               onChange={(branchId) => {

@@ -28,7 +28,6 @@ export default function BranchesView() {
   const [totalBranches, setTotalBranches] = useState(0);
   const [searchInput, setSearchInput] = useState('');  //input in the serch bar
   const [searchQuery, setSearchQuery] = useState('');   //the quering data
-  const [searchColumn, setSearchColumn] = useState('name');  //column name to search
 
   //pagination and loading data
   const [currentPage, setCurrentPage] = useState(1);
@@ -103,7 +102,6 @@ export default function BranchesView() {
         page: currentPage.toString(),
         pageSize: pageSize.toString(),
         search: searchQuery,
-        searchColumn: searchColumn,
       });
 
       const response = await fetch(`/api/branches?${params.toString()}`);
@@ -122,11 +120,11 @@ export default function BranchesView() {
     }
   };
 
-  // Re-fetch when page, page size, search query, or column filter changes
+  // Re-fetch when pagination or branch-name search changes
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     loadBranches();
-  }, [currentPage, pageSize, searchQuery, searchColumn]);
+  }, [currentPage, pageSize, searchQuery]);
 
   // Reset form fields to empty defaults
   const resetForm = () => {
@@ -424,28 +422,10 @@ export default function BranchesView() {
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs flex items-center justify-between gap-4">
-        <select
-          value={searchColumn}
-          onChange={(e) => {
-            setSearchColumn(e.target.value);
-            setSearchInput('');
-            setSearchQuery('');
-            setCurrentPage(1);
-          }}
-          className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-blue-500 text-slate-700"
-        >
-          <option value="name">Branch Name</option>
-          <option value="branch_id">Branch ID</option>
-        </select>
-
         <div className="relative w-full max-w-sm">
           <input
             type="text"
-            placeholder={`Search by ${
-              searchColumn === 'name'
-                ? 'branch name'
-                : 'branch ID'
-            }...`}
+            placeholder="Search by branch name..."
             value={searchInput}
             onChange={(e) => {
               setSearchInput(e.target.value);

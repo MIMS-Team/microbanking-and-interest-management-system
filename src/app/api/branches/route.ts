@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getBranches, createBranch, updateBranch, toggleBranchStatus, getBranchName } from '@/services/branchService';
+import { getBranches, createBranch, updateBranch, toggleBranchStatus, getBranchName, getBranchNetwork } from '@/services/branchService';
 import { getAdminDashboardData } from '@/services/adminDashboardService';
+import { getHigherManagementDashboardData } from '@/services/higherManagementDashboardService';
 
 // GET /api/branches — fetch paginated branch list with optional search
 export async function GET(request: NextRequest) {
@@ -11,6 +12,37 @@ export async function GET(request: NextRequest) {
   if (searchParams.get('type') === 'names') {
     const result = await getBranchName();
     return NextResponse.json(result);
+  }
+
+  if (searchParams.get('type') === 'network-overview') {
+    // The Higher Management branch screen uses this aggregate-only, read-only response.
+    const page = Number(searchParams.get('page') ?? 1);
+    const pageSize = Number(searchParams.get('pageSize') ?? 10);
+    const search = searchParams.get('search') ?? '';
+
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(pageSize) ||
+      pageSize < 1 ||
+      pageSize > 100 ||
+      search.length > 200
+    ) {
+      return NextResponse.json({ message: 'Invalid branch network search or pagination values.' }, { status: 400 });
+    }
+
+    try {
+      const result = await getBranchNetwork(page, pageSize, search);
+      return NextResponse.json(result, {
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    } catch (error) {
+      console.error('Error loading Higher Management branch network:', error);
+      return NextResponse.json(
+        { message: 'Failed to load branch network data.' },
+        { status: 500 }
+      );
+    }
   }
 
   // The active App Router forwards this registered API route from the root app directory.
@@ -29,14 +61,28 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  if (searchParams.get('type') === 'higher-management-dashboard') {
+    try {
+      const result = await getHigherManagementDashboardData();
+      return NextResponse.json(result, {
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    } catch (error) {
+      console.error('Error loading Higher Management dashboard data:', error);
+      return NextResponse.json(
+        { error: 'Failed to load Higher Management dashboard data.' },
+        { status: 500 }
+      );
+    }
+  }
+
   //take every branch detail
   const page = Number(searchParams.get('page')) || 1;
   const pageSize = Number(searchParams.get('pageSize')) || 5;
   const search = searchParams.get('search') || '';
-  const searchColumn = searchParams.get('searchColumn') || 'name';
 
   try {
-    const result = await getBranches(page, pageSize, search, searchColumn);
+    const result = await getBranches(page, pageSize, search);
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error fetching branches:', error);

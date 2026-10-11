@@ -24,6 +24,39 @@ export interface BranchOption {
   name: string;
 };
 
+export interface BranchNetworkRecord {
+  id: string;
+  name: string;
+  address: string;
+  status: boolean;
+  totalEmployees: number;
+  activeEmployees: number;
+  totalAgents: number;
+  activeAgents: number;
+  totalCustomers: number;
+  activeCustomers: number;
+  managers: Array<{
+    name: string;
+    email: string;
+    role: string;
+  }>;
+}
+
+export interface BranchNetworkPage {
+  branches: BranchNetworkRecord[];
+  total: number;
+  summary: {
+    branches: number;
+    activeBranches: number;
+    employees: number;
+    activeEmployees: number;
+    agents: number;
+    activeAgents: number;
+    customers: number;
+    activeCustomers: number;
+  };
+}
+
 export interface RoleOption {
   id: string;
   title: string;
@@ -51,6 +84,53 @@ export interface AdminDashboardData {
     agents: number;
     administrators: number;
   };
+}
+
+export interface HigherManagementDashboardData {
+  employees: { total: number; active: number };
+  customers: { total: number; active: number };
+  branches: { total: number; active: number };
+  activeSavingsAccounts: number;
+  currentSavingsBalance: number;
+  activeFixedDepositBalance: number;
+  activeFixedDepositCount: number;
+  currentMonthNetDeposits: number;
+  previousMonthNetDeposits: number;
+  monthlyTransactions: Array<{
+    month: string;
+    deposits: number;
+    withdrawals: number;
+    savingsInterest: number;
+    fixedDepositInterest: number;
+  }>;
+  roleDistribution: {
+    ceos: number;
+    higherManagement: number;
+    hrm: number;
+    branchManagers: number;
+    agents: number;
+    administrators: number;
+  };
+  databaseLatencyMs: number;
+  branchPerformance: Array<{
+    id: string;
+    name: string;
+    status: boolean;
+    totalEmployees: number;
+    activeEmployees: number;
+    totalAgents: number;
+    activeAgents: number;
+    totalCustomers: number;
+    activeCustomers: number;
+    deposits: number;
+    transactionDeposits: number;
+    transactionWithdrawals: number;
+    savingsInterest: number;
+    fixedDepositInterest: number;
+    activeAccounts: number;
+    monthlyGrowth: number | null;
+    managers: Array<{ name: string; role: string }>;
+  }>;
 }
 
 
