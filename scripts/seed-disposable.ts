@@ -1,6 +1,7 @@
 import {provisionPrincipals,fictionalPrincipals} from './database-principals.mjs';
 import {writeFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
+import {randomUUID} from 'node:crypto';
 import {disposableDatabase} from './disposable-mysql.mjs';
 import {seedBankingFixture} from '../tests/fixtures/banking-seed';
 import {getDb} from '../lib/db';
@@ -8,7 +9,7 @@ import {closePoolForTest} from '../lib/server/db';
 
 // Always CREATE a random database. No target-name argument and no runtime
 // DB_* fallback: this command cannot seed an existing/shared database.
-const output=path.resolve('.data/disposable-demo.env');
+const output=path.resolve('.data','disposable-demo-'+randomUUID()+'.env');
 try {await import('node:fs/promises').then(fs=>fs.access(output));throw new Error('A demo settings file already exists; preserve it and choose a new explicit test session.');} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;}
 const owned=await disposableDatabase();
 Object.assign(process.env,owned.environment);
@@ -27,7 +28,7 @@ try {
   const [[client]]=await owned.connection.query<import('mysql2').RowDataPacket[]>("SELECT SUBSTRING_INDEX(USER(),'@',-1) AS host");
   await provisionPrincipals(owned.connection,{database:owned.name,host:client.host,...principals});
   const environment={...owned.environment,DB_USER:principals.application.user,DB_PASSWORD:principals.application.password};
-  const file=path.resolve('.data/disposable-demo.env');
+  const file=output;
   await writeFile(file,Object.entries(environment).map(([key,value])=>key+'='+value).join('\n')+'\n',{mode:0o600,flag:'wx'});
   console.log('Fictional database seeded:',owned.name);
   console.log('Local connection settings:',file);
