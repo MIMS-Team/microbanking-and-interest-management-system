@@ -451,6 +451,9 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.fill('input[type="password"]', 'Manager@2026!');
     await page.click('button:has-text("Continue with 2FA")');
     await page.waitForURL(/\/otp/);
+    // Finish the OTP page's first font load before deliberately replacing it.
+    // Firefox reports an interrupted font request as a console error.
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.goto('/otp?challenge=different-challenge');
     await expect(page.getByText(/code has expired/i)).toBeVisible();
     await expect(page.getByText(/example.test/)).not.toBeVisible();

@@ -28,7 +28,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: sudo apt-get update && sudo apt-get install -y mysql-client openssl
-      - run: npx playwright install chromium --with-deps
+      - name: Configure the disposable service for scoped trigger DDL
+        run: MYSQL_PWD="$TEST_MYSQL_PASSWORD" mysql --host="$TEST_MYSQL_HOST" --port="$TEST_MYSQL_PORT" --user="$TEST_MYSQL_USER" -e "SET GLOBAL log_bin_trust_function_creators=1"
+      - run: npx playwright install chromium firefox webkit --with-deps
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:auth
@@ -39,6 +41,10 @@ jobs:
       - run: npm run build
       - run: npm run test:e2e:production
       - run: npm run test:smoke
+      - run: npm run test:e2e:cross
+      - run: npm run test:e2e:banking:cross
+      - run: npm run test:load
+      - run: npm run test:recovery
       - uses: actions/upload-artifact@v4
         if: always()
         with:

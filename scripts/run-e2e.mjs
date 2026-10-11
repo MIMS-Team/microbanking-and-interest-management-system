@@ -10,6 +10,8 @@ const owned = createE2eEnvironment();
 const env = {
   ...process.env, ...owned, EMAIL_PROVIDER: 'test', MIMS_E2E_RELAX_RATE_LIMITS: 'true',
   PGLITE_DATA_DIR: 'memory://', DATABASE_URL: '', NEXT_TELEMETRY_DISABLED: '1',
+  // This auth compatibility runner never inherits a real SMTP recipient path.
+  SMTP_HOST:'',SMTP_USER:'',SMTP_PASS:'',SMTP_PORT:'1',SMTP_FROM:'security@example.test',
 };
 delete env.E2E_TEST;
 delete env.VITEST;
@@ -106,7 +108,26 @@ try {
     next.once('exit', code => { clearTimeout(timeout); reject(new Error(`Dedicated server exited: ${code}`)); });
   });
   if (stopping) throw new Error('E2E interrupted.');
-  await finished(launch(['node_modules/@playwright/test/cli.js', 'test', ...process.argv.slice(2)], { detached: process.platform !== 'win32' }));
+  // Compile the owned development server's routes before browser session polling
+  // can overlap cold route compilation. GET requests do not mutate fixtures.
+  for (const route of [
+    '/login', '/otp', '/passwordreset', '/dashboard', '/profile', '/onboarding',
+    '/api/auth/login', '/api/auth/otp', '/api/auth/otp/resend',
+    '/api/auth/password-reset/request', '/api/auth/password-reset/confirm',
+    '/api/auth/logout', '/api/auth/session', '/api/auth/onboarding',
+    '/api/users', '/api/users/approvals', '/api/users/confirm-create',
+    '/api/users/1', '/api/users/1/confirm-deactivate',
+  ]) {
+    if (stopping) throw new Error('E2E interrupted.');
+    const response = await fetch(env.MIMS_E2E_BASE_URL + route, {
+      redirect: 'manual', signal: AbortSignal.timeout(120000),
+    });
+    await response.arrayBuffer();
+    if (response.status >= 500) throw new Error(`Route warmup failed: ${route} (${response.status}).`);
+  }
+  const browserArgs=process.argv.slice(2);
+  if(!browserArgs.some(arg=>arg.startsWith('--project')))browserArgs.push('--project=chromium');
+  await finished(launch(['node_modules/@playwright/test/cli.js', 'test', ...browserArgs], { detached: process.platform !== 'win32' }));
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

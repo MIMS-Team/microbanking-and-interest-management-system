@@ -24,7 +24,12 @@
     "db:principals": "node scripts/database-principals.mjs",
     "db:recovery-drill": "tsx scripts/recovery-drill.ts",
     "db:migrate:auth": "node scripts/migrate-auth-mysql.mjs",
-    "db:backup": "node scripts/database-backup.mjs"
+    "db:backup": "node scripts/database-backup.mjs",
+    "test:e2e:cross": "node scripts/run-cross-browser.mjs",
+    "test:e2e:banking": "node scripts/run-auth-production-e2e.mjs --banking",
+    "test:e2e:banking:cross": "node scripts/run-cross-browser.mjs --banking",
+    "test:load": "node scripts/run-auth-production-e2e.mjs --load",
+    "test:recovery": "node scripts/run-recovery-verification.mjs"
   },
   "dependencies": {
     "exceljs": "4.4.0",
@@ -53,5 +58,9 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "unrs-resolver@1.12.2": true
   }
 }

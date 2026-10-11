@@ -15,7 +15,7 @@ import {confirmEmployeeCreation,confirmEmployeeDeactivation,hashOtp,passwordHash
 import type {Staff} from '../lib/types';
 import {claimJob,finishJob,heartbeatJob,fenceJob,mysqlJobDatabase} from '../scripts/job-claims.mjs';
 import {preflightDatabase} from '../scripts/database-preflight.mjs';
-import {fictionalPrincipals,provisionPrincipals} from '../scripts/database-principals.mjs';
+import {fictionalPrincipals,provisionPrincipals,grantOwnedRestoreTarget} from '../scripts/database-principals.mjs';
 import {backupDatabase,restoreDisposableBackup,containsDatabaseSelection} from '../scripts/database-backup.mjs';
 import {pruneBackups} from '../scripts/backup-retention.mjs';
 import {disposableDatabase} from '../scripts/disposable-mysql.mjs';
@@ -432,7 +432,8 @@ test('real restricted principals separate DDL, append-only application writes, o
     await target.connection.query('USE `'+fixture.owned.name+'`');
     await assert.rejects(restoreDisposableBackup(target,file,{key}),/connection identity/);
     await target.connection.query('USE `'+target.name+'`');
-    await restoreDisposableBackup(target,file,{keyring:{'fictional-key-v2':key},key:undefined,mysqlBinary:bins?path.join(bins,'mysql.exe'):'mysql'});
+    const restoreConfig=await grantOwnedRestoreTarget(fixture.owned.connection,target,principals.restore,client.host);
+    await restoreDisposableBackup(target,file,{keyring:{'fictional-key-v2':key},key:undefined,restoreConfig,mysqlBinary:bins?path.join(bins,'mysql.exe'):'mysql'});
     const report=await preflightDatabase(target.connection);
     assert.equal(report.findings.some((f:{code:string})=>f.code==='ledger-reconciliation'),false);
     await fixture.database.query('UPDATE backup_inventory SET exported_at=UTC_TIMESTAMP(3) WHERE file_path=$1',[file]);
@@ -444,6 +445,8 @@ test('real restricted principals separate DDL, append-only application writes, o
     const run=(await fixture.database.query("INSERT INTO job_runs(job,boundary,status,finished_at) VALUES('fictional-retention','old','complete',UTC_TIMESTAMP(3))")).insertId!;
     await fixture.database.query(`INSERT INTO backup_inventory(job_run_id,file_path,checksum,key_id,created_at,exported_at)
       VALUES($1,$2,$3,'fictional-key-v2','2000-01-01','2000-01-01')`,[run,oldFile,createHash('sha256').update(bytes).digest('hex')]);
+    assert.equal(await pruneBackups(fixture.database,directory,1),0,'Legacy export timestamps alone cannot authorize deletion.');
+    await fixture.database.query('UPDATE backup_inventory SET export_verified_at=UTC_TIMESTAMP(3),export_checksum=checksum WHERE file_path=$1',[oldFile]);
     assert.equal(await pruneBackups(fixture.database,directory,1),1);
     await assert.rejects(readFile(oldFile),/ENOENT/);
     assert.equal((await readFile(unrelated)).toString(),'not owned');await unlink(unrelated);

@@ -72,7 +72,7 @@ test('fresh installation is versioned, repeatable, and rejects changed checksums
     MIGRATION_DB_HOST:fixture.owned.config.host,MIGRATION_DB_PORT:String(fixture.owned.config.port),
     MIGRATION_DB_USER:fixture.owned.config.user,MIGRATION_DB_PASSWORD:fixture.owned.config.password,MIGRATION_DB_NAME:fixture.owned.name}});
   const rows=(await fixture.database.query<{status:string}>('SELECT status FROM schema_migrations')).rows;
-  assert.equal(rows.length,6);assert.ok(rows.every(r=>r.status==='complete'));
+  assert.equal(rows.length,11);assert.ok(rows.every(r=>r.status==='complete'));
   await fixture.database.query("UPDATE schema_migrations SET checksum=REPEAT('0',64) WHERE version='001-auth.sql'");
   await assert.rejects(migrateDatabase(fixture.owned.connection!),/checksum mismatch/);
   // Restore only this owned verification record using the exact source checksum.

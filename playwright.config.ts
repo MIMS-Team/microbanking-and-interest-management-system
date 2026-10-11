@@ -24,7 +24,9 @@ export default defineConfig({
     baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    // Traces and screenshots retain failure evidence without recording every
+    // independent employee context throughout long OTP workflows.
+    video: 'off',
     actionTimeout: 30000,
     navigationTimeout: 60000, // First visits compile routes on the dedicated dev server.
   },
@@ -35,5 +37,8 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
       },
     },
+    {name:'firefox',use:{...devices['Desktop Firefox']}},
+    {name:'webkit',use:{...devices['Desktop Safari']}},
+    {name:'edge',use:{...devices['Desktop Edge'],channel:'msedge'}},
   ],
 });
