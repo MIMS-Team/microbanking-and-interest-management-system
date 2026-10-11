@@ -8,14 +8,15 @@ import {
   requireUser,
   verifyCsrf,
 } from '@/lib/server/api';
-import { listEmployees } from '@/lib/server/db';
+import { listEmployees,employeeHasPermission,AuthError } from '@/lib/server/db';
 import { validateCreateEmployeePayload } from '@/lib/server/validation';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   try {
-    await requireUser(request, ['admin', 'higher_manager']);
+    const {user}=await requireUser(request, ['admin', 'higher_manager']);
+    if(!await employeeHasPermission(user.id,'employees.read')) throw new AuthError('Employee read permission is not granted.',403);
     const { searchParams } = new URL(request.url);
     const roleParam = searchParams.get('role');
     const statusParam = searchParams.get('status');

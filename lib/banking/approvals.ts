@@ -1,3 +1,4 @@
+import { applyCorrection } from './corrections';
 import { consumeApprovalCode } from '../auth/approvals';
 // Person 5: approval authorization and routing. Domain modules apply their own changes.
 import type { Queryable } from '../db';
@@ -19,10 +20,10 @@ export async function reviewApproval(tx: Queryable, user: Staff, input: Input) {
   if (approval.status !== 'pending') throw new BusinessError('This request has already been reviewed.', 409);
   if (approval.intended_approver_id!==null && approval.intended_approver_id!==user.id) throw new BusinessError('Only the assigned reviewer can decide this request.',403);
   if (approval.expires_at && new Date(approval.expires_at+'Z').getTime()<=Date.now()) throw new BusinessError('This request has expired.',409);
-  const tables:Record<string,string>={customer:'customers',account:'savings_accounts',fd:'fixed_deposits',staff:'staff',branch:'branches',agent:'staff'};
+  const tables:Record<string,string>={customer:'customers',account:'savings_accounts',fd:'fixed_deposits',staff:'staff',branch:'branches',agent:'staff',transaction:'money_operations'};
   const table=tables[approval.type.split('.')[0]];
   if (!table) throw new BusinessError('Invalid approval target.');
-  if (approval.entity_id!==null) {
+  if (approval.entity_id!==null && approval.type!=='transaction.reverse') {
     const target=await first<{version:number}>(tx,`SELECT version FROM ${table} WHERE id=$1 FOR UPDATE`,[approval.entity_id]);
     if(input.decision==='approved' && target.version!==approval.target_version) throw new BusinessError('This record changed after submission. Submit a fresh request.',409);
   }
@@ -36,7 +37,7 @@ export async function reviewApproval(tx: Queryable, user: Staff, input: Input) {
     if(approval.payload.hr_challenge_required) throw new BusinessError('Confirm this employee request through its assigned HR approval challenge.',409);
     if (approval.type.startsWith('staff.')) await consumeApprovalCode(tx,user,approval.id,input);
     await applyApproval(tx, user, approval);
-    if (approval.entity_id!==null) await tx.query(`UPDATE ${table} SET version=version+1 WHERE id=$1`,[approval.entity_id]);
+    if (approval.entity_id!==null && approval.type!=='transaction.reverse') await tx.query(`UPDATE ${table} SET version=version+1 WHERE id=$1`,[approval.entity_id]);
   } else {
     // A rejected creation is retained as evidence; no cash has been posted yet.
     const tables: Record<string, string> = {
@@ -59,6 +60,7 @@ export async function applyApproval(tx: Queryable, user: Staff, approval: Approv
   if (approval.type.startsWith('customer.')) return applyCustomerApproval(tx, approval);
   if (approval.type.startsWith('account.') || approval.type.startsWith('fd.')) return applyAccountApproval(tx, user, approval);
   switch (approval.type) {
+    case 'transaction.reverse': await applyCorrection(tx,user,approval); return;
     case 'branch.create': case 'branch.update': return applyBranchChange(tx, approval);
     case 'staff.create': case 'staff.update': return applyStaffChange(tx, user, approval);
     case 'agent.reassign': await applyAgentReassignment(tx,user,approval.payload,approval.id); return;

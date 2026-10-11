@@ -1,3 +1,4 @@
+import { effectiveRate } from './effective-rate';
 // Person 3: fixed-deposit maturity/renewal and savings inactivity.
 import type { Queryable } from '../db';
 import type { Staff } from '../types';
@@ -32,16 +33,17 @@ export async function processMaturities(tx: Queryable, user: Staff) {
         payout_date=$1 WHERE id=$2`, [maturity, fd.id]);
 
       if (fd.auto_renew && source.status === 'active') {
-        if(process.env.FD_RENEWAL_POLICY!=='same-contract') throw new BusinessError('Configure an approved FD renewal rate policy before renewing.',409);
+        if(!['same-contract','current-effective-product'].includes(process.env.FD_RENEWAL_POLICY??'')) throw new BusinessError('Configure an approved FD renewal rate policy before renewing.',409);
         const rate = await first<RateRow>(tx, 'SELECT * FROM rates WHERE id=$1', [fd.rate_id]);
+        const renewalRate=process.env.FD_RENEWAL_POLICY==='same-contract'?fd.annual_rate:await effectiveRate(tx,rate.id,new Date(Date.parse(maturity+'T00:00:00Z')-330*60000).toISOString().slice(0,23).replace('T',' '));
         const next = await first<{id: number}>(tx, `INSERT INTO fixed_deposits
           (fd_number,source_account_id,rate_id,principal,annual_rate,term_months,auto_renew,status,opened_at,maturity_date,renewed_from_id)
           VALUES($1,$2,$3,$4,$5,$6,true,'active',CAST($7 AS DATETIME)-INTERVAL 330 MINUTE,
             DATE_ADD($7,INTERVAL $6 MONTH),$8)`,
-          [reference('FD'), source.id, rate.id, fd.principal, fd.annual_rate, fd.term_months, maturity, fd.id]);
+          [reference('FD'), source.id, rate.id, fd.principal, renewalRate, fd.term_months, maturity, fd.id]);
         // Principal stays invested. A new term record preserves the old rate and
         // dates instead of overwriting the financial contract's history.
-        await audit(tx, user, 'fd.renewed', 'fixed_deposit', next.id, source.branch_id, {renewed_from_id: fd.id, principal: fd.principal, annual_rate: fd.annual_rate,policy:'same-contract'});
+        await audit(tx, user, 'fd.renewed', 'fixed_deposit', next.id, source.branch_id, {renewed_from_id: fd.id, principal: fd.principal, annual_rate: renewalRate,policy:process.env.FD_RENEWAL_POLICY});
         renewed++;
       } else {
         const op = await operation(tx, user, 'fd_maturity', 'Matured fixed deposit: principal returned', `fd-maturity-${fd.id}`);

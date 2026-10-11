@@ -5,23 +5,23 @@ import type { Staff } from '../types';
 import { BusinessError } from '../validation';
 import { first, reference } from './shared';
 
-export async function postEntry(tx: Queryable, operationId: number, accountId: number, amount: string, type: string): Promise<void> {
+export async function postEntry(tx: Queryable, operationId: number, accountId: number, amount: string, type: string, reversesEntryId:number|null=null): Promise<void> {
   await first(tx,'SELECT id FROM savings_accounts WHERE id=$1 FOR UPDATE',[accountId]);
   const changed = await tx.query(`UPDATE savings_accounts SET balance=balance+CAST($1 AS DECIMAL(14,2))
     WHERE id=$2 AND balance+CAST($1 AS DECIMAL(14,2))>=0`,[amount,accountId]);
   if (!changed.affectedRows) throw new BusinessError('Insufficient funds.');
   const balance=await first<{balance:string}>(tx,'SELECT balance FROM savings_accounts WHERE id=$1',[accountId]);
-  await tx.query(`INSERT INTO ledger_entries(operation_id,account_id,type,amount,balance_before,balance_after)
-    VALUES($1,$2,$3,$4,CAST($5 AS DECIMAL(14,2))-CAST($4 AS DECIMAL(14,2)),$5)`,[operationId,accountId,type,amount,balance.balance]);
+  await tx.query(`INSERT INTO ledger_entries(operation_id,account_id,type,amount,balance_before,balance_after,reverses_entry_id)
+    VALUES($1,$2,$3,$4,CAST($5 AS DECIMAL(14,2))-CAST($4 AS DECIMAL(14,2)),$5,$6)`,[operationId,accountId,type,amount,balance.balance,reversesEntryId]);
   const correct=await first<{ok:number}>(tx,`SELECT a.balance=COALESCE(SUM(l.amount),0) AS ok FROM savings_accounts a
     LEFT JOIN ledger_entries l ON l.account_id=a.id WHERE a.id=$1 GROUP BY a.id`,[accountId]);
   if (!correct.ok) throw new BusinessError('Account ledger reconciliation failed; transaction rolled back.',409);
 }
 
-export async function operation(tx: Queryable, user: Staff, type: string, description: string, key: string = randomUUID(), fingerprint: string = key): Promise<{id:number;duplicate:boolean}> {
+export async function operation(tx: Queryable, user: Staff, type: string, description: string, key: string = randomUUID(), fingerprint: string = key,metadata:{verifiedCustomerId?:number|null;verificationMethod?:string|null;reversesOperationId?:number|null}={}): Promise<{id:number;duplicate:boolean}> {
   try {
-    const inserted = await tx.query(`INSERT INTO money_operations(reference,actor_id,idempotency_key,request_fingerprint,type,description)
-      VALUES($1,$2,$3,$4,$5,$6)`, [reference('BT'),user.id,key,fingerprint,type,description]);
+    const inserted = await tx.query(`INSERT INTO money_operations(reference,actor_id,idempotency_key,request_fingerprint,type,description,verified_customer_id,verification_method,reverses_operation_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [reference('BT'),user.id,key,fingerprint,type,description,metadata.verifiedCustomerId??null,metadata.verificationMethod??null,metadata.reversesOperationId??null]);
     return {id:inserted.insertId!,duplicate:false};
   } catch(error) { if ((error as {code?:string}).code!=='ER_DUP_ENTRY') throw error; }
   const existing = await first<{id:number;request_fingerprint:string}>(tx,

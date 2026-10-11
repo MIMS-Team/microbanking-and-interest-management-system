@@ -1,3 +1,4 @@
+import { effectiveRate } from './effective-rate';
 // Person 3: savings, joint ownership and fixed deposit requests and approvals.
 import type { Queryable } from '../db';
 import type { Staff } from '../types';
@@ -84,7 +85,7 @@ export async function createFixedDeposit(tx: Queryable,user: Staff,input: Input)
   if (!available.allowed) throw new BusinessError('Insufficient savings funds after preserving the minimum balance.');
   const fd = await first<{id:number}>(tx,`INSERT INTO fixed_deposits(fd_number,source_account_id,rate_id,principal,annual_rate,term_months,auto_renew,maturity_date)
     VALUES($1,$2,$3,$4,$5,$6,$7,DATE_ADD(DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE),INTERVAL $6 MONTH))`,
-    [reference('FD'),source.id,rate.id,principal,rate.annual_rate,rate.term_months,input.auto_renew===true]);
+    [reference('FD'),source.id,rate.id,principal,await effectiveRate(tx,rate.id),rate.term_months,input.auto_renew===true]);
   await queue(tx,user,'fd.create',fd.id,source.branch_id,'',`Open ${rate.term_months}-month fixed deposit of LKR ${principal}`,{principal,source_account_id:source.id});
   return {message:'Fixed deposit submitted for approval. Principal is debited from savings on approval.'};
 }

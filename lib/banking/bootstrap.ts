@@ -1,3 +1,4 @@
+import { requirePermission } from '../permissions';
 // Person 5: dashboard queries and the shared frontend data contract.
 import { getDb, type Queryable } from '../db';
 import type { Bootstrap, Staff, Branch } from '../types';
@@ -19,10 +20,12 @@ async function loadBootstrap(database: Queryable,user: Staff): Promise<Bootstrap
   if (current.email.toLowerCase()!==user.email.toLowerCase()) throw new Error('Session identity mismatch');
   requireRole(current,['agent','manager','higher_manager','admin']);
   if (current.role==='admin') {
+    await requirePermission(database,current.id,'employees.read');
     const branches=(await database.query<Branch>('SELECT * FROM branches ORDER BY id')).rows;
     const staff=(await database.query<Staff>('SELECT id,full_name,email,role,branch_id,status FROM staff ORDER BY id')).rows;
     return {user:current,branches,staff,customers:[],accounts:[],fixedDeposits:[],transactions:[],approvals:[],interestRuns:[],rates:[],auditLog:[],metrics:{total_customers:0,active_accounts:0,savings_balance:'0',fixed_deposit_balance:'0',pending_approvals:0,today_transactions:0}} as Bootstrap;
   }
+  await requirePermission(database,current.id,'financial.read');
   const branch=current.role==='higher_manager'?null:current.branch_id;
   if(current.role!=='higher_manager'&&branch===null) throw new Error('Branch assignment required');
   const agent=current.role==='agent'?current.id:null;
@@ -35,7 +38,7 @@ async function loadBootstrap(database: Queryable,user: Staff): Promise<Bootstrap
       COALESCE((SELECT sum(a.balance) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active'),0) AS total_balance
       FROM customers c JOIN branches b ON b.id=c.branch_id JOIN staff s ON s.id=c.agent_id
       WHERE ($1 IS NULL OR c.branch_id=$1) AND ($2 IS NULL OR c.agent_id=$2) ORDER BY c.created_at DESC,c.id DESC`,[branch,agent]),
-    database.query(`SELECT a.*,r.annual_rate,b.name AS branch_name,${ownerNames} AS owner_names,
+    database.query(`SELECT a.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate,b.name AS branch_name,${ownerNames} AS owner_names,
       (SELECT JSON_ARRAYAGG(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS owner_ids,
       (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,
       (SELECT MIN(c.full_name) FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id) AS customer_name
@@ -59,7 +62,7 @@ async function loadBootstrap(database: Queryable,user: Staff): Promise<Bootstrap
       JSON_REMOVE(p.payload,'$.password_hash') AS payload FROM approvals p JOIN staff s ON s.id=p.requested_by
       LEFT JOIN staff r ON r.id=p.reviewed_by WHERE ($1 IS NULL OR p.branch_id=$1) AND ($2 IS NULL OR p.requested_by=$2) ORDER BY p.created_at DESC,p.id DESC`,[branch,agent]),
     database.query(`SELECT * FROM interest_runs WHERE $2 IS NULL AND ($1 IS NULL OR branch_id=$1) ORDER BY created_at DESC`,[branch,agent]),
-    database.query('SELECT * FROM rates ORDER BY id'),
+    database.query(`SELECT r.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate FROM rates r ORDER BY r.id`),
     database.query(`SELECT a.*,s.full_name AS actor_name FROM audit_logs a LEFT JOIN staff s ON s.id=a.actor_id
       WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.actor_id=$2) ORDER BY a.created_at DESC,a.id DESC LIMIT 100`,[branch,agent]),
     database.query(`SELECT
