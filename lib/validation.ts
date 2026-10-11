@@ -25,7 +25,8 @@ export function email(value: unknown, required = false): string {
 }
 export function phone(value: unknown, required = false): string {
   const result = required ? requiredText(value, 'Mobile number', 20) : optionalText(value,20);
-  if (result && !/^\+?[\d ()-]{9,20}$/.test(result)) throw new BusinessError('Enter a valid telephone number.');
+  const digits = result.replace(/\D/g, '');
+  if (result && (!/^\+?[\d ()-]+$/.test(result) || digits.length < 9 || digits.length > 15)) throw new BusinessError('Enter a valid telephone number with 9 to 15 digits.');
   return result;
 }
 /** Validate as decimal text, then let MySQL perform exact DECIMAL arithmetic. */
