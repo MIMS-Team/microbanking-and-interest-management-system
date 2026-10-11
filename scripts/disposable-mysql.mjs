@@ -25,9 +25,9 @@ export async function disposableDatabase({migrate=true}={}) {
     connection=await mysql.createConnection({...config,database:name});
     await connection.query("SET time_zone = '+00:00'");
     if(migrate) await migrateDatabase(connection);
-    handle={name,connection,config:{...config,database:name},close,
+    handle={name,connection,retainForDemo:async()=>{await connection.end();await admin.end();owned=false;ownedDatabases.delete(handle);},config:Object.freeze({...config,database:name}),close,
       environment: {DB_HOST:host,DB_PORT:String(config.port),DB_USER:user,DB_PASSWORD:password,DB_NAME:name,MIMS_AUTH_DB_ADAPTER:'mysql'}};
-    ownedDatabases.add(handle);
+    Object.freeze(handle.environment); Object.freeze(handle); ownedDatabases.add(handle);
     return handle;
   } catch(error) {await close();throw error;}
 }
