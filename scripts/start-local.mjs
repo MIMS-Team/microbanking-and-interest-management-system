@@ -114,7 +114,17 @@ if (!existingStack) {
 if (!await portAvailable(appPort)) throw new Error(`Port ${appPort} is already in use and no matching healthy tracked MIMS runtime was found. Stop the existing stack or set MIMS_LOCAL_APP_PORT.`);
 if (!await portAvailable(inboxPort)) throw new Error(`Port ${inboxPort} is already in use and no matching healthy tracked MIMS runtime was found. Stop the existing stack or set MIMS_LOCAL_INBOX_PORT.`);
 
-const mailbox = await createLocalMailbox({ inboxPort });
+const mailbox = await createLocalMailbox({ inboxPort, getRecipients: async () => {
+  const connection = await mysql.createConnection({
+    host: selected.environment.DB_HOST, port: Number(selected.environment.DB_PORT),
+    user: selected.environment.DB_USER, password: selected.environment.DB_PASSWORD,
+    database: selected.database, connectTimeout: 5000,
+  });
+  try {
+    const [recipients] = await connection.query('SELECT email, role FROM staff');
+    return recipients;
+  } finally { await connection.end(); }
+} });
 const schedulerKey = randomBytes(32).toString('hex');
 const environment = {
   ...process.env,
