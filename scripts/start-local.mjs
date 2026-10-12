@@ -12,10 +12,14 @@ if (process.env.NODE_ENV === 'production') throw new Error('The local launcher c
 const dataDirectory = resolve('.data');
 const runtimePath = resolve(dataDirectory, 'local-project-runtime.json');
 const explicitEnvFile = process.argv.find((argument) => argument.startsWith('--env-file='))?.slice('--env-file='.length);
+if (explicitEnvFile === '') throw new Error('--env-file requires a file path.');
+const requestedEnvFile = explicitEnvFile ?? process.env.MIMS_LOCAL_ENV_FILE;
 const appPort = Number(process.env.MIMS_LOCAL_APP_PORT || 3000);
 const inboxPort = Number(process.env.MIMS_LOCAL_INBOX_PORT || 8025);
 if (!Number.isInteger(appPort) || appPort < 1 || appPort > 65535) throw new Error('MIMS_LOCAL_APP_PORT must be a valid TCP port.');
 if (!Number.isInteger(inboxPort) || inboxPort < 1 || inboxPort > 65535) throw new Error('MIMS_LOCAL_INBOX_PORT must be a valid TCP port.');
+const url = `http://127.0.0.1:${appPort}`;
+const inboxURL = `http://127.0.0.1:${inboxPort}`;
 
 async function responds(url, timeout = 3000) {
   try {
@@ -25,22 +29,9 @@ async function responds(url, timeout = 3000) {
   } catch { return false; }
 }
 
-let existingStack = false;
-if (existsSync(runtimePath)) {
-  try {
-    const runtime = JSON.parse(readFileSync(runtimePath, 'utf8'));
-    if (await responds(runtime.url + '/login') && await responds(runtime.inboxURL)) {
-      console.log(`MIMS is already running.\nApplication: ${runtime.url}\nOTP inbox: ${runtime.inboxURL}\nDatabase: ${runtime.database}`);
-      existingStack = true;
-    }
-  } catch { /* A stale runtime record is replaced only after successful startup. */ }
-}
-
-if (!existingStack) {
 function candidates() {
-  if (explicitEnvFile) return [resolve(explicitEnvFile)];
+  if (requestedEnvFile) return [resolve(requestedEnvFile)];
   const paths = [];
-  if (process.env.MIMS_LOCAL_ENV_FILE) paths.push(resolve(process.env.MIMS_LOCAL_ENV_FILE));
   if (existsSync(resolve('.env.local'))) paths.push(resolve('.env.local'));
   if (existsSync(dataDirectory)) {
     paths.push(...readdirSync(dataDirectory)
@@ -79,7 +70,7 @@ async function selectDatabase() {
       if (identity.name !== environment.DB_NAME || Number(migrations.completed) !== 11 || Number(employees.employees) < 1) {
         throw new Error('database is not a complete seeded MIMS database');
       }
-      return { environment, file, database: identity.name };
+      return { environment, file, database: identity.name, modifiedAt: statSync(file).mtimeMs };
     } catch (error) {
       failures.push(`${file}: ${error.code || error.message}`);
     } finally { await connection?.end(); }
@@ -104,17 +95,32 @@ async function portAvailable(port) {
   }
 }
 
-if (!await portAvailable(appPort)) throw new Error(`Port ${appPort} is already in use and no healthy tracked MIMS runtime was found. Stop the stale process or set MIMS_LOCAL_APP_PORT.`);
-if (!await portAvailable(inboxPort)) throw new Error(`Port ${inboxPort} is already in use and no healthy tracked MIMS runtime was found. Stop the stale process or set MIMS_LOCAL_INBOX_PORT.`);
-
 const selected = await selectDatabase();
+let existingStack = false;
+if (existsSync(runtimePath)) {
+  try {
+    const runtime = JSON.parse(readFileSync(runtimePath, 'utf8'));
+    if (runtime.url === url && runtime.inboxURL === inboxURL &&
+        runtime.environmentFile === selected.file && runtime.environmentModifiedAt === selected.modifiedAt &&
+        runtime.database === selected.database && runtime.authAdapter === 'mysql' &&
+        await responds(url + '/login') && await responds(inboxURL)) {
+      console.log(`MIMS is already running.\nApplication: ${runtime.url}\nOTP inbox: ${runtime.inboxURL}\nDatabase: ${runtime.database}`);
+      existingStack = true;
+    }
+  } catch { /* A stale runtime record is replaced only after successful startup. */ }
+}
+
+if (!existingStack) {
+if (!await portAvailable(appPort)) throw new Error(`Port ${appPort} is already in use and no matching healthy tracked MIMS runtime was found. Stop the existing stack or set MIMS_LOCAL_APP_PORT.`);
+if (!await portAvailable(inboxPort)) throw new Error(`Port ${inboxPort} is already in use and no matching healthy tracked MIMS runtime was found. Stop the existing stack or set MIMS_LOCAL_INBOX_PORT.`);
+
 const mailbox = await createLocalMailbox({ inboxPort });
-const url = `http://127.0.0.1:${appPort}`;
 const schedulerKey = randomBytes(32).toString('hex');
 const environment = {
   ...process.env,
   ...selected.environment,
   NODE_ENV: 'development',
+  MIMS_AUTH_DB_ADAPTER: 'mysql',
   NEXT_TELEMETRY_DISABLED: '1',
   APP_URL: url,
   EMAIL_PROVIDER: 'smtp',
@@ -180,6 +186,7 @@ child.stdout.on('data', (data) => {
     writeFileSync(runtimePath, JSON.stringify({
       ownerToken, supervisorPid: process.pid, appPid: child.pid, url, inboxURL: mailbox.inboxURL,
       smtpPort: mailbox.smtpPort, database: selected.database, environmentFile: selected.file,
+      environmentModifiedAt: selected.modifiedAt, authAdapter: environment.MIMS_AUTH_DB_ADAPTER,
       started: new Date().toISOString(),
     }, null, 2));
     console.log(`\nMIMS local stack is ready.\nApplication: ${url}\nOTP inbox: ${mailbox.inboxURL}\nDatabase: ${selected.database}\nVerify: npm run dev:verify\n`);

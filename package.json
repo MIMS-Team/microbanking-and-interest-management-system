@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --webpack --hostname 127.0.0.1",
-    "dev:full": "node scripts/start-local.mjs",
+    "dev:full": "node -- scripts/start-local.mjs",
     "dev:verify": "node scripts/verify-local.mjs",
     "build": "next build --webpack",
     "start": "next start --hostname 127.0.0.1",

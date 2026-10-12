@@ -36,6 +36,15 @@ and the employee-notification worker. It prints the application and inbox URLs a
 writes `.data/local-project-runtime.json`. Verify the running stack with
 `npm run dev:verify`. On Windows, `Start-MIMS.cmd` runs the same launcher.
 
+To select a connection file explicitly, use `npm run dev:full -- --env-file=PATH`
+or set `MIMS_LOCAL_ENV_FILE`. An explicit file must be valid and reachable; the
+launcher does not fall back to another database. Set `MIMS_LOCAL_APP_PORT` and
+`MIMS_LOCAL_INBOX_PORT` to change the ports. An existing stack is reused only
+when its ports, connection file, file modification time, database and MySQL
+authentication adapter match. If its ports are occupied by a different setup,
+stop that setup before launching the requested configuration.
+After upgrading the launcher, restart any existing stack once to update its runtime record.
+
 Another coding agent should use `npm run dev:full` when asked to run the whole
 project. `npm run dev` starts only Next.js and still requires DB and email settings
 to be supplied separately.
