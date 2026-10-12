@@ -47,22 +47,22 @@ test('HR approval persists separately from OTP delivery and rejects stale employ
   const expiry=(await fixture.database.query<{expiry:string}>("SELECT DATE_FORMAT(expires_at,'%Y-%m-%d %H:%i:%s') AS expiry FROM approvals WHERE id=$1",[requestId])).rows[0].expiry;
   assert.equal(expiry,replacementExpiry.toISOString().slice(0,19).replace('T',' '));
   creation=replacement;
-  const created=await confirmEmployeeCreationTransaction(creation,employee);assert.ok(created);
+  const created=await confirmEmployeeCreationTransaction(creation,'123456',{...higher,status:'active',created_at:''});assert.ok(created);
   await assert.rejects(authenticateCredentials(employee.email,'FictionalPass!123'),/password.*reset|recovery|password.*change/i);
   const request=(await fixture.database.query<{status:string;employee_id:number;payload:Record<string,unknown>}>('SELECT status,employee_id,payload FROM approvals WHERE id=$1',[requestId])).rows[0];
   assert.equal(request.status,'approved');assert.equal(request.employee_id,created.id);assert.equal(request.payload.password_hash,undefined);
   const deactivation=randomBytes(24).toString('hex');
   await createOtpChallenge({id:deactivation,employee_id:4,purpose:'employee_deactivation',code_hash:hashOtp('654321'),expires_at:new Date(Date.now()+300000),metadata:{targetId:created.id,requestedByAdminId:3,intendedApproverId:4}});
   await updateEmployee(created.id,{full_name:'Fictional changed after submission'});
-  await assert.rejects(confirmEmployeeDeactivationTransaction(deactivation,created.id),/changed after/);
+  await assert.rejects(confirmEmployeeDeactivationTransaction(deactivation,'654321',{...higher,status:'active',created_at:''},created.id),/changed after/);
   assert.equal((await findOtpChallenge(deactivation,'employee_deactivation'))!.consumed_at,null);
   await createSession({token_hash:'e'.repeat(64),employee_id:created.id,expires_at:new Date(Date.now()+3600000)});
   const fresh=randomBytes(24).toString('hex');
   await createOtpChallenge({id:fresh,employee_id:4,purpose:'employee_deactivation',code_hash:hashOtp('654321'),expires_at:new Date(Date.now()+300000),metadata:{targetId:created.id,requestedByAdminId:3,intendedApproverId:4}});
-  assert.equal(await confirmEmployeeDeactivationTransaction(fresh,created.id),true);
+  assert.equal(await confirmEmployeeDeactivationTransaction(fresh,'654321',{...higher,status:'active',created_at:''},created.id),true);
   const session=(await fixture.database.query<{revoked_at:string|null;revocation_reason:string}>('SELECT revoked_at,revocation_reason FROM employee_sessions WHERE employee_id=$1',[created.id])).rows[0];
   assert.ok(session.revoked_at);assert.equal(session.revocation_reason,'employee_deactivated');
-  await assert.rejects(confirmEmployeeDeactivationTransaction(fresh,created.id),/already been decided/);
+  await assert.rejects(confirmEmployeeDeactivationTransaction(fresh,'654321',{...higher,status:'active',created_at:''},created.id),/already been decided/);
 });
 
 test('fresh installation is versioned, repeatable, and rejects changed checksums',async()=>{
@@ -72,7 +72,7 @@ test('fresh installation is versioned, repeatable, and rejects changed checksums
     MIGRATION_DB_HOST:fixture.owned.config.host,MIGRATION_DB_PORT:String(fixture.owned.config.port),
     MIGRATION_DB_USER:fixture.owned.config.user,MIGRATION_DB_PASSWORD:fixture.owned.config.password,MIGRATION_DB_NAME:fixture.owned.name}});
   const rows=(await fixture.database.query<{status:string}>('SELECT status FROM schema_migrations')).rows;
-  assert.equal(rows.length,3);assert.ok(rows.every(r=>r.status==='complete'));
+  assert.equal(rows.length,6);assert.ok(rows.every(r=>r.status==='complete'));
   await fixture.database.query("UPDATE schema_migrations SET checksum=REPEAT('0',64) WHERE version='001-auth.sql'");
   await assert.rejects(migrateDatabase(fixture.owned.connection!),/checksum mismatch/);
   // Restore only this owned verification record using the exact source checksum.
@@ -228,17 +228,18 @@ test('versioned salted OTP/password verifiers retain supported legacy credential
 });
 
 test('encrypted backup restores ledger, credentials, and migration state into an empty owned database',async()=>{
+  for(let day=0;day<7;day++) await fixture.database.query("INSERT IGNORE INTO branch_hours(branch_id,weekday,opens,closes) SELECT id,$1,'00:00:00','23:59:59' FROM branches",[day]);
   const directory=await mkdtemp(path.join(tmpdir(),'mims-backup-test-'));const key=randomBytes(32).toString('hex');
-  const target=await disposableDatabase({migrate:false});let file:string|undefined;
+  const target=await disposableDatabase({migrate:false});let file:string|null|undefined;
   try {
     const binaries=process.env.MYSQL_BIN_DIRECTORY;
     // The deliberately all-day fictional calendar must block a scheduled backup
     // and preserve its failed outcome, before testing restoration independently.
     await fixture.database.query("UPDATE branch_hours SET opens='00:00:00',closes='24:00:00'");
-    await assert.rejects(backupDatabase(fixture.owned.config,{directory,key,checkHours:true}),/outside configured business hours/);
+    await assert.rejects(backupDatabase(fixture.owned.config,{directory,key,checkHours:true,retrySeconds:0}),/outside configured business hours/);
     assert.equal((await fixture.database.query("SELECT status FROM job_runs WHERE job='backup' ORDER BY id DESC LIMIT 1")).rows[0].status,'failed');
-    file=await backupDatabase(fixture.owned.config,{directory,key,checkHours:false,mysqldump:binaries?path.join(binaries,'mysqldump.exe'):'mysqldump'});
-    await restoreDisposableBackup(target,file,{key,mysqlBinary:binaries?path.join(binaries,'mysql.exe'):'mysql'});
+    file=await backupDatabase(fixture.owned.config,{directory,key,checkHours:false,retrySeconds:0,mysqldump:binaries?path.join(binaries,'mysqldump.exe'):'mysqldump'});
+    await restoreDisposableBackup(target,file!,{key,mysqlBinary:binaries?path.join(binaries,'mysql.exe'):'mysql'});
     const [source]=await fixture.owned.connection!.query('SELECT id,balance FROM savings_accounts ORDER BY id');
     const [restored]=await target.connection!.query('SELECT id,balance FROM savings_accounts ORDER BY id');assert.deepEqual(restored,source);
     const [[reconciled]]=await target.connection!.query<import('mysql2').RowDataPacket[]>('SELECT COUNT(*) AS n FROM (SELECT a.id,a.balance FROM savings_accounts a LEFT JOIN ledger_entries l ON l.account_id=a.id GROUP BY a.id,a.balance HAVING a.balance<>COALESCE(SUM(l.amount),0)) differences');assert.equal(reconciled.n,0);
@@ -250,7 +251,7 @@ test('encrypted backup restores ledger, credentials, and migration state into an
       assert.deepEqual(targetRows,sourceRows,table+' survives encrypted restore');
     }
     await assert.rejects(restoreDisposableBackup(target,file,{key}),/empty/);
-  } finally {await target.close();if(file)await unlink(file);await rmdir(directory);}
+  } finally {await target.close();if(file)await unlink(file!);await rmdir(directory);}
 });
 
 test('70 concurrent fictional dashboard, report, and posting calls meet measured SRS time budgets',async()=>{

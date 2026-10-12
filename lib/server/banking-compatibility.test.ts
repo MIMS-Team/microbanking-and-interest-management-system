@@ -80,6 +80,7 @@ describe('Restored account services', () => {
   it.each([false, true])('settles a matured deposit once (auto renew: %s)', async autoRenew => {
     await database.query(`INSERT INTO rates(product,name,term_months,annual_rate,minimum_balance,minimum_deposit)
       VALUES ('fixed','One month',1,12,0,10000)`);
+    await database.query("INSERT INTO rate_history(rate_id,annual_rate,effective_at,changed_by) VALUES(2,12,'2020-01-01',4)");
     await database.transaction(tx => createAccount(tx, agent, { owner_ids: [1], opening_balance: '25000' }));
     const opening = (await database.query<import('../banking/shared').ApprovalRow>("SELECT * FROM approvals WHERE type='account.create'")).rows[0];
     await database.transaction(tx => applyAccountApproval(tx, reviewer, opening));

@@ -373,7 +373,7 @@ describe('Authentication and User Management System Tests', () => {
 
       // Confirm with correct HR OTP
       const hrOtp = getLastDispatchedOtpForTest()!.code;
-      const created = await confirmEmployeeCreation(initiated.challengeId, hrOtp);
+      const created = await confirmEmployeeCreation(initiated.challengeId, hrOtp,hrManagerUser);
 
       expect(created.full_name).toBe('David NewAgent');
       expect(created.email).toBe('david@ravindu.bank');
@@ -401,7 +401,7 @@ describe('Authentication and User Management System Tests', () => {
       });
 
       await expect(
-        confirmEmployeeCreation(initiated.challengeId, '000000')
+        confirmEmployeeCreation(initiated.challengeId, '000000',hrManagerUser)
       ).rejects.toThrowError(/Invalid HR manager approval code/);
 
       expect(await findEmployeeByEmail('charlie@ravindu.bank')).toBeNull();
@@ -464,12 +464,12 @@ describe('Authentication and User Management System Tests', () => {
 
       // Invalid OTP fails
       await expect(
-        confirmEmployeeDeactivation(deactReq.challengeId, '000000')
+        confirmEmployeeDeactivation(deactReq.challengeId, '000000',hrManagerUser)
       ).rejects.toThrowError(/Invalid HR manager approval code/);
 
       // Confirm with correct HR OTP
       const hrOtp = getLastDispatchedOtpForTest()!.code;
-      const success = await confirmEmployeeDeactivation(deactReq.challengeId, hrOtp);
+      const success = await confirmEmployeeDeactivation(deactReq.challengeId, hrOtp,hrManagerUser);
       expect(success).toBe(true);
 
       // Employee is deactivated, NOT deleted!
@@ -503,7 +503,7 @@ describe('Authentication and User Management System Tests', () => {
       // Deactivate first admin
       const req = await initiateEmployeeDeactivation(secondAdmin, adminUser.id);
       const otp = getLastDispatchedOtpForTest()!.code;
-      await confirmEmployeeDeactivation(req.challengeId, otp);
+      await confirmEmployeeDeactivation(req.challengeId, otp,hrManagerUser);
 
       // Now secondAdmin is the last active admin. Deactivating them must fail.
       await expect(

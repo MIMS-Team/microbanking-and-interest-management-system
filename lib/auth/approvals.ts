@@ -1,3 +1,4 @@
+import { requirePermission } from '../permissions';
 import { randomInt, randomUUID } from 'node:crypto';
 import { getDb, type Queryable } from '../db';
 import type { Staff } from '../types';
@@ -9,6 +10,7 @@ function requireReviewer(user: Staff) {
   if(user.role!=='higher_manager'||user.status!=='active') throw new HttpError(403,'An active higher manager must approve employee changes.');
 }
 async function pendingRequest(tx:Queryable,user:Staff,id:number) {
+  await requirePermission(tx,user.id,'employees.approve');
   const {rows}=await tx.query(`SELECT a.id FROM approvals a JOIN staff s ON s.id=$2
     WHERE a.id=$1 AND a.type IN ('staff.create','staff.update') AND a.status='pending'
       AND a.requested_by<>s.id AND s.status='active' AND s.role='higher_manager'

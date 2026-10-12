@@ -1,3 +1,4 @@
+import {assertForwardDataSafe} from './database-preflight.mjs';
 import { upgradeColumns } from '../database/migrations/003-upgrade.mjs';
 import mysql from 'mysql2/promise';
 import { createHash } from 'node:crypto';
@@ -9,20 +10,23 @@ export function statements(sql) {
   return sql.includes('-- statement-break') ? sql.split('-- statement-break').map(s=>s.trim()).filter(Boolean)
     : sql.split(/;\s*(?:\r?\n|$)/).map(s=>s.trim()).filter(Boolean);
 }
-const files = ['001-auth.sql', '002-banking.sql', '003-integrity.sql'];
+const files = ['001-auth.sql', '002-banking.sql', '003-integrity.sql', '004-security.sql', '005-rate-corrections.sql', '006-durable-jobs.sql'];
 /** @param {import('mysql2/promise').Connection} connection
- * @param {{openingBalanceActorId?: number|null}} options */
-export async function migrateDatabase(connection, {openingBalanceActorId=null}={}) {
+ * @param {{openingBalanceActorId?: number|null, throughVersion?:string}} options */
+export async function migrateDatabase(connection, {openingBalanceActorId=null,throughVersion='006-durable-jobs.sql'}={}) {
+  const target=files.indexOf(throughVersion);
+  if(target<0) throw new Error('Unknown migration target version.');
   await connection.query("SET time_zone = '+00:00'");
-  const [[locked]] = await connection.query("SELECT GET_LOCK(CONCAT(DATABASE(), ':migrations'), 30) AS acquired");
+  const [[locked]] = await connection.query("SELECT GET_LOCK(SHA2(CONCAT(DATABASE(), ':migrations'),256), 30) AS acquired");
   if (Number(locked.acquired) !== 1) throw new Error('Could not acquire migration lock.');
   try {
+    await assertForwardDataSafe(connection);
     await connection.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
       version VARCHAR(80) PRIMARY KEY, checksum CHAR(64) NOT NULL,
       status ENUM('running','complete','failed') NOT NULL, statement_index INT NOT NULL DEFAULT 0,
       started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TIMESTAMP NULL,
       error_text VARCHAR(1000) NULL) ENGINE=InnoDB`);
-    for (const file of files) {
+    for (const file of files.slice(0,target+1)) {
       const sql = (await readFile(new URL('../database/migrations/' + file, import.meta.url), 'utf8')).replaceAll('\r\n','\n');
       const upgradeSource = file==='003-integrity.sql' ? (await readFile(new URL('../database/migrations/003-upgrade.mjs',import.meta.url),'utf8')).replaceAll('\r\n','\n') : '';
       const checksum = createHash('sha256').update(sql+upgradeSource).digest('hex');
@@ -44,7 +48,7 @@ export async function migrateDatabase(connection, {openingBalanceActorId=null}={
         throw error;
       }
     }
-  } finally { await connection.query("SELECT RELEASE_LOCK(CONCAT(DATABASE(), ':migrations'))"); }
+  } finally { await connection.query("SELECT RELEASE_LOCK(SHA2(CONCAT(DATABASE(), ':migrations'),256))"); }
 }
 
 

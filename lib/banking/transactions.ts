@@ -22,7 +22,7 @@ export async function createTransaction(tx: Queryable,user: Staff,input: Input) 
   const verificationMethod = type==='deposit' ? null : requiredText(input.verification_method,'Identity verification method',40);
   if (verificationMethod && !['nic-in-person','passport-in-person'].includes(verificationMethod)) throw new BusinessError('Choose a supported in-person verification method.');
   const fingerprint = createHash('sha256').update(JSON.stringify({type,sourceId,destinationId,amount,description,verifiedCustomer,verificationMethod})).digest('hex');
-  const op = await operation(tx,user,type,description,key,fingerprint);
+  const op = await operation(tx,user,type,description,key,fingerprint,{verifiedCustomerId:verifiedCustomer,verificationMethod});
   if (op.duplicate) return {message:'This transaction was already posted; no money was moved again.'};
   // Always lock both transfer accounts in ascending order to prevent deadlocks.
   const ids = destinationId ? [sourceId,destinationId].sort((a,b)=>a-b) : [sourceId];

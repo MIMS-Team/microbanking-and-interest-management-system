@@ -31,7 +31,21 @@ was modified during the database integration task.
 `database/migrations/` is the canonical schema. `database/schema.sql` points to
 that installation path. `database/history/` and `tests/fixtures/legacy-banking.sql`
 are historical references and must not be executed as installation scripts.
-`seed` and `seed:dev` remain explicit local authentication fixture tools.
+`npm run seed:dev` now creates and seeds a **new disposable MySQL database**.
+It requires explicit `TEST_MYSQL_*` settings, never reads an existing target from
+`DB_*`, and writes restricted application connection settings into the ignored
+`.data/disposable-demo.env`. It leaves all existing databases untouched.
+Dummy employees use `admin@btrust.local`, `higher@btrust.local`,
+`manager@btrust.local` and `agent@btrust.local`, with password `Demo@12345`.
+Configure local OTP email delivery separately. Do not use these credentials in
+deployment. The seed includes fictional customers, joint ownership, savings,
+funded FDs, reconciled ledger history and an explicitly fictional test calendar.
+
+Read [the current database hardening notes](docs/database-hardening.md) for
+forward migrations 004–006, permissions, corrections, durable jobs, principal
+setup and the backup recovery runbook. [Verification results](docs/database-verification.md)
+record the exact checks for this local revision. No business policy is implied
+by the demonstration fixtures.
 
 SQLite is limited to development authentication and isolated browser/unit tests;
 full banking needs MySQL. Pages keep their existing URLs, starting at `/login`.

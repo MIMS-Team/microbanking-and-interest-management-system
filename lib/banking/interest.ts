@@ -1,3 +1,4 @@
+import { effectiveRate } from './effective-rate';
 import type { Queryable } from '../db';
 import type { Staff } from '../types';
 import { BusinessError, requiredText, positiveId, money, month } from '../validation';
@@ -27,30 +28,32 @@ export async function updateRate(tx:Queryable,user:Staff,input:Input) {
   const current=await first<RateRow>(tx,'SELECT * FROM rates WHERE id=$1 FOR UPDATE',[id]);
   const retained=input.minimum_balance===undefined?current.minimum_balance:money(input.minimum_balance,'Minimum retained balance',true);
   const deposit=input.minimum_deposit===undefined?current.minimum_deposit:money(input.minimum_deposit,'Minimum deposit',true);
-  await tx.query('UPDATE rates SET annual_rate=$1,minimum_balance=$2,minimum_deposit=$3 WHERE id=$4',[rate,retained,deposit,id]);
+  await tx.query('UPDATE rates SET minimum_balance=$1,minimum_deposit=$2 WHERE id=$3',[retained,deposit,id]);
   await tx.query(`INSERT INTO rate_history(rate_id,annual_rate,effective_at,changed_by)
     VALUES($1,$2,DATE(UTC_TIMESTAMP()+INTERVAL 330 MINUTE)+INTERVAL 1 DAY-INTERVAL 330 MINUTE,$3)`,[id,rate,user.id]);
-  await audit(tx,user,'rate.updated','rate',id,null,{previous_rate:current.annual_rate,annual_rate:rate});
+  await audit(tx,user,'rate.updated','rate',id,null,{previous_rate:await effectiveRate(tx,id),annual_rate:rate});
   return {message:'Rate updated for tomorrow. Existing FDs retain their contracted rate.'};
 }
 export async function recordDailyAccruals(tx:Queryable,throughDate:string,branchId:number|null,accountId:number|null=null):Promise<number> {
   requireInterestPolicy();
-  const accounts=(await tx.query<{id:number;start_date:string;end_date:string}>(`SELECT id,
+  const accounts=(await tx.query<{id:number;rate_id:number;start_date:string;end_date:string}>(`SELECT id,rate_id,
     DATE_FORMAT(opened_at+INTERVAL 330 MINUTE,'%Y-%m-%d') AS start_date,
     DATE_FORMAT(LEAST($1,COALESCE(DATE(closed_at+INTERVAL 330 MINUTE)-INTERVAL 1 DAY,$1)),'%Y-%m-%d') AS end_date
     FROM savings_accounts WHERE status IN ('active','inactive','closed') AND ($2 IS NULL OR branch_id=$2) AND ($3 IS NULL OR id=$3)
     ORDER BY id FOR UPDATE`,[throughDate,branchId,accountId])).rows;
-  let count=0;
+  let count=0;const selectedRates=new Map<string,string>();
   for(const a of accounts) {
     const existing=new Set((await tx.query<{day:string}>("SELECT DATE_FORMAT(accrual_date,'%Y-%m-%d') AS day FROM interest_accruals WHERE account_id=$1 AND accrual_date BETWEEN $2 AND $3",[a.id,a.start_date,a.end_date])).rows.map(r=>r.day));
     // Iterate calendar dates, but all balance/rate arithmetic remains DECIMAL in MySQL.
     const date=new Date(a.start_date+'T00:00:00Z');
     for(let day=date.toISOString().slice(0,10);day<=a.end_date;date.setUTCDate(date.getUTCDate()+1),day=date.toISOString().slice(0,10)) {
       if(existing.has(day)) continue;
-      const coverage=await first<{known:number}>(tx,`SELECT EXISTS(SELECT 1 FROM rate_history rh
-        JOIN savings_accounts sa ON sa.rate_id=rh.rate_id WHERE sa.id=$1
-        AND rh.effective_at<CAST($2 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE) AS known`,[a.id,day]);
-      if(!coverage.known) throw new BusinessError('Historical interest rates are missing; approve and import the applicable rate history before accrual.',409);
+      const key=a.rate_id+':'+day;
+      let selectedRate=selectedRates.get(key);
+      if(selectedRate===undefined) {
+        selectedRate=await effectiveRate(tx,a.rate_id,new Date(Date.parse(day+'T00:00:00Z')-330*60000).toISOString().slice(0,23).replace('T',' '));
+        selectedRates.set(key,selectedRate);
+      }
       const result=await tx.query(`INSERT INTO interest_accruals(account_id,accrual_date,minimum_balance,annual_rate,amount)
         SELECT $1,$2,basis.minimum_balance,basis.annual_rate,CAST(basis.minimum_balance*basis.annual_rate/100/365 AS DECIMAL(18,8))
         FROM (SELECT LEAST(
@@ -58,9 +61,8 @@ export async function recordDailyAccruals(tx:Queryable,throughDate:string,branch
           COALESCE((SELECT MIN(LEAST(balance_before,balance_after)) FROM ledger_entries WHERE account_id=$1
             AND created_at>=CAST($2 AS DATETIME)-INTERVAL 330 MINUTE AND created_at<CAST($2 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE),
             COALESCE((SELECT balance_after FROM ledger_entries WHERE account_id=$1 AND created_at<CAST($2 AS DATETIME)-INTERVAL 330 MINUTE ORDER BY created_at DESC,id DESC LIMIT 1),0))) AS minimum_balance,
-          COALESCE((SELECT rh.annual_rate FROM rate_history rh JOIN savings_accounts sa ON sa.rate_id=rh.rate_id
-            WHERE sa.id=$1 AND rh.effective_at<CAST($2 AS DATETIME)+INTERVAL 1 DAY-INTERVAL 330 MINUTE ORDER BY rh.effective_at DESC,rh.id DESC LIMIT 1),0) AS annual_rate) basis
-        WHERE NOT EXISTS(SELECT 1 FROM interest_accruals WHERE account_id=$1 AND accrual_date=$2)`,[a.id,day]);
+          CAST($3 AS DECIMAL(6,3)) AS annual_rate) basis
+        WHERE NOT EXISTS(SELECT 1 FROM interest_accruals WHERE account_id=$1 AND accrual_date=$2)`,[a.id,day,selectedRate]);
       count+=result.affectedRows??0;
     }
   }
