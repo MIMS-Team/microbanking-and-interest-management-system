@@ -14,6 +14,10 @@ interface ReportPreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
   report: ComprehensiveReport | null;
+  showTotalVolume?: boolean;
+  onDownloadCsv?: () => void;
+  printOnlyReport?: boolean;
+  showSummaryMetrics?: boolean;
 }
 
 // Realistic formal bank audit report preview with PDF and Excel tabs
@@ -21,6 +25,10 @@ export default function ReportPreviewModal({
   isOpen,
   onClose,
   report,
+  showTotalVolume = true,
+  onDownloadCsv,
+  printOnlyReport = false,
+  showSummaryMetrics = false,
 }: ReportPreviewModalProps) {
   const [viewMode, setViewMode] = useState<'pdf' | 'excel'>('pdf');
 
@@ -28,6 +36,10 @@ export default function ReportPreviewModal({
 
   // Handle CSV / Excel file download
   const handleDownloadCsv = () => {
+    if (onDownloadCsv) {
+      onDownloadCsv();
+      return;
+    }
     const csvContent = exportReportToCsv(report);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -41,6 +53,27 @@ export default function ReportPreviewModal({
 
   // Trigger browser print dialog for PDF saving
   const handlePrint = () => {
+    if (printOnlyReport) {
+      // Limit print output to the report document.
+      const style = document.createElement('style');
+      style.dataset.reportPrint = 'true';
+      style.textContent = `
+        @media print {
+          body * { visibility: hidden !important; }
+          .printable-area, .printable-area * { visibility: visible !important; }
+          .printable-area {
+            position: absolute !important;
+            inset: 0 auto auto 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            border: 0 !important;
+            box-shadow: none !important;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+      window.addEventListener('afterprint', () => style.remove(), { once: true });
+    }
     window.print();
   };
 
@@ -155,6 +188,17 @@ export default function ReportPreviewModal({
               </div>
             </div>
 
+            {showSummaryMetrics && report.summaryMetrics && report.summaryMetrics.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 font-sans">
+                {report.summaryMetrics.map((metric) => (
+                  <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
+                    <div className="text-[10px] font-bold uppercase text-slate-500">{metric.label}</div>
+                    <div className="mt-1 text-sm font-bold text-slate-900">{metric.value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Financial Ledger Table */}
             <div className="overflow-x-auto font-sans mb-6">
               <table className="w-full text-left text-xs border border-slate-300">
@@ -204,15 +248,16 @@ export default function ReportPreviewModal({
               </table>
             </div>
 
-            {/* Grand Total Bar */}
-            <div className="bg-slate-900 text-white rounded-xl p-4 flex items-center justify-between font-sans text-xs mb-8 shadow-xs">
-              <span className="font-semibold uppercase tracking-wider text-[11px]">
-                Consolidated Financial Ledger Volume:
-              </span>
-              <span className="font-mono font-bold text-base text-emerald-400">
-                Rs. {report.totalVolume.toLocaleString()}
-              </span>
-            </div>
+            {showTotalVolume && (
+              <div className="bg-slate-900 text-white rounded-xl p-4 flex items-center justify-between font-sans text-xs mb-8 shadow-xs">
+                <span className="font-semibold uppercase tracking-wider text-[11px]">
+                  Consolidated Financial Ledger Volume:
+                </span>
+                <span className="font-mono font-bold text-base text-emerald-400">
+                  Rs. {report.totalVolume.toLocaleString()}
+                </span>
+              </div>
+            )}
 
             {/* Official Sign-Off and Branch Stamp Box */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6 border-t-2 border-slate-200 font-sans">
