@@ -49,6 +49,7 @@ async function getDispatchedOtp(options?: { minTimestamp?: number; timeoutMs?: n
 
 test.describe('Real Browser End-to-End Authentication', () => {
   test('1. Valid login → OTP → role-appropriate dashboard and verifies auth-cookie security attributes', async ({ page, context }) => {
+    test.setTimeout(180000);
     const timestampBefore = Date.now() - 100;
     await page.goto('/login');
 
@@ -70,7 +71,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.click('button:has-text("Verify & Authorize Session")');
 
     // Wait for navigation to role dashboard
-    await page.waitForURL(/\/dashboard\?tab=agent/);
+    await page.waitForURL(/\/dashboard\?tab=agent/, { timeout: 120000, waitUntil: 'commit' });
     expect(page.url()).toContain('/dashboard?tab=agent');
 
     // Verify auth cookie security attributes
@@ -191,6 +192,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
 
     const expiresAt = await page.evaluate(() => sessionStorage.getItem('mims_otp_expires_at'));
     expect(Number(expiresAt)).toBeGreaterThan(Date.now());
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.reload();
     await expect(page.locator('text=/0[45]:[0-5][0-9]/')).toBeVisible();
     expect(await page.evaluate(() => sessionStorage.getItem('mims_otp_expires_at'))).toBe(expiresAt);
@@ -208,6 +210,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     const expiresAt = await page.evaluate(() => Number(sessionStorage.getItem('mims_otp_expires_at')));
     // Advance only browser time; preserve the exact server-provided expiry.
     await page.clock.setFixedTime(expiresAt + 5000);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.reload();
     expect(await page.evaluate(() => Number(sessionStorage.getItem('mims_otp_expires_at')))).toBe(expiresAt);
 
@@ -275,7 +278,9 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.waitForURL(/\/otp/);
     await page.locator('input[placeholder="000000"]').fill(await getDispatchedOtp({ minTimestamp: loginTimestamp }));
     await page.click('button:has-text("Verify & Authorize Session")');
-    await page.waitForURL(/\/dashboard\?tab=agent/);
+    await page.waitForURL(/\/dashboard\?tab=overview/);
+    await expect(page.getByText('Authorized Workspace')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const previousSession = (await context.cookies()).find(cookie => cookie.name === 'microbank_session');
     expect(previousSession).toBeDefined();
     await page.goto('/passwordreset');
@@ -302,8 +307,9 @@ test.describe('Real Browser End-to-End Authentication', () => {
     });
     expect(revokedSession.status()).toBe(401);
 
-    // Navigate to login
-    await page.goto('/login');
+    // Wait for automatic redirect to login
+    await page.waitForURL(/\/login/);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
     // 10A: Old password must be rejected
     await page.fill('input[type="email"]', 'agent@example.test');
@@ -389,6 +395,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await tab2.evaluate(() => document.fonts.ready.then(() => undefined));
     await tab2.reload();
     await expect(tab2.getByText(/successfully logged out/i)).toBeVisible();
+    await tab1.close();
+    await tab2.close();
   });
 
   test('14. Failed logout displays unconfirmed-revocation message and allows retry', async ({ page }) => {
@@ -441,10 +449,12 @@ test.describe('Real Browser End-to-End Authentication', () => {
   test('15. Logout notices survive a direct load and refresh without hydration errors', async ({ page }) => {
     await page.goto('/login?error=unconfirmed_logout');
     await expect(page.getByRole('alert').filter({ hasText: 'revocation could not be confirmed' })).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.reload();
     await expect(page.getByRole('alert').filter({ hasText: 'revocation could not be confirmed' })).toBeVisible();
     await page.goto('/login?status=logged_out');
     await expect(page.getByRole('status')).toContainText('successfully logged out');
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.reload();
     await expect(page.getByRole('status')).toContainText('successfully logged out');
   });

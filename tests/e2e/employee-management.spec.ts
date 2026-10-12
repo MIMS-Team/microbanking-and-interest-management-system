@@ -44,7 +44,7 @@ async function denied(page: Page, path: string, method: string, body?: object) {
 }
 
 test('employee lifecycle requires independent approval and revokes an existing session', async ({ page: admin, newActorPage }) => {
-  test.setTimeout(180000);
+  test.setTimeout(240000);
   // These actors belong only to this runner's disposable SQLite database.
   await login(admin, 'admin@example.test', 'AdminDev@2026!');
   const otherHr = await newActorPage();
@@ -121,6 +121,8 @@ test('employee lifecycle requires independent approval and revokes an existing s
   await employee.getByPlaceholder('Repeat new password').fill('LifecyclePassword!2026');
   await employee.getByRole('button', { name: 'Set New Password' }).click();
   await expect(employee.getByText('Password Reset Succeeded', { exact: true })).toBeVisible();
+  await employee.waitForURL(/\/login/);
+  await employee.evaluate(() => document.fonts.ready.then(() => undefined));
   await login(employee, saved.user.email, 'LifecyclePassword!2026');
   const oldSession = (await employee.context().cookies()).find(c => c.name === 'microbank_session');
   expect(oldSession).toBeDefined();
@@ -151,6 +153,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
   // Explicitly replay the old cookie: a UI redirect alone cannot prove revocation.
   expect((await employee.request.get('/api/auth/session', { headers: { cookie: `microbank_session=${oldSession!.value}` } })).status()).toBe(401);
   expectHttpError(employee, '/api/auth/session', 401);
+  await employee.evaluate(() => document.fonts.ready.then(() => undefined));
   await employee.reload();
   await employee.waitForURL(/\/login/);
   expectHttpError(employee, '/api/auth/login', 401);

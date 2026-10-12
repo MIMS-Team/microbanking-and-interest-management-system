@@ -23,6 +23,23 @@ write a unique ignored connection file and preserve earlier demo/configuration f
 
 Use Node.js 22 or later and npm. The root `package-lock.json` is authoritative.
 
+For the complete local demo after a seeded MySQL database exists, use the tracked
+launcher rather than starting Next.js directly:
+
+```powershell
+npm run dev:full
+```
+
+It discovers the newest reachable `.data/disposable-demo*.env`, verifies all 11
+migrations and seeded staff, and starts the Next.js app, a loopback-only OTP inbox,
+and the employee-notification worker. It prints the application and inbox URLs and
+writes `.data/local-project-runtime.json`. Verify the running stack with
+`npm run dev:verify`. On Windows, `Start-MIMS.cmd` runs the same launcher.
+
+Another coding agent should use `npm run dev:full` when asked to run the whole
+project. `npm run dev` starts only Next.js and still requires DB and email settings
+to be supplied separately.
+
 ```powershell
 npm ci
 Copy-Item .env.example .env.local
@@ -40,14 +57,16 @@ was modified during the database integration task.
 `database/migrations/` is the canonical schema. `database/schema.sql` points to
 that installation path. `database/history/` and `tests/fixtures/legacy-banking.sql`
 are historical references and must not be executed as installation scripts.
-`npm run seed:dev` now creates and seeds a **new disposable MySQL database**.
+`npm run seed:dev` creates and seeds a **new disposable MySQL database**.
 It requires explicit `TEST_MYSQL_*` settings, never reads an existing target from
 `DB_*`, and writes restricted application connection settings into the ignored
-`.data/disposable-demo.env`. It leaves all existing databases untouched.
+`.data/disposable-demo-<uuid>.env`. The local launcher discovers these files. It
+leaves all existing databases untouched.
 Dummy employees use `admin@btrust.local`, `higher@btrust.local`,
 `manager@btrust.local` and `agent@btrust.local`, with password `Demo@12345`.
-Configure local OTP email delivery separately. Do not use these credentials in
-deployment. The seed includes fictional customers, joint ownership, savings,
+`npm run dev:full` configures loopback-only OTP delivery for this demo; other
+startup methods must configure delivery explicitly. Do not use these credentials
+in deployment. The seed includes fictional customers, joint ownership, savings,
 funded FDs, reconciled ledger history and an explicitly fictional test calendar.
 
 Read [the current database hardening notes](docs/database-hardening.md) for

@@ -11,10 +11,15 @@ import { clearDispatchedEmailsForTest, getDispatchedEmailsForTest, setMockDelive
 
 let fixture:Awaited<ReturnType<typeof bankingFixture>>;
 let database: Database;
+const hasTestMySql = Boolean(
+  process.env.TEST_MYSQL_HOST &&
+  process.env.TEST_MYSQL_USER &&
+  process.env.TEST_MYSQL_PASSWORD !== undefined,
+);
 const agent: Staff = { id: 1, full_name: 'Agent', email: 'agent@example.test', role: 'agent', branch_id: 1, status: 'active' };
 const reviewer: Staff = { id: 3, full_name: 'Reviewer', email: 'reviewer@example.test', role: 'higher_manager', branch_id: null, status: 'active' };
 
-beforeAll(async () => {fixture=await bankingFixture(false);database=fixture.database;},60000);
+if (hasTestMySql) beforeAll(async () => {fixture=await bankingFixture(false);database=fixture.database;},60000);
 
 beforeEach(async () => {
   vi.stubEnv('EMAIL_PROVIDER', 'test');
@@ -33,7 +38,7 @@ beforeEach(async () => {
       VALUES ('CUS-1','Owner','198512300123','1985-01-01','Test address','0771111111',1,1,'active');`.split(';').filter(s=>s.trim())) await database.query(sql);
 },60000);
 
-afterAll(async () => {
+if (hasTestMySql) afterAll(async () => {
   vi.unstubAllEnvs();
   await fixture?.close();
 });
@@ -49,7 +54,7 @@ async function challenge(approvalId: number) {
   return { challenge_id: issued.challenge_id, code: delivered.code };
 }
 
-describe('Restored account services', () => {
+describe.skipIf(!hasTestMySql)('Restored account services', () => {
   it('queues opening cash and posts it once when the account is approved', async () => {
     await database.transaction(tx => createAccount(tx, agent, { owner_ids: [1], opening_balance: '1000.25' }));
     const approval = (await database.query<import('../banking/shared').ApprovalRow>("SELECT * FROM approvals WHERE type='account.create'")).rows[0];
@@ -104,7 +109,7 @@ describe('Restored account services', () => {
   });
 });
 
-describe('Employee approval OTP', () => {
+describe.skipIf(!hasTestMySql)('Employee approval OTP', () => {
   it('requires a higher manager reviewing someone else\'s pending employee request', async () => {
     const id = await pendingStaffRequest();
     await expect(issueApprovalCode(agent, id)).rejects.toThrow('higher manager');
