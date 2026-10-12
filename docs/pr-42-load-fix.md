@@ -150,3 +150,22 @@ failures and balance mismatches; shared limits/cooldowns/outage checks passed.
 Mixed-workload wall time: 3,391.782 ms. Hosted confirmation of the final
 artifact/logout correction is pending; previous failed CI commands are not
 reported as passed merely because their earlier steps or measurements succeeded.
+
+## Main-branch customer integration
+
+The complete push check on `71f7f02` passed, including load and recovery.
+Meanwhile main advanced to `cf710b3` through customer-management PR #43. Git
+identified a conflict in `components/customers.tsx`; GitHub could not run the
+PR merge check while that conflict remained. Main was reconciled in an isolated
+checkout, without merging PR #42 or touching the running application's data.
+
+The customer component preserves both branches: permission/branch/agent checks,
+server pagination and accurate page metrics, plus pending-request controls,
+request history, current-profile lookup and updated contact-field limits. Main's
+customer service, route, validation, tests, documentation and workflow are retained.
+
+Combined local verification: typecheck/lint exit 0; 77 database tests passed
+(the existing 67 plus main's 10 customer tests), zero failures/skips; the complete
+production banking browser workflow passed, and both dedicated customer browser
+workflows passed. Both production builds exited 0. Hosted verification of the
+combined branch is pending; the earlier `71f7f02` pass applies to that commit.

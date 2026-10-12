@@ -1,0 +1,51 @@
+name: Customer workflow verification
+on:
+  pull_request:
+    paths:
+      - 'app/customers/**'
+      - 'components/customers.tsx'
+      - 'components/ui.tsx'
+      - 'lib/**'
+      - 'database/**'
+      - 'tests/customers.test.ts'
+      - 'tests/production/customers.spec.ts'
+      - 'tests/fixtures/**'
+      - 'scripts/**'
+      - 'playwright*.config.ts'
+      - 'package*.json'
+      - '.github/workflows/customer-management.yml'
+  workflow_dispatch:
+jobs:
+  customer-workflow:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: customer_ci_only
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      TEST_MYSQL_HOST: 127.0.0.1
+      TEST_MYSQL_PORT: '3306'
+      TEST_MYSQL_USER: root
+      TEST_MYSQL_PASSWORD: customer_ci_only
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm run typecheck
+      - run: node --import tsx --test tests/customers.test.ts
+      - run: node --import tsx scripts/run-customer-e2e.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-browser-results
+          path: |
+            test-results/customers/
+            playwright-report/customers/
