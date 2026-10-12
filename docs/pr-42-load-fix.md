@@ -116,3 +116,37 @@ failures/skips. The affected complete production Chromium banking workflow
 passed (one test, zero failures) and its build exited 0. Its separate browser
 navigation/render samples were approximately 226-385 ms, not a seventy-browser
 performance result. Hosted acceptance on the follow-up commit remains pending.
+
+## Clean-checkout artifact and logout correction
+
+Commit `2ce221e` passed the hosted push run's load measurements: dashboard maximum
+1,042.717 ms, transaction 791.930 ms and report 3,776.676 ms, with zero operation
+failures/balance mismatches and passing shared-limiter checks. The command then
+failed writing `.data/workspace-http-load.json`: `.data` is ignored and absent
+on a fresh CI checkout. Recovery was skipped. The corresponding PR run stopped
+earlier at Chromium cross-tab logout (16 passed, one failed), where a directory
+request still in flight during revocation returned 401 and was caught by the
+unchanged browser-error fixture.
+
+The load runner now creates `test-results/load` and writes `http-load.json`
+there; the existing CI artifact upload includes it. Employee directory effect
+reads use their actual pagination/filter URL and an AbortController, cancelled
+when the view unmounts or the query changes. The cross-tab test waits for both
+real employee tables before logout, then waits for the second tab's confirmed
+notice and fonts before deliberately refreshing it. Assertions, error exceptions,
+timeouts, logout outcome distinctions and production protections are unchanged.
+
+Local checks on this correction: lint/typecheck exit 0; all 17 Chromium
+authentication/employee scenarios passed; the full load command exited 0 and
+created its JSON artifact. Dataset and workload remain unchanged. Zero operation
+failures and balance mismatches; shared limits/cooldowns/outage checks passed.
+
+| Service | Samples | p50 ms | p95 ms | p99/max ms | Target ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Dashboard | 70 | 1,206.892 | 2,286.371 | 2,309.688 | 3,000 |
+| Transaction | 40 | 1,570.807 | 1,813.816 | 1,839.734 | 5,000 |
+| Report | 30 | 857.813 | 1,335.148 | 1,348.856 | 15,000 |
+
+Mixed-workload wall time: 3,391.782 ms. Hosted confirmation of the final
+artifact/logout correction is pending; previous failed CI commands are not
+reported as passed merely because their earlier steps or measurements succeeded.

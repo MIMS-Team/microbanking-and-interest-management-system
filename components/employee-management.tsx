@@ -65,7 +65,8 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
 
   useEffect(() => {
     let active = true;
-    fetch('/api/users')
+    const controller = new AbortController();
+    fetch(listUrl, { signal: controller.signal, cache: 'no-store' })
       .then((res) => {
         if (!res.ok) throw new Error();
         return res.json() as Promise<{ users: PublicEmployee[];total:number }>;
@@ -80,6 +81,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [listUrl]);
 

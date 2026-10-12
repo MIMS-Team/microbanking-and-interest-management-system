@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, realpathSync, lstatSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, realpathSync, lstatSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -108,7 +108,9 @@ try {
     secondProxy=await httpsProxy({key:readFileSync(key),cert:readFileSync(cert),appPort:secondPort});
     const {verifyTwoInstanceLimits}=await import('./shared-limiter-http.mjs');
     const limiter=await verifyTwoInstanceLimits({urls:[env.APP_URL,`https://auth.mims.test:${secondProxy.port}`],fixture:database.loadFixture,unavailable:database.unavailableLimiter});
-    writeFileSync(resolve('.data/workspace-http-load.json'),JSON.stringify({...result,correctness,limiter},null,2));
+    const reportDirectory=resolve('test-results','load');
+    mkdirSync(reportDirectory,{recursive:true});
+    writeFileSync(join(reportDirectory,'http-load.json'),JSON.stringify({...result,correctness,limiter},null,2));
   }else await finished(launch(['node_modules/@playwright/test/cli.js', 'test', '--config=playwright.production.config.ts', ...browserArgs], browserEnv));
 } catch (error) {
   console.error(error);
