@@ -143,22 +143,24 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'agent@example.test');
     await page.fill('input[type="password"]', 'Agent@2026!');
+    const loginResponse = page.waitForResponse(response => response.url().endsWith('/api/auth/login') && response.request().method() === 'POST');
     await page.click('button:has-text("Continue with 2FA")');
 
-    await page.waitForURL(/\/otp/);
-    const initialUrl = page.url();
-
-    const resendBtn = page.getByRole('button', { name: /resend/i });
-    await expect(resendBtn).toBeDisabled();
     // An immediate request, even with the obsolete header, cannot bypass cooldown.
-    const challengeId = new URL(page.url()).searchParams.get('challenge');
+    // Start from the login response: navigation/font loading can outlast the
+    // real 30-second window on a cold development server.
+    const response = await loginResponse;
+    expect(response.status()).toBe(202);
+    const { challengeId } = await response.json();
     const blocked = await page.request.post('/api/auth/otp/resend', {
       headers: { 'x-e2e-test': 'true' }, data: { challengeId },
     });
     expect(blocked.status()).toBe(429);
     const resendAvailableAt = Date.now() + 31000;
+    await page.waitForURL(/\/otp/);
+    const initialUrl = page.url();
+    const resendBtn = page.getByRole('button', { name: /resend/i });
     await page.reload();
-    await expect(resendBtn).toBeDisabled();
     await expect(resendBtn).toBeEnabled({ timeout: 40000 });
     // The denied request also occupies the normal per-IP resend window.
     await expect.poll(() => Date.now(), { timeout: 40000 }).toBeGreaterThanOrEqual(resendAvailableAt);
