@@ -64,6 +64,19 @@ test('scoped pagination searches, sorts and retains counts past an empty final p
   const first=await request(1),next=await request(2);assert.equal(first.customers.length,2);assert.equal(next.customers.length,2);assert.ok(first.customers.every(c=>c.agent_id===agent.id));assert.ok(first.customers[1].id<next.customers[0].id);
   const empty=await request(999);assert.equal(empty.customers.length,0);assert.equal(empty.pagination!.customers!.total,first.pagination!.customers!.total);
   const searched=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'customers',search:first.customers[0].nic})));assert.equal(searched.customers.length,1);assert.equal(searched.customers[0].id,first.customers[0].id);
+  // Projection joins and the count must apply the same ownership/status scope.
+  const joint=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'accounts',pageSize:'1',sort:'oldest',status:'active'})));
+  assert.deepEqual(joint.accounts[0].owner_ids,[1,2]);assert.ok(joint.accounts[0].owner_names);
+  const secondOwner=joint.accounts[0].owner_names.split(', ')[1];
+  const ownerPage=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'accounts',search:secondOwner,status:'active',pageSize:'1',sort:'oldest'})));
+  assert.equal(ownerPage.accounts.length,1);assert.equal(ownerPage.pagination!.accounts!.total,2);assert.equal(ownerPage.accounts[0].id,1);
+  const ownerEmpty=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'accounts',search:secondOwner,status:'active',pageSize:'1',page:'99'})));
+  assert.equal(ownerEmpty.accounts.length,0);assert.equal(ownerEmpty.pagination!.accounts!.total,2);
+  const funded=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'transactions',status:'fd_open',pageSize:'1',sort:'oldest'})));
+  assert.equal(funded.transactions.length,1);assert.equal(funded.pagination!.transactions!.total,2);
+  assert.equal(funded.transactions[0].account_id,1);assert.equal(funded.transactions[0].signed_amount,'-100000.00');assert.equal(funded.transactions[0].customer_name,joint.accounts[0].owner_names);
+  const fixed=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'fixedDeposits',search:'FD-00000001',status:'active',pageSize:'1'})));
+  assert.equal(fixed.fixedDeposits.length,1);assert.equal(fixed.pagination!.fixedDeposits!.total,1);assert.equal(fixed.fixedDeposits[0].principal,'100000.00');assert.match(fixed.fixedDeposits[0].next_payout||'',/^\d{4}-\d{2}-\d{2}$/);
   assert.throws(()=>listOptions(new URLSearchParams({sort:'id;DROP TABLE staff'})),/Invalid/);
 });
 test('FD browser operation keys bind proposal retries, pending funding and rejection preserve savings',async()=>{

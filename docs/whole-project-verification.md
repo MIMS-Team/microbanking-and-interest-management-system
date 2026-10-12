@@ -1,5 +1,9 @@
 # Whole-project local verification
 
+For subsequent hosted results and the pagination/load correction, see
+[the PR #42 load-fix report](pr-42-load-fix.md). The initial results below retain
+the distinction between what finished and what was stopped at the earlier deadline.
+
 This report covers local changes from `ba84156c162de4c251b433d02497b455e9704744`
 on `Ravindu-feature/auth-imp`. The starting working tree was clean. The application
 is the repository-root `app/`. Reviewed main was

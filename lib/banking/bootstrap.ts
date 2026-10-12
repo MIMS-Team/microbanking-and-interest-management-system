@@ -26,9 +26,10 @@ async function loadBootstrap(database: Queryable,user: Staff,options?:ListOption
   if (current.role==='admin') {
     await requirePermission(database,current.id,'employees.read');
     const {paged,pagination}=registerPagination(database,options,ownerNames);
-    const branches=(await paged('branches','SELECT b.* FROM branches b WHERE TRUE ORDER BY b.id')).rows;
-    const staff=(await paged('staff','SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status FROM staff s WHERE TRUE ORDER BY s.id')).rows;
-    const approvals=(await paged('approvals',`SELECT p.id,p.type,p.entity_id,p.branch_id,p.customer_name,p.summary,p.status,p.created_at,p.notes,p.requested_by,s.full_name AS requested_by_name,r.full_name AS reviewed_by_name,JSON_REMOVE(p.payload,'$.password_hash') AS payload FROM approvals p JOIN staff s ON s.id=p.requested_by LEFT JOIN staff r ON r.id=p.reviewed_by WHERE p.requested_by=$1 ORDER BY p.id`,[current.id])).rows;
+    const branches=(await paged('branches','SELECT b.*','FROM branches b WHERE TRUE')).rows;
+    const staff=(await paged('staff','SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status','FROM staff s WHERE TRUE')).rows;
+    const approvals=(await paged('approvals',`SELECT p.id,p.type,p.entity_id,p.branch_id,p.customer_name,p.summary,p.status,p.created_at,p.notes,p.requested_by,s.full_name AS requested_by_name,r.full_name AS reviewed_by_name,JSON_REMOVE(p.payload,'$.password_hash') AS payload`,
+      'FROM approvals p JOIN staff s ON s.id=p.requested_by LEFT JOIN staff r ON r.id=p.reviewed_by WHERE p.requested_by=$1',[current.id])).rows;
     const rates=permissions.includes('rate.manage')?(await database.query(`SELECT r.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate FROM rates r ORDER BY r.id`)).rows:[];
     const branchIds=branches.map(b=>b.id);
     const branchHours=(await database.query('SELECT * FROM branch_hours WHERE branch_id IN ($1)',[branchIds.length?branchIds:[0]])).rows;
@@ -41,37 +42,34 @@ async function loadBootstrap(database: Queryable,user: Staff,options?:ListOption
   const agent=current.role==='agent'?current.id:null;
   const {paged,pagination}=registerPagination(database,options,ownerNames);
   const queries = await Promise.all([
-    paged('branches',`SELECT b.* FROM branches b WHERE ($1 IS NULL OR b.id=$1) ORDER BY b.id`,[branch,agent]),
-    paged('staff',`SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status,b.name AS branch_name FROM staff s
-      LEFT JOIN branches b ON b.id=s.branch_id WHERE ($1 IS NULL OR s.branch_id=$1) ORDER BY s.id`,[branch,agent]),
+    paged('branches','SELECT b.*','FROM branches b WHERE ($1 IS NULL OR b.id=$1)',[branch,agent]),
+    paged('staff','SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status,b.name AS branch_name',
+      'FROM staff s LEFT JOIN branches b ON b.id=s.branch_id WHERE ($1 IS NULL OR s.branch_id=$1)',[branch,agent]),
     paged('customers',`SELECT c.*,DATE_FORMAT(c.date_of_birth,'%Y-%m-%d') AS date_of_birth,b.name AS branch_name,s.full_name AS agent_name,
       (SELECT count(*) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active') AS account_count,
-      COALESCE((SELECT sum(a.balance) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active'),0) AS total_balance
-      FROM customers c JOIN branches b ON b.id=c.branch_id JOIN staff s ON s.id=c.agent_id
-      WHERE ($1 IS NULL OR c.branch_id=$1) AND ($2 IS NULL OR c.agent_id=$2) ORDER BY c.created_at DESC,c.id DESC`,[branch,agent]),
+      COALESCE((SELECT sum(a.balance) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active'),0) AS total_balance`,
+      'FROM customers c JOIN branches b ON b.id=c.branch_id JOIN staff s ON s.id=c.agent_id WHERE ($1 IS NULL OR c.branch_id=$1) AND ($2 IS NULL OR c.agent_id=$2)',[branch,agent]),
     paged('accounts',`SELECT a.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate,b.name AS branch_name,${ownerNames} AS owner_names,
       (SELECT JSON_ARRAYAGG(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS owner_ids,
       (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,
-      (SELECT MIN(c.full_name) FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id) AS customer_name
-      FROM savings_accounts a JOIN rates r ON r.id=a.rate_id JOIN branches b ON b.id=a.branch_id
-      WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2) ORDER BY a.id DESC`,[branch,agent]),
-    paged('fixedDeposits',`${fdPeriods('AND ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)')} SELECT f.*,DATE_FORMAT(f.maturity_date,'%Y-%m-%d') AS maturity_date,
+      (SELECT MIN(c.full_name) FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id) AS customer_name`,
+      'FROM savings_accounts a JOIN rates r ON r.id=a.rate_id JOIN branches b ON b.id=a.branch_id WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)',[branch,agent]),
+    paged('fixedDeposits',`SELECT f.*,DATE_FORMAT(f.maturity_date,'%Y-%m-%d') AS maturity_date,
       DATE_FORMAT(f.payout_date,'%Y-%m-%d') AS payout_date,CASE WHEN f.status='active' THEN ${nextFdPayout} ELSE NULL END AS next_payout,
       (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,
       ${ownerNames} AS customer_name,a.branch_id,a.account_number,
-      f.principal AS maturity_amount,round(f.principal*f.annual_rate/100/12,2) AS monthly_interest
-      FROM fixed_deposits f JOIN savings_accounts a ON a.id=f.source_account_id
-      WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2) ORDER BY f.id DESC`,[branch,agent]),
+      f.principal AS maturity_amount,round(f.principal*f.annual_rate/100/12,2) AS monthly_interest`,
+      'FROM fixed_deposits f JOIN savings_accounts a ON a.id=f.source_account_id WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)',[branch,agent],
+      fdPeriods('AND ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)')+' '),
     paged('transactions',`SELECT l.id,l.operation_id,o.reference,l.account_id,a.account_number,${ownerNames} AS customer_name,l.type,
-      abs(l.amount) AS amount,l.amount AS signed_amount,l.balance_after,o.description,l.created_at,s.full_name AS agent_name,a.branch_id
-      FROM ledger_entries l JOIN money_operations o ON o.id=l.operation_id JOIN savings_accounts a ON a.id=l.account_id
-      JOIN staff s ON s.id=o.actor_id WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2) ORDER BY l.created_at DESC,l.id DESC`,[branch,agent]),
+      abs(l.amount) AS amount,l.amount AS signed_amount,l.balance_after,o.description,l.created_at,s.full_name AS agent_name,a.branch_id`,
+      'FROM ledger_entries l JOIN money_operations o ON o.id=l.operation_id JOIN savings_accounts a ON a.id=l.account_id JOIN staff s ON s.id=o.actor_id WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)',[branch,agent]),
     // Approval payloads can contain hashed employee passwords; return only the
     // reviewable public fields. Never ship hashes to the browser.
     paged('approvals',`SELECT p.id,p.type,p.entity_id,p.branch_id,p.customer_name,p.summary,p.status,p.created_at,p.notes,
       p.requested_by,s.full_name AS requested_by_name,r.full_name AS reviewed_by_name,
-      JSON_REMOVE(p.payload,'$.password_hash') AS payload FROM approvals p JOIN staff s ON s.id=p.requested_by
-      LEFT JOIN staff r ON r.id=p.reviewed_by WHERE ($1 IS NULL OR p.branch_id=$1) AND ($2 IS NULL OR p.requested_by=$2) ORDER BY p.created_at DESC,p.id DESC`,[branch,agent]),
+      JSON_REMOVE(p.payload,'$.password_hash') AS payload`,
+      'FROM approvals p JOIN staff s ON s.id=p.requested_by LEFT JOIN staff r ON r.id=p.reviewed_by WHERE ($1 IS NULL OR p.branch_id=$1) AND ($2 IS NULL OR p.requested_by=$2)',[branch,agent]),
     database.query(`SELECT * FROM interest_runs WHERE $2 IS NULL AND ($1 IS NULL OR branch_id=$1) ORDER BY created_at DESC`,[branch,agent]),
     database.query(`SELECT r.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate FROM rates r ORDER BY r.id`),
     database.query(`SELECT a.*,s.full_name AS actor_name FROM audit_logs a LEFT JOIN staff s ON s.id=a.actor_id
