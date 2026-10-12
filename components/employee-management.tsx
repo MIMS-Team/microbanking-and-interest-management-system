@@ -230,8 +230,8 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
       {/* Header & Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-black text-[#102a43]">Employee Directory</h2>
-          <p className="text-xs text-[#627d98]">
+          <h2 className="text-xl font-black text-slate-900">Employee Directory</h2>
+          <p className="text-xs text-slate-500">
             Manage bank employee accounts. Dual authorization required for user creation and deactivation.
           </p>
         </div>
@@ -240,29 +240,29 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
             setCreateModal(true);
             setCreateError('');
           }}
-          className="flex items-center gap-2 rounded-xl bg-[#b65f45] px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#984b35]"
+          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:from-blue-700 hover:to-indigo-700 hover:-translate-y-0.5 active:translate-y-0"
         >
           <Plus className="h-4 w-4" /> Add New Employee
         </button>
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#d9e2ec] bg-white p-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-xs">
         <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#829ab1]" />
+          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="Search employees by name or email..."
             value={search}
             onChange={(e) => {setSearch(e.target.value);setPage(1);}}
-            className="w-full rounded-xl border border-[#d9e2ec] py-2 pl-10 pr-4 text-xs outline-none focus:border-[#b65f45]"
+            className="w-full rounded-xl border border-slate-200 py-2 pl-10 pr-4 text-xs outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
           />
         </div>
 
         <select
           value={roleFilter}
           onChange={(e) => {setRoleFilter(e.target.value);setPage(1);}}
-          className="rounded-xl border border-[#d9e2ec] px-3 py-2 text-xs font-semibold text-[#52606d] outline-none"
+          className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-600"
         >
           <option value="all">All Roles</option>
           <option value="agent">Field Agent</option>
@@ -274,7 +274,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
         <select
           value={statusFilter}
           onChange={(e) => {setStatusFilter(e.target.value);setPage(1);}}
-          className="rounded-xl border border-[#d9e2ec] px-3 py-2 text-xs font-semibold text-[#52606d] outline-none"
+          className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-600"
         >
           <option value="all">All Statuses</option>
           <option value="active">Active</option>
@@ -283,7 +283,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
 
         <button
           onClick={loadEmployees}
-          className="rounded-xl border border-[#d9e2ec] p-2 text-[#52606d] transition hover:bg-[#f0f4f8]"
+          className="rounded-xl border border-slate-200 p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
           title="Refresh directory"
         >
           <RefreshCw className="h-4 w-4" />
@@ -291,14 +291,14 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
       </div>
 
       {/* Employee Table */}
-      <div className="overflow-hidden rounded-2xl border border-[#d9e2ec] bg-white shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
         {loading ? (
-          <div className="p-10 text-center text-xs font-bold text-[#627d98]">
-            <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#b65f45]" />
+          <div className="p-10 text-center text-xs font-bold text-slate-500">
+            <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-blue-600" />
             Loading employees...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-10 text-center text-xs font-semibold text-[#627d98]">
+          <div className="p-10 text-center text-xs font-semibold text-slate-500">
             No employees found matching the selected filter criteria.
           </div>
         ) : (
@@ -318,49 +318,68 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
                 {filtered.map((emp) => {
                   const style = roleDetails[emp.role];
                   return (
-                    <tr key={emp.id} className="hover:bg-[#fcfdfd]">
+                    <tr key={emp.id} className="transition-colors hover:bg-slate-50/80">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#102a43] text-xs font-black text-white">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-xs font-black text-white shadow-sm ring-1 ring-white/10">
                             {emp.full_name.charAt(0)}
                           </div>
                           <div>
-                            <span className="font-bold text-[#102a43] block">{emp.full_name}</span>
-                            <span className="text-[11px] text-[#829ab1]">{emp.email}</span>
+                            <span className="font-bold text-slate-900 block tracking-tight">{emp.full_name}</span>
+                            <span className="text-[11px] text-slate-500 font-normal">{emp.email}</span>
                           </div>
                         </div>
                       </td>
                       <td className="px-5 py-4">
-                        <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-extrabold uppercase border ${style.tone}`}>
+                        <span className={`inline-block rounded-md px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider border shadow-xs ${style.tone}`}>
                           {roleLabels[emp.role]}
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-semibold text-[#52606d]">
-                        {emp.branch_id ? `Branch #${emp.branch_id}` : 'Global'}
+                      <td className="px-5 py-4 font-semibold text-slate-600">
+                        {emp.branch_id ? `Branch #${emp.branch_id}` : <span className="inline-flex items-center text-slate-400 font-normal">Global</span>}
                       </td>
                       <td className="px-5 py-4">
                         <span
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize ${
-                            emp.status === 'active' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize border ${
+                            emp.status === 'active' 
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60' 
+                              : 'bg-rose-50 text-rose-700 border-rose-200/60'
                           }`}
                         >
                           <span
                             className={`h-1.5 w-1.5 rounded-full ${
-                              emp.status === 'active' ? 'bg-emerald-600' : 'bg-rose-600'
+                              emp.status === 'active' ? 'bg-emerald-600 ring-2 ring-emerald-200' : 'bg-rose-600 ring-2 ring-rose-200'
                             }`}
                           />
-                          {emp.onboarding_required?'Password setup pending':emp.status}
+                          {emp.onboarding_required ? 'Password setup pending' : emp.status}
                         </span>
                       </td>
-                      <td className="px-5 py-4 text-[#829ab1]">
+                      <td className="px-5 py-4 text-slate-500 font-medium">
                         {new Date(emp.created_at).toLocaleDateString()}
                       </td>
                       <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {emp.status==='active'&&<><button onClick={()=>void employeeDelivery(emp.id,'recovery')}>Send recovery OTP</button>{emp.onboarding_required&&<button onClick={()=>void employeeDelivery(emp.id,'invitation')}>Resend onboarding invitation</button>}</>}
+                          {emp.status === 'active' && (
+                            <>
+                              <button 
+                                onClick={() => void employeeDelivery(emp.id, 'recovery')}
+                                className="rounded-lg border border-slate-200/80 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-xs transition hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300"
+                              >
+                                Send recovery OTP
+                              </button>
+                              {emp.onboarding_required && (
+                                <button 
+                                  onClick={() => void employeeDelivery(emp.id, 'invitation')}
+                                  className="rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 shadow-xs transition hover:bg-indigo-100 hover:text-indigo-900 hover:border-indigo-300"
+                                >
+                                  Resend onboarding invitation
+                                </button>
+                              )}
+                            </>
+                          )}
                           <button
                             onClick={() => handleStartEdit(emp)}
-                            className="rounded-lg border border-[#d9e2ec] p-1.5 text-[#52606d] transition hover:bg-[#e9eff5] hover:text-[#102a43]"
+                            className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 shadow-xs transition hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
                             title="Edit details"
                           >
                             <Edit className="h-3.5 w-3.5" />
@@ -368,7 +387,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
                           {emp.status === 'active' && currentUser?.id !== emp.id && (
                             <button
                               onClick={() => handleStartDeactivate(emp)}
-                              className="rounded-lg border border-rose-200 p-1.5 text-rose-600 transition hover:bg-rose-50"
+                              className="rounded-lg border border-rose-200 bg-rose-50/50 p-1.5 text-rose-600 shadow-xs transition hover:bg-rose-100 hover:text-rose-700 hover:border-rose-300"
                               title="Request deactivation"
                             >
                               <UserMinus className="h-3.5 w-3.5" />
@@ -387,13 +406,19 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
 
       {/* MODAL 1: Create Employee (Step 1) */}
       {createModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-[#d9e2ec]">
-            <div className="flex items-center justify-between border-b border-[#edf2f7] pb-3">
-              <h3 className="text-base font-black text-[#102a43] flex items-center gap-2">
-                <UserPlus className="h-5 w-5 text-[#b65f45]" /> Add New Employee
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100">
+                  <UserPlus className="h-4 w-4" />
+                </span>
+                Add New Employee
               </h3>
-              <button onClick={() => setCreateModal(false)} className="text-[#829ab1] hover:text-[#102a43]">
+              <button 
+                onClick={() => setCreateModal(false)} 
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -416,11 +441,11 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
               />
 
               <label className="block space-y-1.5">
-                <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#52606d]">Role</span>
+                <span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Role</span>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as Role)}
-                  className="w-full rounded-xl border border-[#d9e2ec] bg-white px-3 py-2.5 text-xs font-bold text-[#102a43] outline-none focus:border-[#b65f45]"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 >
                   <option value="agent">Field Agent</option>
                   <option value="manager">Branch Manager</option>
@@ -442,23 +467,23 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
               )}
 
               {createError && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-semibold text-rose-700">
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
                   {createError}
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-3">
+              <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setCreateModal(false)}
-                  className="rounded-xl border border-[#d9e2ec] px-4 py-2.5 text-xs font-bold text-[#52606d] hover:bg-[#f0f4f8]"
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createSubmitting}
-                  className="rounded-xl bg-[#b65f45] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#984b35] disabled:opacity-50"
+                  className="rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50"
                 >
                   {createSubmitting ? 'Requesting...' : 'Request HR Approval'}
                 </button>
@@ -470,13 +495,19 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
 
       {/* MODAL 3: Edit Employee */}
       {editEmployee && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-[#d9e2ec]">
-            <div className="flex items-center justify-between border-b border-[#edf2f7] pb-3">
-              <h3 className="text-base font-black text-[#102a43] flex items-center gap-2">
-                <Edit className="h-5 w-5 text-[#b65f45]" /> Update Employee
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100">
+                  <Edit className="h-4 w-4" />
+                </span>
+                Update Employee
               </h3>
-              <button onClick={() => setEditEmployee(null)} className="text-[#829ab1] hover:text-[#102a43]">
+              <button 
+                onClick={() => setEditEmployee(null)} 
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -497,11 +528,11 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
               />
 
               <label className="block space-y-1.5">
-                <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#52606d]">Role</span>
+                <span className="text-xs font-bold uppercase tracking-[0.14em] text-slate-600">Role</span>
                 <select
                   value={editRole}
                   onChange={(e) => setEditRole(e.target.value as Role)}
-                  className="w-full rounded-xl border border-[#d9e2ec] bg-white px-3 py-2.5 text-xs font-bold text-[#102a43] outline-none focus:border-[#b65f45]"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 >
                   <option value="agent">Field Agent</option>
                   <option value="manager">Branch Manager</option>
@@ -522,23 +553,23 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
               )}
 
               {editError && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-semibold text-rose-700">
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
                   {editError}
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-3">
+              <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setEditEmployee(null)}
-                  className="rounded-xl border border-[#d9e2ec] px-4 py-2.5 text-xs font-bold text-[#52606d] hover:bg-[#f0f4f8]"
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={editSubmitting}
-                  className="rounded-xl bg-[#b65f45] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#984b35] disabled:opacity-50"
+                  className="rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50"
                 >
                   {editSubmitting ? 'Saving...' : 'Save Changes'}
                 </button>
