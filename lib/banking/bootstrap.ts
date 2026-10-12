@@ -16,6 +16,18 @@ export async function getBootstrap(user: Staff,options?:ListOptions): Promise<Bo
 
 const ownerNames = `COALESCE((SELECT GROUP_CONCAT(c.full_name ORDER BY c.id SEPARATOR ', ')
   FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id),'')`;
+// Materialize each ownership aggregate once, instead of repeating several
+// dependent subqueries for every customer/account displayed in a dashboard.
+const customerTotals = `LEFT JOIN (
+  SELECT ca.customer_id,COUNT(*) AS account_count,SUM(a.balance) AS total_balance
+  FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id
+  WHERE a.status='active' GROUP BY ca.customer_id
+) customer_totals ON customer_totals.customer_id=c.id`;
+const accountOwners = `LEFT JOIN (
+  SELECT ca.account_id,GROUP_CONCAT(c.full_name ORDER BY c.id SEPARATOR ', ') AS owner_names,
+    JSON_ARRAYAGG(ca.customer_id) AS owner_ids,MIN(ca.customer_id) AS customer_id,MIN(c.full_name) AS customer_name
+  FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id GROUP BY ca.account_id
+) account_owners ON account_owners.account_id=a.id`;
 
 async function loadBootstrap(database: Queryable,user: Staff,options?:ListOptions): Promise<Bootstrap> {
   const current = await first<Staff>(database,`SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status,b.name AS branch_name
@@ -46,14 +58,12 @@ async function loadBootstrap(database: Queryable,user: Staff,options?:ListOption
     paged('staff','SELECT s.id,s.full_name,s.email,s.role,s.branch_id,s.status,b.name AS branch_name',
       'FROM staff s LEFT JOIN branches b ON b.id=s.branch_id WHERE ($1 IS NULL OR s.branch_id=$1)',[branch,agent]),
     paged('customers',`SELECT c.*,DATE_FORMAT(c.date_of_birth,'%Y-%m-%d') AS date_of_birth,b.name AS branch_name,s.full_name AS agent_name,
-      (SELECT count(*) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active') AS account_count,
-      COALESCE((SELECT sum(a.balance) FROM customer_accounts ca JOIN savings_accounts a ON a.id=ca.account_id WHERE ca.customer_id=c.id AND a.status='active'),0) AS total_balance`,
-      'FROM customers c JOIN branches b ON b.id=c.branch_id JOIN staff s ON s.id=c.agent_id WHERE ($1 IS NULL OR c.branch_id=$1) AND ($2 IS NULL OR c.agent_id=$2)',[branch,agent]),
-    paged('accounts',`SELECT a.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate,b.name AS branch_name,${ownerNames} AS owner_names,
-      (SELECT JSON_ARRAYAGG(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS owner_ids,
-      (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,
-      (SELECT MIN(c.full_name) FROM customer_accounts ca JOIN customers c ON c.id=ca.customer_id WHERE ca.account_id=a.id) AS customer_name`,
-      'FROM savings_accounts a JOIN rates r ON r.id=a.rate_id JOIN branches b ON b.id=a.branch_id WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)',[branch,agent]),
+      COALESCE(customer_totals.account_count,0) AS account_count,
+      COALESCE(customer_totals.total_balance,0) AS total_balance`,
+      `FROM customers c JOIN branches b ON b.id=c.branch_id JOIN staff s ON s.id=c.agent_id ${customerTotals} WHERE ($1 IS NULL OR c.branch_id=$1) AND ($2 IS NULL OR c.agent_id=$2)`,[branch,agent]),
+    paged('accounts',`SELECT a.*,(SELECT h.annual_rate FROM rate_history h WHERE h.rate_id=r.id AND h.effective_at<=UTC_TIMESTAMP(3) ORDER BY h.effective_at DESC LIMIT 1) AS annual_rate,b.name AS branch_name,COALESCE(account_owners.owner_names,'') AS owner_names,
+      account_owners.owner_ids,account_owners.customer_id,account_owners.customer_name`,
+      `FROM savings_accounts a JOIN rates r ON r.id=a.rate_id JOIN branches b ON b.id=a.branch_id ${accountOwners} WHERE ($1 IS NULL OR a.branch_id=$1) AND ($2 IS NULL OR a.agent_id=$2)`,[branch,agent]),
     paged('fixedDeposits',`SELECT f.*,DATE_FORMAT(f.maturity_date,'%Y-%m-%d') AS maturity_date,
       DATE_FORMAT(f.payout_date,'%Y-%m-%d') AS payout_date,CASE WHEN f.status='active' THEN ${nextFdPayout} ELSE NULL END AS next_payout,
       (SELECT MIN(ca.customer_id) FROM customer_accounts ca WHERE ca.account_id=a.id) AS customer_id,

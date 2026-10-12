@@ -73,3 +73,46 @@ Linux-runner acceptance, production capacity or full SRS compliance.
 Full command logs are retained in ignored `.data/workspace-pr42-*.log` and exact
 exit records in `.data/workspace-checks.json`. Shared/production databases and
 the running fictional demo data were not migrated or reset by this fix.
+
+## Subsequent CI and aggregation follow-up
+
+Commit `9f241c1` reached PR #42. Its
+[push run](https://github.com/MIMS-Team/microbanking-and-interest-management-system/actions/runs/38206649571)
+and [PR run](https://github.com/MIMS-Team/microbanking-and-interest-management-system/actions/runs/38206652254)
+passed all checks preceding load, including the full browser matrices. Both had
+zero workload operation failures, but dashboard maxima were 5,069.642 ms and
+8,204.126 ms respectively. The PR run also exceeded the transaction target
+(5,984.222 ms). Thus the initial local pass did not establish hosted acceptance;
+both hosted load checks failed and recovery was skipped.
+
+The follow-up materializes customer active-account counts/balances and account
+owner details in grouped joins, replacing repeated dependent subqueries per
+displayed row. Ownership totals, exact DECIMAL balances, ordered owner names,
+IDs, filters and authorization remain the same. Existing regression assertions
+now include the exact joint-customer counts/balances to prevent join multiplication.
+Direct fresh-fixture bootstraps measured approximately 80-84 ms per role.
+
+Two initial full local attempts failed during authentication before a workload
+summary (timeout, then connection reset). The HTTP harness now retires idle
+sockets only after every response completes at authentication phase boundaries,
+preserving each user's real source address and cookies. It adds route/socket
+reuse diagnostics. There are no retries, skipped requests or timeout changes;
+measured workload requests include fresh TLS setup. The 70 sessions, dataset,
+pool of ten, 30-second request timeout and 3/5/15-second targets remain unchanged.
+
+The subsequent complete local workload exited 0: zero operation failures, zero
+balance mismatches and passing two-instance limits/cooldowns/outage behavior.
+Mixed-workload wall time was 13,178.602 ms. This is a new run, not a claim that
+the failed attempts passed.
+
+| Service | Samples | p50 ms | p95 ms | p99/max ms | Target ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Dashboard | 70 | 835.849 | 2,230.951 | 2,284.927 | 3,000 |
+| Transaction | 40 | 3,820.687 | 4,504.038 | 4,509.234 | 5,000 |
+| Report | 30 | 4,765.482 | 10,855.185 | 10,868.372 | 15,000 |
+
+Follow-up lint/typecheck exited 0 and all 67 banking tests passed with zero
+failures/skips. The affected complete production Chromium banking workflow
+passed (one test, zero failures) and its build exited 0. Its separate browser
+navigation/render samples were approximately 226-385 ms, not a seventy-browser
+performance result. Hosted acceptance on the follow-up commit remains pending.

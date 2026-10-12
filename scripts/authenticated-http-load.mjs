@@ -4,12 +4,18 @@ import {performance} from 'node:perf_hooks';
 import {randomUUID} from 'node:crypto';
 
 export async function authenticatedHttpLoad({url,mailboxURL,mailboxToken,fixture}){
-  const target=new URL(url),clients=fixture.users.map((user,i)=>({user,cookie:'',agent:new https.Agent({keepAlive:true,rejectUnauthorized:false,localAddress:`127.0.0.${i+2}`,lookup:(_host,options,callback)=>options.all?callback(null,[{address:'127.0.0.1',family:4}]):callback(null,'127.0.0.1',4)})}));
+  const target=new URL(url);
+  const agentFor=i=>new https.Agent({keepAlive:true,rejectUnauthorized:false,localAddress:`127.0.0.${i+2}`,lookup:(_host,options,callback)=>options.all?callback(null,[{address:'127.0.0.1',family:4}]):callback(null,'127.0.0.1',4)});
+  const clients=fixture.users.map((user,i)=>({user,cookie:'',agent:agentFor(i)}));
+  // All responses have completed at each phase boundary. Retire sockets that
+  // early users left idle while slower users authenticate; do not replay requests
+  // on a reset keep-alive connection. Workload timing includes its fresh TLS.
+  const nextPhase=()=>clients.forEach((client,i)=>{client.agent.destroy();client.agent=agentFor(i);});
   const metrics={dashboard:[],transaction:[],report:[]};
   const request=(client,path,body)=>new Promise((resolve,reject)=>{
     const bytes=body?Buffer.from(JSON.stringify(body)):null;
     const req=https.request({hostname:target.hostname,port:target.port,path,agent:client.agent,method:body?'POST':'GET',headers:{...(bytes?{'Content-Type':'application/json','Content-Length':bytes.length}:{}),Cookie:client.cookie,Origin:target.origin}},response=>{let data='';response.setEncoding('utf8');response.on('data',chunk=>{data+=chunk;});response.on('end',()=>{let result;try{result=JSON.parse(data);}catch{return reject(new Error('Non-JSON workload response '+response.statusCode));}resolve({status:response.statusCode,body:result,cookies:response.headers['set-cookie']||[]});});});
-    req.setTimeout(30000,()=>req.destroy(new Error('HTTP workload timed out')));req.on('error',reject);req.end(bytes);
+    req.setTimeout(30000,()=>req.destroy(new Error('HTTP workload timed out')));req.on('error',error=>reject(new Error(`${error.message} at ${path}; reused socket: ${req.reusedSocket}`,{cause:error})));req.end(bytes);
   });
   let failures=0;
   try{
@@ -17,8 +23,10 @@ export async function authenticatedHttpLoad({url,mailboxURL,mailboxToken,fixture
     // forwarding headers from that socket; no relaxed limits or fabricated
     // sessions are used. All seventy users log in and complete their SMTP OTP.
     await Promise.all(clients.map(async client=>{const result=await request(client,'/api/auth/login',{email:client.user.email,password:fixture.password});assert.equal(result.status,202);client.cookie=result.cookies.map(c=>c.split(';')[0]).join('; ');}));
+    nextPhase();
     const messages=await (await fetch(mailboxURL,{headers:{authorization:'Bearer '+mailboxToken}})).json();
     await Promise.all(clients.map(async client=>{const code=messages.filter(m=>m.recipients.includes(client.user.email)).at(-1)?.raw.match(/verification code is: (\d{6})/)?.[1];assert.ok(code);const response=await request(client,'/api/auth/otp',{code});assert.equal(response.status,200);client.cookie=response.cookies.map(c=>c.split(';')[0]).join('; ');const identity=await request(client,'/api/auth/session');assert.equal(identity.status,200);assert.equal(identity.body.user.id,client.user.id);}));
+    nextPhase();
     const start=performance.now();
     const outcomes=await Promise.allSettled(clients.map(async(client,i)=>{
       let at=performance.now();const dashboard=await request(client,'/api/bootstrap?resource=transactions&pageSize=8');metrics.dashboard.push(performance.now()-at);assert.equal(dashboard.status,200);assert.equal(dashboard.body.user.id,client.user.id);

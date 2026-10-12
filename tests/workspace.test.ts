@@ -62,6 +62,8 @@ test('shared limiter store failure rejects instead of allowing an authentication
 test('scoped pagination searches, sorts and retains counts past an empty final page',async()=>{
   const request=(page:number)=>getBootstrap(agent,listOptions(new URLSearchParams({resource:'customers',page:String(page),pageSize:'2',sort:'oldest'})));
   const first=await request(1),next=await request(2);assert.equal(first.customers.length,2);assert.equal(next.customers.length,2);assert.ok(first.customers.every(c=>c.agent_id===agent.id));assert.ok(first.customers[1].id<next.customers[0].id);
+  assert.equal(first.customers[0].account_count,1);assert.equal(first.customers[0].total_balance,'145000.00');
+  assert.equal(first.customers[1].account_count,2);assert.equal(first.customers[1].total_balance,'223000.00');
   const empty=await request(999);assert.equal(empty.customers.length,0);assert.equal(empty.pagination!.customers!.total,first.pagination!.customers!.total);
   const searched=await getBootstrap(agent,listOptions(new URLSearchParams({resource:'customers',search:first.customers[0].nic})));assert.equal(searched.customers.length,1);assert.equal(searched.customers[0].id,first.customers[0].id);
   // Projection joins and the count must apply the same ownership/status scope.
