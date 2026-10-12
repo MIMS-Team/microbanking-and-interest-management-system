@@ -160,6 +160,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.waitForURL(/\/otp/);
     const initialUrl = page.url();
     const resendBtn = page.getByRole('button', { name: /resend/i });
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.reload();
     await expect(resendBtn).toBeEnabled({ timeout: 40000 });
     // The denied request also occupies the normal per-IP resend window.
@@ -182,6 +183,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     // Successful login to dashboard
     await page.waitForURL(/\/dashboard\?tab=agent/);
     expect(page.url()).toContain('/dashboard?tab=agent');
+    await expect(page.getByText('Authorized Workspace')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
   });
 
   test('6. Refresh before expiry preserves the remaining countdown', async ({ page }) => {
