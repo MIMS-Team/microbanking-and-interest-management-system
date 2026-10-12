@@ -6,7 +6,7 @@ for (const form of [
 ]) {
   test(`${form.path} preserves typed credentials after delayed hydration`, async ({ page }) => {
     let releaseScripts!: () => void;
-    const scriptsReady = new Promise<void>(resolve => { releaseScripts = resolve; });
+    let scriptsReady = new Promise<void>(resolve => { releaseScripts = resolve; });
     // Keep the server HTML visible while the browser waits for React's scripts.
     await page.route('**/_next/static/**/*.js', async route => {
       await scriptsReady;
@@ -35,6 +35,16 @@ for (const form of [
         await submit.focus();
         await expect(password).toHaveValue('Agent@2026!');
       }
+
+      // Firefox restores enabled/disabled control state on refresh. Repeat the
+      // delayed-script check after the controls have previously been enabled.
+      scriptsReady = new Promise<void>(resolve => { releaseScripts = resolve; });
+      await page.reload({ waitUntil: 'commit' });
+      await expect(email).toBeDisabled();
+      await expect(submit).toBeDisabled();
+      releaseScripts();
+      await expect(email).toBeEditable();
+      await expect(submit).toBeEnabled();
     } finally {
       releaseScripts();
       await page.unrouteAll({ behavior: 'wait' });

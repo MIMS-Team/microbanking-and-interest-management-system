@@ -313,7 +313,6 @@ export function PasswordField({
   placeholder = '••••••••',
   autoComplete = 'current-password',
   required = true,
-  disabled = false,
   name,
   id,
   minLength,
@@ -325,7 +324,6 @@ export function PasswordField({
   placeholder?: string;
   autoComplete?: string;
   required?: boolean;
-  disabled?: boolean;
   name?: string;
   id?: string;
   minLength?: number;
@@ -343,14 +341,12 @@ export function PasswordField({
       placeholder={placeholder}
       autoComplete={autoComplete}
       required={required}
-      disabled={disabled}
       name={name}
       id={id}
       minLength={minLength}
       rightElement={
         <button
           type="button"
-          disabled={disabled}
           onClick={() => setShowPassword(!showPassword)}
           aria-label={showPassword ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
           className="rounded-lg p-1 text-slate-400 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
@@ -798,6 +794,7 @@ export function LoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <fieldset disabled={!hydrated} className="min-w-0 space-y-4">
       {loggedOutNotice && (
         <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
@@ -816,7 +813,6 @@ export function LoginForm() {
         type="email"
         placeholder="e.g. employee@ravindu.bank"
         autoComplete="username email"
-        disabled={!hydrated}
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -825,7 +821,6 @@ export function LoginForm() {
         label="Password"
         placeholder="Enter your confidential password"
         autoComplete="current-password"
-        disabled={!hydrated}
         required
         value={password}
         onChange={(e) => setPassword(e.target.value)}
@@ -840,7 +835,7 @@ export function LoginForm() {
 
       <button
         type="submit"
-        disabled={!hydrated || submitting}
+        disabled={submitting}
         className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
       >
         {submitting ? (
@@ -878,7 +873,6 @@ export function LoginForm() {
             <button
               key={account.email}
               type="button"
-              disabled={!hydrated}
               onClick={() => { setEmail(account.email); setPassword(account.password); }}
               className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50/50 hover:text-blue-700 transition"
             >
@@ -889,6 +883,7 @@ export function LoginForm() {
         </div>
         <p className="mt-2 text-[10px] text-slate-500">Admin: enter your current password after selecting the account.</p>
       </div>
+      </fieldset>
     </form>
   );
 }
@@ -1095,7 +1090,7 @@ export function OtpForm() {
   };
 
   return (
-    <form onSubmit={submit} className="space-y-5">
+    <form onSubmit={submit} autoComplete="off" className="space-y-5">
       <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-xs leading-relaxed text-slate-600">
         <BadgeCheck className="h-5 w-5 shrink-0 text-blue-600 mt-0.5" />
         <div>
@@ -1304,13 +1299,13 @@ export function ResetForm() {
   if (step === 'request') {
     return (
       <form onSubmit={requestReset} className="space-y-4">
+        <fieldset disabled={!hydrated} className="min-w-0 space-y-4">
         <Field
           label="Registered Work Email"
           icon={Mail}
           type="email"
           placeholder="employee@ravindu.bank"
           autoComplete="username email"
-          disabled={!hydrated}
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -1324,7 +1319,7 @@ export function ResetForm() {
 
         <button
           type="submit"
-          disabled={!hydrated || submitting}
+          disabled={submitting}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
         >
           {submitting ? 'Dispatching OTP...' : 'Send Recovery OTP'} <ArrowRight className="h-4 w-4" />
@@ -1335,6 +1330,7 @@ export function ResetForm() {
             Return to sign in
           </Link>
         </div>
+        </fieldset>
       </form>
     );
   }
