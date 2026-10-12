@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ArrowRight,
   BadgeCheck,
@@ -706,8 +706,18 @@ export function RequireSession({
   return <>{children}</>;
 }
 
+const subscribeToHydration = () => () => {};
+const hydratedSnapshot = () => true;
+const serverHydrationSnapshot = () => false;
+
+// Server-rendered inputs must not accept values before React can preserve them.
+function useHydrated() {
+  return useSyncExternalStore(subscribeToHydration, hydratedSnapshot, serverHydrationSnapshot);
+}
+
 export function LoginForm() {
   const router = useRouter();
+  const hydrated = useHydrated();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -727,7 +737,7 @@ export function LoginForm() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting) return;
+    if (!hydrated || submitting) return;
     setError('');
     setSubmitting(true);
 
@@ -784,6 +794,7 @@ export function LoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <fieldset disabled={!hydrated} className="min-w-0 space-y-4">
       {loggedOutNotice && (
         <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
@@ -872,6 +883,7 @@ export function LoginForm() {
         </div>
         <p className="mt-2 text-[10px] text-slate-500">Admin: enter your current password after selecting the account.</p>
       </div>
+      </fieldset>
     </form>
   );
 }
@@ -1078,7 +1090,7 @@ export function OtpForm() {
   };
 
   return (
-    <form onSubmit={submit} className="space-y-5">
+    <form onSubmit={submit} autoComplete="off" className="space-y-5">
       <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-xs leading-relaxed text-slate-600">
         <BadgeCheck className="h-5 w-5 shrink-0 text-blue-600 mt-0.5" />
         <div>
@@ -1159,6 +1171,7 @@ export function OtpForm() {
 
 export function ResetForm() {
   const router = useRouter();
+  const hydrated = useHydrated();
   const [step, setStep] = useState<'request' | 'confirm' | 'success'>('request');
   const [email, setEmail] = useState('');
   const [challengeId, setChallengeId] = useState('');
@@ -1180,7 +1193,7 @@ export function ResetForm() {
 
   const requestReset = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting) return;
+    if (!hydrated || submitting) return;
     setError('');
     setStatusMsg('');
     setSubmitting(true);
@@ -1286,6 +1299,7 @@ export function ResetForm() {
   if (step === 'request') {
     return (
       <form onSubmit={requestReset} className="space-y-4">
+        <fieldset disabled={!hydrated} className="min-w-0 space-y-4">
         <Field
           label="Registered Work Email"
           icon={Mail}
@@ -1316,6 +1330,7 @@ export function ResetForm() {
             Return to sign in
           </Link>
         </div>
+        </fieldset>
       </form>
     );
   }

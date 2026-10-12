@@ -10,6 +10,7 @@ const owned = createE2eEnvironment();
 const env = {
   ...process.env, ...owned, EMAIL_PROVIDER: 'test', MIMS_E2E_RELAX_RATE_LIMITS: 'true',
   PGLITE_DATA_DIR: 'memory://', DATABASE_URL: '', NEXT_TELEMETRY_DISABLED: '1',
+  NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=4096`.trim(),
   // This auth compatibility runner never inherits a real SMTP recipient path.
   SMTP_HOST:'',SMTP_USER:'',SMTP_PASS:'',SMTP_PORT:'1',SMTP_FROM:'security@example.test',
 };
@@ -111,7 +112,7 @@ try {
   // Compile the owned development server's routes before browser session polling
   // can overlap cold route compilation. GET requests do not mutate fixtures.
   for (const route of [
-    '/login', '/otp', '/passwordreset', '/dashboard', '/profile', '/onboarding',
+    '/login', '/otp', '/passwordreset', '/dashboard?tab=agent', '/profile', '/onboarding',
     '/api/auth/login', '/api/auth/otp', '/api/auth/otp/resend',
     '/api/auth/password-reset/request', '/api/auth/password-reset/confirm',
     '/api/auth/logout', '/api/auth/session', '/api/auth/onboarding',
@@ -138,9 +139,13 @@ try {
     validateE2eEnvironment(owned);
     // This exact build directory is derived from this run's secret ownership token.
     if (buildOwned) {
-      if (realpathSync(nextRoot) !== nextRoot || lstatSync(build).isSymbolicLink() || realpathSync(build) !== build ||
-          readFileSync(join(build, 'owner.json'), 'utf8') !== owned.MIMS_E2E_TOKEN) throw new Error('Invalid owned build path.');
-      rmSync(build, { recursive: true, force: false, maxRetries: 10, retryDelay: 100 });
+      if (!existsSync(build)) {
+        console.warn('Owned E2E build directory was removed before cleanup.');
+      } else {
+        if (realpathSync(nextRoot) !== nextRoot || lstatSync(build).isSymbolicLink() || realpathSync(build) !== build ||
+            readFileSync(join(build, 'owner.json'), 'utf8') !== owned.MIMS_E2E_TOKEN) throw new Error('Invalid owned build path.');
+        rmSync(build, { recursive: true, force: false, maxRetries: 10, retryDelay: 100 });
+      }
     }
   } catch (error) { cleanupErrors.push(error); }
   try { removeE2eEnvironment(owned); } catch (error) { cleanupErrors.push(error); }

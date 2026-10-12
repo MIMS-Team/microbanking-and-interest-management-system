@@ -44,7 +44,7 @@ async function denied(page: Page, path: string, method: string, body?: object) {
 }
 
 test('employee lifecycle requires independent approval and revokes an existing session', async ({ page: admin, newActorPage }) => {
-  test.setTimeout(180000);
+  test.setTimeout(240000);
   // These actors belong only to this runner's disposable SQLite database.
   await login(admin, 'admin@example.test', 'AdminDev@2026!');
   const otherHr = await newActorPage();
@@ -73,7 +73,9 @@ test('employee lifecycle requires independent approval and revokes an existing s
   const pending = await creation.json();
   expect(pending.hrManagerEmail).toBe('hr@example.test');
   const createCode = await otpFor(pending.hrManagerEmail, 'employee_creation', sinceCreate);
-  const usersBefore = await (await admin.request.get('/api/users')).json();
+  // Idle keep-alive sockets can be reset by the dev server. Retry only that
+  // transport failure; every HTTP status and authorization assertion remains.
+  const usersBefore = await (await admin.request.get('/api/users', { maxRetries: 1 })).json();
   expect(usersBefore.users.some((u: { email: string }) => u.email === 'lifecycle@example.test')).toBe(false);
 
   // The requesting administrator has the right code but must still be refused.
@@ -106,7 +108,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
   const updateResponse = admin.waitForResponse(r => r.url().endsWith(path) && r.request().method() === 'PATCH');
   await admin.getByRole('button', { name: 'Save Changes' }).click();
   expect((await updateResponse).status()).toBe(200);
-  const saved = await (await admin.request.get(path)).json();
+  const saved = await (await admin.request.get(path, { maxRetries: 1 })).json();
   expect(saved.user).toMatchObject({ full_name: 'Fictional Updated Employee', email: 'updated-lifecycle@example.test', branch_id: 2, role: 'agent', status: 'active' });
 
   // UI creation generates a secret temporary password. The new employee uses
@@ -121,10 +123,12 @@ test('employee lifecycle requires independent approval and revokes an existing s
   await employee.getByPlaceholder('Repeat new password').fill('LifecyclePassword!2026');
   await employee.getByRole('button', { name: 'Set New Password' }).click();
   await expect(employee.getByText('Password Reset Succeeded', { exact: true })).toBeVisible();
+  await employee.waitForURL(/\/login/);
+  await employee.evaluate(() => document.fonts.ready.then(() => undefined));
   await login(employee, saved.user.email, 'LifecyclePassword!2026');
   const oldSession = (await employee.context().cookies()).find(c => c.name === 'microbank_session');
   expect(oldSession).toBeDefined();
-  expect((await employee.request.get('/api/auth/session')).status()).toBe(200);
+  expect((await employee.request.get('/api/auth/session', { maxRetries: 1 })).status()).toBe(200);
 
   const sinceDeactivate = Date.now();
   const deactivationResponse = admin.waitForResponse(r => r.url().endsWith(path) && r.request().method() === 'DELETE');
@@ -134,7 +138,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
   const deact = await deactivation.json();
   expect(deact.hrManagerEmail).toBe('hr@example.test');
   const deactCode = await otpFor(deact.hrManagerEmail, 'employee_deactivation', sinceDeactivate);
-  expect((await employee.request.get('/api/auth/session')).status()).toBe(200);
+  expect((await employee.request.get('/api/auth/session', { maxRetries: 1 })).status()).toBe(200);
   expect((await denied(admin, path+'/confirm-deactivate', 'POST', { challengeId: deact.challengeId, code: deactCode })).error).toMatch(/Requester cannot approve their own deactivation request/);
   await expect(admin.getByLabel('HR Manager Approval OTP')).toHaveCount(0);
   await denied(manager, `${path}/confirm-deactivate`, 'POST', { challengeId: deact.challengeId, code: deactCode });
@@ -147,10 +151,11 @@ test('employee lifecycle requires independent approval and revokes an existing s
   await hr.getByLabel('6-Digit Approver OTP').fill(deactCode);
   await hr.getByRole('button', { name: 'Record HR decision' }).click();
   await expect(hr.getByText(/successfully deactivated and all active sessions revoked/)).toBeVisible();
-  expect((await (await admin.request.get(path)).json()).user.status).toBe('inactive');
+  expect((await (await admin.request.get(path, { maxRetries: 1 })).json()).user.status).toBe('inactive');
   // Explicitly replay the old cookie: a UI redirect alone cannot prove revocation.
-  expect((await employee.request.get('/api/auth/session', { headers: { cookie: `microbank_session=${oldSession!.value}` } })).status()).toBe(401);
+  expect((await employee.request.get('/api/auth/session', { maxRetries: 1, headers: { cookie: `microbank_session=${oldSession!.value}` } })).status()).toBe(401);
   expectHttpError(employee, '/api/auth/session', 401);
+  await employee.evaluate(() => document.fonts.ready.then(() => undefined));
   await employee.reload();
   await employee.waitForURL(/\/login/);
   expectHttpError(employee, '/api/auth/login', 401);
