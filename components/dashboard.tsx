@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Building2, Clock3, Landmark, Users, WalletCards } from 'lucide-react';
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, Building2, Calendar, Clock3, Landmark, Users, WalletCards, ShieldCheck, Sparkles } from 'lucide-react';
 import type { Bootstrap, ModuleName } from '@/lib/types';
 import { addMoney, date, initials, label, money, number } from '@/lib/format';
 import { Badge, EmptyState, Metric, Panel, SectionHeading } from './ui';
@@ -15,11 +15,27 @@ export function Dashboard({ data, navigate }: { data: Bootstrap; navigate: (modu
       <SectionHeading
         title={`Welcome back, ${data.user.full_name.split(' ')[0]}`}
         description="Your branch, your customers and the day’s banking activity at a glance."
-        action={<span className="date-pill"><CalendarDate />{date(new Date().toISOString())}</span>}
+        action={<span className="date-pill"><Calendar size={14} className="text-blue-600" />{date(new Date().toISOString())}</span>}
       />
       <div className="welcome-banner">
-        <div><span className="eyebrow">B-TRUST BANK · OPERATIONS OVERVIEW</span><h2>Better banking starts with a clear view.</h2><p>Keep customer relationships and everyday operations moving forward.</p></div>
-        <span className="banner-bank"><Landmark size={66} strokeWidth={1.2} /></span>
+        <div>
+          <span className="eyebrow flex items-center gap-1.5 mb-2">
+            <Sparkles size={13} className="text-blue-400" /> B-TRUST BANK · OPERATIONS OVERVIEW
+          </span>
+          <h2>Better banking starts with a clear view.</h2>
+          <p>Keep customer relationships and everyday operations moving forward.</p>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-blue-200 backdrop-blur-sm border border-white/10">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Branch Core Active
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-blue-200 backdrop-blur-sm border border-white/10">
+              <ShieldCheck size={12} className="text-blue-300" />
+              Reconciled Ledger
+            </span>
+          </div>
+        </div>
+        <span className="banner-bank"><Landmark size={72} strokeWidth={1.2} /></span>
       </div>
       <div className="metrics-grid">
         <Metric title="Total customers" value={number(data.metrics.total_customers)} subtitle="Registered in your accessible branches" icon={<Users size={20} />} />
@@ -67,5 +83,3 @@ export function Dashboard({ data, navigate }: { data: Bootstrap; navigate: (modu
     </>
   );
 }
-
-function CalendarDate() { return <span aria-hidden="true">◷</span>; }
