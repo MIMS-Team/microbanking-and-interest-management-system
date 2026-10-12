@@ -53,10 +53,10 @@ export const roleLabels: Record<Role, string> = {
 
 
 export const roleDetails: Record<Role, { short: string; tone: string; description: string }> = {
-  admin: { short: 'SA', tone: 'bg-rose-100 text-rose-800 border-rose-200', description: 'Platform identity and user lifecycle management' },
-  higher_manager: { short: 'HM', tone: 'bg-amber-100 text-amber-800 border-amber-200', description: 'Executive approvals and governance oversight' },
-  manager: { short: 'BM', tone: 'bg-cyan-100 text-cyan-800 border-cyan-200', description: 'Branch banking operations and supervisory controls' },
-  agent: { short: 'AG', tone: 'bg-emerald-100 text-emerald-800 border-emerald-200', description: 'Customer service and operational features' },
+  admin: { short: 'SA', tone: 'bg-rose-50 text-rose-700 border-rose-200', description: 'Platform identity and user lifecycle management' },
+  higher_manager: { short: 'HM', tone: 'bg-amber-50 text-amber-700 border-amber-200', description: 'Executive approvals and governance oversight' },
+  manager: { short: 'BM', tone: 'bg-blue-50 text-blue-700 border-blue-200', description: 'Branch banking operations and supervisory controls' },
+  agent: { short: 'AG', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200', description: 'Customer service and operational features' },
 };
 
 
@@ -195,10 +195,10 @@ export function LogoutButton({
 
   const baseStyles =
     variant === 'mobile'
-      ? 'flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-bold text-[#b65f45] transition hover:bg-[#fff1ed] disabled:opacity-50 disabled:cursor-not-allowed'
+      ? 'flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed'
       : variant === 'button'
-      ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow transition hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed'
-      : 'ml-2 flex items-center gap-2 rounded-lg border border-[#d9e2ec] px-3 py-2 text-xs font-bold text-[#b65f45] transition hover:bg-[#fff1ed] disabled:opacity-50 disabled:cursor-not-allowed';
+      ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:from-rose-700 hover:to-rose-800 disabled:opacity-50 disabled:cursor-not-allowed'
+      : 'ml-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs';
 
   return (
     <div className="inline-flex flex-col items-start">
@@ -253,17 +253,17 @@ export function getInitials(name: string): string {
     .toUpperCase();
 }
 
-export function RavinduLogo({ compact = false }: { compact?: boolean }) {
+export function RavinduLogo({ compact = false, dark = false }: { compact?: boolean; dark?: boolean }) {
   return (
-    <Link href="/login" className="flex items-center gap-3">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#102a43] text-[#f8f4ec] shadow-lg shadow-[#102a43]/15">
-        <Landmark className="h-5 w-5 text-[#d99a72]" />
+    <Link href="/login" className="flex items-center gap-3 group">
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25 transition group-hover:scale-105">
+        <Landmark className="h-5 w-5 text-white" />
       </span>
       {!compact && (
         <span>
-          <span className="block text-sm font-extrabold tracking-[0.12em] text-[#102a43]">B-TRUST MIMS</span>
-          <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-[#b65f45]">
-            Authentication & User Management
+          <span className={`block text-sm font-extrabold tracking-[0.1em] ${dark ? 'text-white' : 'text-slate-900'}`}>B-TRUST MIMS</span>
+          <span className={`block text-[10px] font-semibold uppercase tracking-[0.16em] ${dark ? 'text-blue-300' : 'text-blue-600'}`}>
+            Microbanking & Interest Platform
           </span>
         </span>
       )}
@@ -285,12 +285,12 @@ export function Field({
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#52606d]">{label}</span>
+      <span className="text-xs font-semibold tracking-wide text-slate-700">{label}</span>
       <span className="relative block">
-        {Icon && <Icon className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#829ab1]" />}
+        {Icon && <Icon className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />}
         <input
           {...props}
-          className={`w-full rounded-xl border border-[#d9e2ec] bg-white px-4 py-3 text-sm text-[#102a43] outline-none transition placeholder:text-[#9fb3c8] focus:border-[#b65f45] focus:ring-4 focus:ring-[#b65f45]/10 ${
+          className={`w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-600/10 shadow-xs ${
             Icon ? 'pl-11' : ''
           } ${rightElement ? 'pr-11' : ''} ${error ? 'border-rose-400 bg-rose-50/30' : ''} ${props.className ?? ''}`}
         />
@@ -349,7 +349,7 @@ export function PasswordField({
           type="button"
           onClick={() => setShowPassword(!showPassword)}
           aria-label={showPassword ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
-          className="rounded-lg p-1 text-[#829ab1] hover:text-[#102a43] focus:outline-none focus:ring-2 focus:ring-[#b65f45]/20"
+          className="rounded-lg p-1 text-slate-400 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
         >
           {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
@@ -370,43 +370,67 @@ export function AuthFrame({
   description: string;
 }) {
   return (
-    <main className="min-h-screen bg-[#f6f3ed] text-[#102a43]">
-      <div className="grid min-h-screen lg:grid-cols-[0.9fr_1.1fr]">
-        <section className="relative hidden overflow-hidden bg-[#102a43] p-10 text-[#f8f4ec] lg:flex lg:flex-col lg:justify-between">
-          <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full border-[60px] border-[#d99a72]/30" />
-          <div className="absolute -bottom-32 -left-20 h-80 w-80 rounded-full border-[40px] border-[#4f8a8b]/30" />
-          <RavinduLogo />
-          <div className="relative max-w-md">
-            <p className="mb-5 text-xs font-bold uppercase tracking-[0.25em] text-[#d99a72]">{label}</p>
-            <h1 className="max-w-lg text-4xl font-black leading-[1.1] tracking-[-0.04em]">
+    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+      <div className="grid min-h-screen lg:grid-cols-[1fr_1.1fr]">
+        <section className="relative hidden overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-12 text-slate-100 lg:flex lg:flex-col lg:justify-between shadow-2xl">
+          <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full bg-blue-600/20 blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-32 -left-20 h-80 w-80 rounded-full bg-indigo-600/20 blur-3xl pointer-events-none" />
+          <div className="absolute top-1/2 left-1/3 h-64 w-64 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
+
+          <div className="relative z-10 flex items-center justify-between">
+            <RavinduLogo dark />
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-blue-200 backdrop-blur-md">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              SOC2 Type II · TLS 1.3
+            </div>
+          </div>
+
+          <div className="relative z-10 max-w-lg my-auto py-10">
+            <div className="inline-block rounded-full bg-blue-500/15 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-400 border border-blue-500/30 mb-5">
+              {label}
+            </div>
+            <h1 className="text-4xl font-black leading-tight tracking-tight text-white">
               Secure Banking Access & Authorization
             </h1>
-            <p className="mt-5 max-w-sm text-sm leading-7 text-[#bcccdc]">
-              Enterprise-grade two-factor identity verification, role-based controls, and dual-authorization employee management.
+            <p className="mt-4 text-sm leading-relaxed text-slate-300 max-w-md">
+              Enterprise-grade multi-factor identity verification, role-based controls, and dual-authorization employee management.
             </p>
-            <div className="mt-8 space-y-3 text-xs font-medium text-[#d9e2ec]">
-              <div className="flex items-center gap-2.5">
-                <ShieldCheck className="h-4 w-4 text-[#d99a72]" /> 6-digit cryptographic random OTP verification
+
+            <div className="mt-8 space-y-3.5 text-xs font-medium text-slate-200">
+              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm shadow-xs">
+                <ShieldCheck className="h-5 w-5 text-blue-400 shrink-0" />
+                <span>6-digit cryptographic random OTP challenge</span>
               </div>
-              <div className="flex items-center gap-2.5">
-                <BadgeCheck className="h-4 w-4 text-[#d99a72]" /> Database session tracking & automatic idle timeout
+              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm shadow-xs">
+                <BadgeCheck className="h-5 w-5 text-indigo-400 shrink-0" />
+                <span>Database session tracking & automatic idle timeout</span>
               </div>
-              <div className="flex items-center gap-2.5">
-                <UserCheck className="h-4 w-4 text-[#d99a72]" /> Higher management approval for employee provisioning
+              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm shadow-xs">
+                <UserCheck className="h-5 w-5 text-emerald-400 shrink-0" />
+                <span>Higher management dual-approval for employee provisioning</span>
               </div>
             </div>
           </div>
-          <p className="relative text-xs text-[#829ab1]">Microbanking & Interest Management System · Authentication</p>
+
+          <div className="relative z-10 flex items-center justify-between text-xs text-slate-400 border-t border-white/10 pt-6">
+            <span>B-Trust Bank · MIMS</span>
+            <span>Enterprise Security Guaranteed</span>
+          </div>
         </section>
-        <section className="flex items-center justify-center px-5 py-10 sm:px-10">
+
+        <section className="flex items-center justify-center p-6 sm:p-12 lg:p-16">
           <div className="w-full max-w-md">
             <div className="mb-8 lg:hidden">
               <RavinduLogo />
             </div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#b65f45]">{label}</p>
-            <h2 className="mt-2 text-3xl font-black tracking-[-0.03em] text-[#102a43]">{title}</h2>
-            <p className="mt-2 text-sm leading-6 text-[#627d98]">{description}</p>
-            <div className="mt-8">{children}</div>
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-8 sm:p-10 shadow-xl shadow-slate-200/50">
+              <div className="inline-block rounded-md bg-blue-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-600 border border-blue-100">
+                {label}
+              </div>
+              <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-900">{title}</h2>
+              <p className="mt-2 text-xs leading-5 text-slate-600">{description}</p>
+              <div className="mt-6">{children}</div>
+            </div>
           </div>
         </section>
       </div>
@@ -478,19 +502,19 @@ export function RavinduShell({
   ];
 
   return (
-    <main className="min-h-screen bg-[#f6f3ed] text-[#102a43]">
-      <header className="border-b border-[#d9e2ec] bg-[#fffdf9]/90 backdrop-blur sticky top-0 z-20">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5 lg:px-8">
+    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+      <header className="border-b border-slate-200/80 bg-white/85 backdrop-blur-md sticky top-0 z-30 shadow-xs">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3 lg:px-8">
           <RavinduLogo />
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="rounded-lg p-2 text-[#52606d] lg:hidden"
+            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"
             aria-label="Toggle navigation"
           >
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
           {session && (
-            <nav className="hidden items-center gap-2 lg:flex">
+            <nav className="hidden items-center gap-1.5 lg:flex">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.href || (item.href.includes('tab=') && pathname.includes('/dashboard'));
@@ -498,8 +522,10 @@ export function RavinduShell({
                   <Link
                     key={item.label}
                     href={item.href}
-                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition ${
-                      active ? 'bg-[#102a43] text-white' : 'text-[#52606d] hover:bg-[#e9eff5]'
+                    className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition ${
+                      active
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                     }`}
                   >
                     <Icon className="h-4 w-4" />
@@ -515,13 +541,13 @@ export function RavinduShell({
           )}
         </div>
         {mobileOpen && session && (
-          <nav className="space-y-1 border-t border-[#d9e2ec] px-5 py-3 lg:hidden bg-white">
+          <nav className="space-y-1 border-t border-slate-200 px-5 py-3 lg:hidden bg-white/95 backdrop-blur-md">
             {navItems.map((item) => (
               <Link
                 onClick={() => setMobileOpen(false)}
                 key={item.label}
                 href={item.href}
-                className="flex items-center gap-2 rounded-lg px-3 py-3 text-sm font-bold text-[#52606d]"
+                className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <item.icon className="h-4 w-4" />
                 {item.label}
@@ -541,16 +567,16 @@ export function RavinduShell({
       <div className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
         <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#b65f45]">{eyebrow}</p>
-            <h1 className="mt-1.5 text-3xl font-black tracking-[-0.03em]">{title}</h1>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">{eyebrow}</p>
+            <h1 className="mt-1.5 text-3xl font-black tracking-tight text-slate-900">{title}</h1>
           </div>
-          <div className="flex items-center gap-3 rounded-2xl border border-[#d9e2ec] bg-[#fffdf9] px-4 py-2.5 shadow-sm">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#102a43] text-sm font-black text-white">
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white px-4 py-2.5 shadow-xs">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-sm font-black text-white shadow-xs">
               {initials}
             </div>
             <div>
-              <p className="text-xs font-bold text-[#102a43]">{session?.full_name ?? 'Authenticated User'}</p>
-              <span className={`inline-block mt-0.5 rounded px-2 py-0.5 text-[10px] font-extrabold uppercase border ${roleStyle.tone}`}>
+              <p className="text-xs font-bold text-slate-900">{session?.full_name ?? 'Authenticated User'}</p>
+              <span className={`inline-block mt-0.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${roleStyle.tone}`}>
                 {roleName}
               </span>
             </div>
@@ -645,17 +671,17 @@ export function RequireSession({
 
   if (unauthorized) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f6f3ed] p-5">
-        <div className="max-w-md w-full rounded-2xl border border-rose-200 bg-white p-8 text-center shadow-lg">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-5">
+        <div className="max-w-md w-full rounded-2xl border border-rose-200 bg-white p-8 text-center shadow-xl">
           <ShieldAlert className="h-12 w-12 text-rose-600 mx-auto mb-4" />
-          <h2 className="text-2xl font-black text-[#102a43]">403 Forbidden</h2>
-          <p className="mt-2 text-sm text-[#627d98]">
+          <h2 className="text-2xl font-black text-slate-900">403 Forbidden</h2>
+          <p className="mt-2 text-sm text-slate-600">
             Your current assigned role does not have authorization to view this area.
           </p>
           <div className="mt-6 flex items-center justify-center gap-3">
             <button
               onClick={() => router.push('/dashboard')}
-              className="rounded-xl bg-[#102a43] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#1d3f5e]"
+              className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white transition hover:bg-slate-800 shadow-sm"
             >
               Return to Dashboard
             </button>
@@ -668,9 +694,9 @@ export function RequireSession({
 
   if (!ready) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f6f3ed]">
-        <div className="flex items-center gap-3 text-sm font-semibold text-[#627d98]">
-          <RefreshCw className="h-5 w-5 animate-spin text-[#b65f45]" />
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="flex items-center gap-3 text-sm font-semibold text-slate-600">
+          <RefreshCw className="h-5 w-5 animate-spin text-blue-600" />
           Verifying security session...
         </div>
       </div>
@@ -799,7 +825,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#b65f45] px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#b65f45]/15 transition hover:bg-[#984b35] disabled:opacity-60"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
       >
         {submitting ? (
           <>
@@ -813,10 +839,38 @@ export function LoginForm() {
       </button>
 
       <div className="flex items-center justify-between pt-2 text-xs font-semibold">
-        <Link href="/passwordreset" className="text-[#b65f45] hover:underline">
+        <Link href="/passwordreset" className="text-blue-600 hover:underline">
           Forgot your password?
         </Link>
-        <span className="text-[#829ab1]">2FA Protected</span>
+        <span className="text-slate-400">2FA Protected</span>
+      </div>
+
+      <div className="mt-6 pt-5 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-2.5">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">B-Trust Demo Accounts</span>
+          <span className="text-[10px] text-slate-400">Click to fill</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { label: 'Admin', email: 'admin@btrust.local', password: '' },
+            { label: 'Higher Mgmt', email: 'higher@btrust.local', password: 'Demo@12345' },
+            { label: 'Colombo Manager', email: 'manager@btrust.local', password: 'Demo@12345' },
+            { label: 'Colombo Agent', email: 'agent@btrust.local', password: 'Demo@12345' },
+            { label: 'Kandy Manager', email: 'kandy.manager@btrust.local', password: 'Demo@12345' },
+            { label: 'Kandy Agent', email: 'kandy.agent@btrust.local', password: 'Demo@12345' },
+          ].map((account) => (
+            <button
+              key={account.email}
+              type="button"
+              onClick={() => { setEmail(account.email); setPassword(account.password); }}
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50/50 hover:text-blue-700 transition"
+            >
+              <span className="block font-bold">{account.label}</span>
+              <span className="block truncate text-[10px] text-slate-400" title={account.email}>{account.email}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-[10px] text-slate-500">Admin: enter your current password after selecting the account.</p>
       </div>
     </form>
   );
@@ -1025,17 +1079,17 @@ export function OtpForm() {
 
   return (
     <form onSubmit={submit} className="space-y-5">
-      <div className="flex items-start gap-3 rounded-xl bg-[#e9eff5] p-4 text-xs leading-relaxed text-[#52606d]">
-        <BadgeCheck className="h-5 w-5 shrink-0 text-[#4f8a8b] mt-0.5" />
+      <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-xs leading-relaxed text-slate-600">
+        <BadgeCheck className="h-5 w-5 shrink-0 text-blue-600 mt-0.5" />
         <div>
           <span>
             A temporary 6-digit verification code has been dispatched
-            {maskedDestination ? <> to <strong className="text-[#102a43]">{maskedDestination}</strong></> : ' to your registered email'}.
+            {maskedDestination ? <> to <strong className="text-slate-900">{maskedDestination}</strong></> : ' to your registered email'}.
           </span>
-          <div className="mt-1 flex items-center gap-1.5 font-semibold text-[#102a43]">
-            <Clock3 className="h-3.5 w-3.5 text-[#b65f45]" />
+          <div className="mt-1 flex items-center gap-1.5 font-semibold text-slate-900">
+            <Clock3 className="h-3.5 w-3.5 text-blue-600" />
             {!initialized ? <span>Loading verification details...</span> : expirySeconds > 0 ? (
-              <span>Code expires in: <span className="font-mono text-[#b65f45]">{formatCountdown(expirySeconds)}</span></span>
+              <span>Code expires in: <span className="font-mono text-blue-600 font-bold">{formatCountdown(expirySeconds)}</span></span>
             ) : (
               <span className="text-rose-600">Code has expired. Please request a new code.</span>
             )}
@@ -1073,7 +1127,7 @@ export function OtpForm() {
       <button
         type="submit"
         disabled={!initialized || !currentChallengeId || submitting || resending || code.length !== 6 || expirySeconds === 0}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#1d3f5e] disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50"
       >
         {submitting ? (
           <>
@@ -1091,11 +1145,11 @@ export function OtpForm() {
           type="button"
           disabled={!initialized || !currentChallengeId || cooldown > 0 || resending || submitting}
           onClick={handleResend}
-          className="font-bold text-[#b65f45] hover:underline disabled:opacity-50"
+          className="font-bold text-blue-600 hover:underline disabled:opacity-50"
         >
           {resending ? 'Sending...' : cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend verification code'}
         </button>
-        <Link href="/login" className="font-semibold text-[#627d98] hover:text-[#102a43]">
+        <Link href="/login" className="font-semibold text-slate-500 hover:text-slate-900">
           Cancel
         </Link>
       </div>
@@ -1209,8 +1263,8 @@ export function ResetForm() {
   if (step === 'success') {
     return (
       <div className="space-y-5">
-        <div className="rounded-2xl border border-[#b7e4d8] bg-[#e8f7f2] p-5 text-xs text-[#216e61]">
-          <Check className="mb-2 h-5 w-5 text-[#216e61]" />
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-5 text-xs text-emerald-800">
+          <Check className="mb-2 h-5 w-5 text-emerald-600" />
           <p className="text-sm font-bold">Password Reset Succeeded</p>
           <p className="mt-1 leading-5">
             {statusMsg || 'Your password was updated and all previous employee sessions have been revoked.'} Redirecting to login...
@@ -1221,7 +1275,7 @@ export function ResetForm() {
             if (redirectTimer.current) clearTimeout(redirectTimer.current);
             router.push('/login');
           }}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#102a43] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#1d3f5e]"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700"
         >
           Proceed to Login <ArrowRight className="h-4 w-4" />
         </button>
@@ -1252,13 +1306,13 @@ export function ResetForm() {
         <button
           type="submit"
           disabled={submitting}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#b65f45] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#984b35] disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
         >
           {submitting ? 'Dispatching OTP...' : 'Send Recovery OTP'} <ArrowRight className="h-4 w-4" />
         </button>
 
         <div className="text-center pt-2">
-          <Link href="/login" className="text-xs font-bold text-[#627d98] hover:text-[#b65f45]">
+          <Link href="/login" className="text-xs font-semibold text-slate-500 hover:text-blue-600">
             Return to sign in
           </Link>
         </div>
@@ -1274,8 +1328,8 @@ export function ResetForm() {
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-[#52606d]">
-        <p className="font-bold text-[#102a43]">Password Requirements:</p>
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
+        <p className="font-bold text-slate-900">Password Requirements:</p>
         <ul className="mt-1 list-disc list-inside space-y-0.5 text-[11px]">
           <li>At least 8 characters in length</li>
           <li>Must match the confirmation password</li>
@@ -1321,7 +1375,7 @@ export function ResetForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#b65f45] px-4 py-3.5 text-sm font-bold text-white transition hover:bg-[#984b35] disabled:opacity-60"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
       >
         {submitting ? 'Updating...' : 'Set New Password'} <ArrowRight className="h-4 w-4" />
       </button>
@@ -1336,11 +1390,11 @@ export function ResetForm() {
             setConfirmPassword('');
             setError('');
           }}
-          className="font-bold text-[#b65f45] hover:underline"
+          className="font-bold text-blue-600 hover:underline"
         >
           Request another recovery code
         </button>
-        <Link href="/login" className="font-semibold text-[#627d98] hover:text-[#102a43]">
+        <Link href="/login" className="font-semibold text-slate-500 hover:text-slate-900">
           Cancel
         </Link>
       </div>
