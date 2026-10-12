@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Enforce rate limit per IP and per challenge ID to prevent OTP brute-forcing
-    enforceRateLimit(request, 'OTP', challenge);
+    await enforceRateLimit(request, 'OTP', challenge);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

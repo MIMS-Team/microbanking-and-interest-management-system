@@ -14,6 +14,10 @@ async function runJobs() {
   try {
     const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
     const [, time] = local.split(' ');
+    try {
+      const notification=await fetch(url+'/api/operations',{method:'POST',headers:{Authorization:'Bearer '+key},signal:AbortSignal.timeout(120000)});
+      if(!notification.ok)throw new Error('Employee delivery worker is unavailable.');
+    }catch(error){console.error('Employee delivery:',error.message);if(once)process.exitCode=1;}
     if (!once && time < backupTime) return;
     {
       try {

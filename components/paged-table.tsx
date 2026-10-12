@@ -1,0 +1,12 @@
+'use client';
+import { useState } from 'react';
+import type { Resource } from '@/lib/banking/list-options';
+import { ListContext, type PageInfo } from './list-context';
+import { useContext } from 'react';
+import { EmptyState, Notice, type Column } from './ui';
+export function PagedTable<T extends {id:number}>({rows,columns,resource}:{rows:T[];columns:Column<T>[];resource:Resource}){
+  const remote=useContext(ListContext),info=remote!.pages[resource]!;
+  const [query,setQuery]=useState(info.search),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  async function change(value:Partial<PageInfo>){setBusy(true);setError('');try{await remote!.load(resource,{...info,pageSize:8,...value});}catch(reason){setError(reason instanceof Error?reason.message:'Unable to load records.');}finally{setBusy(false);}}
+  return <div className="data-table">{error&&<Notice tone="error">{error}</Notice>}<form className="table-toolbar" onSubmit={e=>{e.preventDefault();void change({search:query,page:1});}}><label>Search records<input aria-label="Search records" value={query} onChange={e=>setQuery(e.target.value)}/></label><button disabled={busy}>Search</button>{resource!=='transactions'&&<label>Status<select aria-label="Filter by statuses" value={info.status} onChange={e=>void change({status:e.target.value,page:1})}><option value="">All statuses</option>{['pending','active','inactive','closed','approved','rejected','expired','matured'].map(v=><option key={v}>{v}</option>)}</select></label>}<label>Sort<select aria-label="Sort records" value={info.sort} onChange={e=>void change({sort:e.target.value as PageInfo['sort'],page:1})}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label></form>{busy&&<p role="status">Loading records…</p>}{rows.length?<div className="table-scroll"><table><thead><tr>{columns.map(c=><th key={c.key}>{c.label}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id}>{columns.map(c=><td key={c.key}>{c.render(row)}</td>)}</tr>)}</tbody></table></div>:<EmptyState title="No matching records"/>}<div className="pagination"><span>{info.total} records · Page {info.page} of {Math.max(1,Math.ceil(info.total/info.pageSize))}</span><button aria-label="Previous page" disabled={busy||info.page<=1} onClick={()=>void change({page:info.page-1})}>Previous</button><button aria-label="Next page" disabled={busy||info.page*info.pageSize>=info.total} onClick={()=>void change({page:info.page+1})}>Next</button></div></div>;
+}

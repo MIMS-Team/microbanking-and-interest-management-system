@@ -2,11 +2,12 @@ import {claimJob,heartbeatJob,finishJob,fenceJob,mysqlJobDatabase} from './job-c
 import {pruneBackups,exportBackup} from './backup-retention.mjs';
 import {spawn} from 'node:child_process';
 import {createCipheriv,createDecipheriv,randomBytes,createHash} from 'node:crypto';
-import {mkdir,writeFile,readFile} from 'node:fs/promises';
+import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import mysql from 'mysql2/promise';
 import {isOwnedDatabase} from './disposable-mysql.mjs';
+import {enforceBackupSize,readBoundedArtifact} from './backup-size.mjs';
 
 function command(binary,args,config,input) {
   return new Promise((resolve,reject)=>{
@@ -15,7 +16,7 @@ function command(binary,args,config,input) {
     const timeout=setTimeout(()=>{child.kill();reject(new Error('Database tool exceeded its bounded execution time.'));},600000);
     child.once('close',()=>clearTimeout(timeout));child.once('error',()=>clearTimeout(timeout));
     const output=[];let size=0;let stderr='';
-    child.stdout.on('data',chunk=>{size+=chunk.length;if(size>256*1024*1024){child.kill();reject(new Error('Backup exceeds this tool\'s 256 MiB memory limit.'));}else output.push(chunk);});
+    child.stdout.on('data',chunk=>{size+=chunk.length;try{enforceBackupSize(size);output.push(chunk);}catch(error){child.kill();output.length=0;reject(error);}});
     child.stderr.on('data',chunk=>{stderr+=chunk.toString();});
     child.on('error',reject);
     child.on('close',code=>code===0?resolve(Buffer.concat(output)):reject(new Error(`Database tool exited ${code}: ${stderr.slice(0,1000)}`)));
@@ -88,7 +89,10 @@ export async function backupDatabase(config,{directory,key,keyId='legacy',mysqld
     });
     if(offHostUrl) {
       await exportBackup(file,{url:offHostUrl,checksum,keyId});
-      await db.query('UPDATE backup_inventory SET exported_at=UTC_TIMESTAMP(3) WHERE job_run_id=$1',[claim.runId]);
+      await db.transaction(async tx=>{
+        await fenceJob(tx,claim);
+        await tx.query('UPDATE backup_inventory SET exported_at=UTC_TIMESTAMP(3),export_verified_at=UTC_TIMESTAMP(3),export_checksum=$2 WHERE job_run_id=$1',[claim.runId,checksum]);
+      });
     }
     await pruneBackups(db,directory,retentionDays);
     await finishJob(db,claim);
@@ -98,13 +102,14 @@ export async function backupDatabase(config,{directory,key,keyId='legacy',mysqld
 }
 /** Restore has no shared-database option: only the owned disposable factory can
  * supply this target. Tests verify empty target, then reconcile restored data. */
-export async function restoreDisposableBackup(owned,file,{key,keyring={},mysqlBinary='mysql'}) {
+export async function restoreDisposableBackup(owned,file,{key,keyring={},mysqlBinary='mysql',restoreConfig=owned.config}) {
   if(!isOwnedDatabase(owned)||!/^mims_task_[a-f0-9]{24}$/.test(owned.name)||owned.config.database!==owned.name) throw new Error('Restore requires a task-owned disposable target.');
   const [[identity]]=await owned.connection.query('SELECT DATABASE() AS name');
   if(identity.name!==owned.name) throw new Error('Restore connection identity must match its owned database.');
+  if(restoreConfig.database!==owned.name||restoreConfig.host!==owned.config.host||Number(restoreConfig.port)!==Number(owned.config.port))throw new Error('Restore principal must be bound to the owned target server and schema.');
   const [[count]]=await owned.connection.query('SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=?',[owned.name]);
   if(Number(count.n)) throw new Error('Restore target must be empty.');
-  const bytes=await readFile(file);
+  const bytes=await readBoundedArtifact(file);
   const version=bytes.subarray(0,5).toString();let offset=5,selectedKey=key;
   if(version==='MIMS2') {
     const length=bytes.readUInt16BE(5);offset=7+length;
@@ -116,7 +121,7 @@ export async function restoreDisposableBackup(owned,file,{key,keyring={},mysqlBi
   let sql=Buffer.concat([decipher.update(bytes.subarray(offset+28)),decipher.final()]).toString();
   if(containsDatabaseSelection(sql)) throw new Error('Backup selects a different database; refusing restore.');
   sql=sql.replace(/DEFINER=`[^`]*`@`[^`]*`/g,'');
-  await command(mysqlBinary,['--binary-mode',`--database=${owned.name}`],owned.config,sql);
+  await command(mysqlBinary,['--binary-mode',`--database=${owned.name}`],restoreConfig,sql);
 }
 if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url) {
   const {BACKUP_DB_HOST:host,BACKUP_DB_USER:user,BACKUP_DB_PASSWORD:password,BACKUP_DB_NAME:database}=process.env;

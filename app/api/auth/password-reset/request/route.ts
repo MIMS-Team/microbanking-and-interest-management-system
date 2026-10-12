@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     const { email } = validatePasswordResetRequestPayload(rawBody);
 
     // Enforce rate limiting per IP and per requested email
-    enforceRateLimit(request, 'PASSWORD_RESET_REQUEST', email);
+    await enforceRateLimit(request, 'PASSWORD_RESET_REQUEST', email);
 
     const ipAddress = getClientIp(request);
     const userAgent = getClientUserAgent(request);

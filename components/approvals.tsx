@@ -18,12 +18,13 @@ export function Approvals({ data, onAction }: ModuleProps) {
   const [challenge, setChallenge] = useState<ApprovalCode | null>(null);
   const [sendingCode, setSendingCode] = useState(false);
   const [codeError, setCodeError] = useState('');
-  const isManager = data.user.role === 'manager' || data.user.role === 'higher_manager';
+  const isManager = ['manager','higher_manager'].includes(data.user.role) && data.permissions?.includes('approval.review') === true;
   const needsCode = reviewing?.type.startsWith('staff.') && decision === 'approved';
 
   function canReview(approval: Approval) {
+    if (!isManager || approval.payload?.hr_challenge_required) return false;
     if (approval.status !== 'pending' || approval.requested_by === data.user.id) return false;
-    if (approval.type.startsWith('staff.') || approval.type.startsWith('branch.')) {
+    if (approval.type.startsWith('staff.') || approval.type.startsWith('branch.') || approval.type==='agent.reassign') {
       return data.user.role === 'higher_manager';
     }
     return data.user.role === 'higher_manager' ||
@@ -79,8 +80,7 @@ export function Approvals({ data, onAction }: ModuleProps) {
       </div>
       {!isManager && <Notice>Your submitted requests appear here. Managers review customer and account changes; higher managers review staff and branch changes.</Notice>}
       <Panel title="Approval queue" subtitle="A reviewer must have the required role and be different from the person who submitted the request">
-        <DataTable
-          rows={data.approvals}
+        <DataTable resource="approvals"           rows={data.approvals}
           search={approval => `${approval.summary} ${approval.type} ${approval.customer_name ?? ''} ${approval.requested_by_name}`}
           filters={[
             { key: 'status', label: 'statuses', value: approval => approval.status },

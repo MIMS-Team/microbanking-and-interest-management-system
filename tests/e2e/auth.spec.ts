@@ -368,11 +368,13 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await tab1.locator('input[placeholder="000000"]').fill(otp);
     await tab1.click('button:has-text("Verify & Authorize Session")');
     await tab1.waitForURL(/\/dashboard\?tab=admin/);
+    await expect(tab1.getByRole('row').filter({ hasText: 'admin@example.test' })).toBeVisible();
 
     // Open Tab 2 with the same session
     const tab2 = await context.newPage();
     await tab2.goto('/dashboard?tab=admin');
     await expect(tab2.locator('text=Authorized Workspace')).toBeVisible();
+    await expect(tab2.getByRole('row').filter({ hasText: 'admin@example.test' })).toBeVisible();
 
     // Trigger logout in Tab 1
     const logoutBtnTab1 = tab1.locator('button:has-text("Logout")');
@@ -383,6 +385,8 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await tab2.waitForURL(/\/login\?status=logged_out/, { timeout: 15000 });
     expect(tab2.url()).toContain('/login?status=logged_out');
     await expect(tab1.getByText(/successfully logged out/i)).toBeVisible();
+    await expect(tab2.getByText(/successfully logged out/i)).toBeVisible();
+    await tab2.evaluate(() => document.fonts.ready.then(() => undefined));
     await tab2.reload();
     await expect(tab2.getByText(/successfully logged out/i)).toBeVisible();
   });
@@ -451,6 +455,9 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.fill('input[type="password"]', 'Manager@2026!');
     await page.click('button:has-text("Continue with 2FA")');
     await page.waitForURL(/\/otp/);
+    // Finish the OTP page's first font load before deliberately replacing it.
+    // Firefox reports an interrupted font request as a console error.
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.goto('/otp?challenge=different-challenge');
     await expect(page.getByText(/code has expired/i)).toBeVisible();
     await expect(page.getByText(/example.test/)).not.toBeVisible();

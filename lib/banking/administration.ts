@@ -5,6 +5,7 @@ import type { Staff, Role } from '../types';
 import { BusinessError, requiredText, optionalText, positiveId, email, phone } from '../validation';
 import { first, requireRole, requireBranch, audit, queue } from './shared';
 import type { Input, ApprovalRow } from './shared';
+import {branchCalendar,applyBranchCalendar} from './branch-calendar';
 
 export function branchDetails(input: Input): Input {
   const code = requiredText(input.code, 'Branch code', 12).toUpperCase();
@@ -12,7 +13,7 @@ export function branchDetails(input: Input): Input {
   const status = input.status === undefined ? 'active' : requiredText(input.status, 'Status');
   if (!['active', 'inactive'].includes(status)) throw new BusinessError('Branch status must be active or inactive.');
   return {code, name: requiredText(input.name, 'Branch name', 100), address: requiredText(input.address, 'Address', 500),
-    phone: phone(input.phone, true), email: email(input.email), status};
+    phone: phone(input.phone, true), email: email(input.email), status,...(input.calendar===undefined?{}:{calendar:branchCalendar(input.calendar)})};
 }
 
 export async function saveBranch(tx: Queryable, user: Staff, input: Input, action: string) {
@@ -30,6 +31,7 @@ export async function applyBranchChange(tx: Queryable, approval: ApprovalRow): P
     const created = await first<{id: number}>(tx, `INSERT INTO branches(code,name,address,phone,email,status)
       VALUES($1,$2,$3,$4,$5,$6)`, [values.code, values.name, values.address, values.phone, values.email, values.status]);
     await tx.query('UPDATE approvals SET entity_id=$1,target_branch_id=$1,branch_id=$1 WHERE id=$2', [created.id, approval.id]);
+    await applyBranchCalendar(tx,created.id,values.calendar);
     return;
   }
   await first(tx, 'SELECT id FROM branches WHERE id=$1 FOR UPDATE', [approval.entity_id]);
@@ -42,6 +44,7 @@ export async function applyBranchChange(tx: Queryable, approval: ApprovalRow): P
   }
   await tx.query('UPDATE branches SET code=$1,name=$2,address=$3,phone=$4,email=$5,status=$6 WHERE id=$7',
     [values.code, values.name, values.address, values.phone, values.email, values.status, approval.entity_id]);
+  await applyBranchCalendar(tx,approval.entity_id,values.calendar);
 }
 
 export function staffDetails(input: Input): Input {

@@ -83,7 +83,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         pendingApproval: true,
         challengeId: result.challengeId,
         hrManagerEmail: result.hrManagerEmail,
-        message: `Employee deactivation initiated. An approval OTP has been dispatched to Higher Management (${result.hrManagerEmail}). Enter the OTP to complete deactivation.`,
+        message: `Employee deactivation initiated. An approval OTP has been dispatched to Higher Management (${result.hrManagerEmail}). The assigned reviewer must sign in separately to decide this request.`,
       },
       { headers: NO_CACHE_HEADERS }
     );

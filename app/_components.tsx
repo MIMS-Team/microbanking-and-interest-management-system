@@ -38,6 +38,8 @@ export interface PublicEmployee {
   branch_id: number | null;
   status: 'active' | 'inactive';
   created_at: string;
+  onboarding_required?:boolean;
+  version?:number;
 }
 
 export const SESSION_KEY = 'mims-user-session';
@@ -470,7 +472,7 @@ export function RavinduShell({
   // Role-based navigation items
   const navItems = [
     { label: 'Overview', href: '/dashboard', icon: BarChartNav, roles: ['admin', 'higher_manager', 'manager', 'agent'] },
-    ...(userRole === 'admin' ? [{ label: 'User Management', href: '/dashboard?tab=admin', icon: Users, roles: ['admin'] }] : []),
+    ...(userRole === 'admin' ? [{ label: 'User Management', href: '/dashboard?tab=employees', icon: Users, roles: ['admin'] }] : []),
     ...(userRole === 'higher_manager' ? [{ label: 'Approvals Queue', href: '/dashboard?tab=approvals', icon: UserCheck, roles: ['higher_manager'] }] : []),
     { label: 'My profile', href: '/profile', icon: UserRound, roles: ['admin', 'higher_manager', 'manager', 'agent'] },
   ];

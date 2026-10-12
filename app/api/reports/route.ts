@@ -23,7 +23,11 @@ export async function GET(request: Request) {
       workbook.creator = "B-Trust Bank MIMS";
       const sheet = workbook.addWorksheet("Report");
       sheet.columns = report.columns.map(column => ({ header: column.replaceAll("_", " "), key: column, width: 25 }));
-      for (const row of report.rows) sheet.addRow(row);
+      // Structured JSON must become literal text, never an ExcelJS formula
+      // object. Decimal strings remain text so large totals keep every cent.
+      for (const row of report.rows) sheet.addRow(Object.fromEntries(report.columns.map(column=>{
+        const value=row[column];return [column,value&&typeof value==='object'?JSON.stringify(value):value];
+      })));
       sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
       sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF08254A" } };
       sheet.views = [{ state: "frozen", ySplit: 1 }];

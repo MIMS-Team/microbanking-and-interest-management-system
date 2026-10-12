@@ -7,7 +7,7 @@ if (!baseURL || !/^https:\/\/auth\.mims\.test:\d+$/.test(baseURL) || !process.en
 
 export default defineConfig({
   testDir: './tests/production',
-  testMatch: process.env.AUTH_VERIFY_SMOKE==='1'?'smoke.spec.ts':'auth.spec.ts',
+  testMatch: process.env.AUTH_VERIFY_BANKING==='1'?'banking.spec.ts':process.env.AUTH_VERIFY_SMOKE==='1'?'smoke.spec.ts':'auth.spec.ts',
   workers: 1,
   fullyParallel: false,
   retries: 0, // Each runner invocation creates fresh fixtures and process limits.
@@ -25,5 +25,9 @@ export default defineConfig({
   projects: [{ name: 'production-chromium', use: {
     ...devices['Desktop Chrome'],
     launchOptions: { args: ['--host-resolver-rules=MAP auth.mims.test 127.0.0.1', '--no-proxy-server'] },
-  } }],
+  } },...(process.env.AUTH_VERIFY_BANKING==='1'?[
+    {name:'production-firefox',use:{...devices['Desktop Firefox'],baseURL:baseURL.replace('auth.mims.test','127.0.0.1')}},
+    {name:'production-webkit',use:{...devices['Desktop Safari'],baseURL:baseURL.replace('auth.mims.test','127.0.0.1')}},
+    {name:'production-edge',use:{...devices['Desktop Edge'],channel:'msedge',launchOptions:{args:['--host-resolver-rules=MAP auth.mims.test 127.0.0.1','--no-proxy-server']}}},
+  ]:[])],
 });

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, realpathSync, lstatSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, realpathSync, lstatSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
@@ -10,6 +10,9 @@ const directory = realpathSync(mkdtempSync(join(tmpdir(), 'mims-production-brows
 const owner = randomBytes(32).toString('hex');
 writeFileSync(join(directory, 'owner'), owner, { flag: 'wx' });
 const env = { ...process.env, NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1' };
+const banking=process.argv.includes('--banking')||process.env.AUTH_VERIFY_BANKING==='1';
+const load=process.argv.includes('--load');
+env.AUTH_VERIFY_BANKING=banking?'1':'0';
 // Pass no development/test hooks to the production application, even if the
 // caller ran another suite in this terminal. Missing .env values stay explicit.
 for (const key of Object.keys(env)) {
@@ -19,7 +22,7 @@ delete env.MIMS_AUTH_DB_PATH;
 delete env.MIMS_AUTH_DB_ADAPTER;
 Object.assign(env, { MIMS_AUTH_DB_ADAPTER: 'mysql', EMAIL_PROVIDER: 'smtp', SMTP_USER: '', SMTP_PASS: '', SMTP_SECURE: 'false', TRUST_PROXY: 'true', ANTI_ENUMERATION: 'true' });
 const children = new Set();
-let database, mailbox, proxy;
+let database, mailbox, proxy, secondProxy;
 const paths = ['mims_auth.db', 'mims_auth.db-wal', 'mims_auth.db-shm', 'latest_otp.json', 'latest_otp.txt'];
 function snapshot() {
   return paths.map(name => {
@@ -58,7 +61,7 @@ let interrupted = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { interrupted = true; void stopChildren(); });
 
 try {
-  database = await disposableDatabase();
+  database = await disposableDatabase({banking:banking||load,load});
   Object.assign(env, database.env);
   mailbox = await smtpMailbox();
   Object.assign(env, { SMTP_HOST: '127.0.0.1', SMTP_PORT: String(mailbox.smtpPort), SMTP_FROM: 'security@example.test' });
@@ -93,14 +96,29 @@ try {
     ...env, AUTH_VERIFY_URL: env.APP_URL, AUTH_VERIFY_HTTP_URL: `http://auth.mims.test:${proxy.httpPort}`,
     AUTH_VERIFY_MAILBOX: mailbox.apiURL, AUTH_VERIFY_MAILBOX_TOKEN: mailbox.token,
   };
-  await finished(launch(['node_modules/@playwright/test/cli.js', 'test', '--config=playwright.production.config.ts', ...process.argv.slice(2)], browserEnv));
+  const browserArgs=process.argv.slice(2).filter(arg=>!['--banking','--load'].includes(arg));
+  if(!browserArgs.some(arg=>arg.startsWith('--project')))browserArgs.push('--project=production-chromium');
+  if(load){
+    const {authenticatedHttpLoad}=await import('./authenticated-http-load.mjs');
+    const result=await authenticatedHttpLoad({url:env.APP_URL,mailboxURL:mailbox.apiURL,mailboxToken:mailbox.token,fixture:database.loadFixture});
+    const correctness=await database.reconcile();console.log('LOAD_CORRECTNESS '+JSON.stringify(correctness));
+    const reserveSecond=createServer();const secondPort=await listen(reserveSecond);await close(reserveSecond);
+    const second=launch(['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',String(secondPort)],env,true);
+    await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(new Error('Second instance startup timed out')),60000);second.stdout.on('data',chunk=>{output=(output+chunk).slice(-4096);if(/Ready in/.test(output)){clearTimeout(timer);resolve();}});second.stderr.on('data',chunk=>process.stderr.write(chunk));second.once('error',reject);});
+    secondProxy=await httpsProxy({key:readFileSync(key),cert:readFileSync(cert),appPort:secondPort});
+    const {verifyTwoInstanceLimits}=await import('./shared-limiter-http.mjs');
+    const limiter=await verifyTwoInstanceLimits({urls:[env.APP_URL,`https://auth.mims.test:${secondProxy.port}`],fixture:database.loadFixture,unavailable:database.unavailableLimiter});
+    const reportDirectory=resolve('test-results','load');
+    mkdirSync(reportDirectory,{recursive:true});
+    writeFileSync(join(reportDirectory,'http-load.json'),JSON.stringify({...result,correctness,limiter},null,2));
+  }else await finished(launch(['node_modules/@playwright/test/cli.js', 'test', '--config=playwright.production.config.ts', ...browserArgs], browserEnv));
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
 } finally {
   await stopChildren();
   const errors = [];
-  for (const resource of [proxy, mailbox, database]) {
+  for (const resource of [secondProxy,proxy, mailbox, database]) {
     try { await resource?.dispose(); } catch (error) { errors.push(error); }
   }
   try {

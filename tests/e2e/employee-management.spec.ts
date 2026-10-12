@@ -77,23 +77,21 @@ test('employee lifecycle requires independent approval and revokes an existing s
   expect(usersBefore.users.some((u: { email: string }) => u.email === 'lifecycle@example.test')).toBe(false);
 
   // The requesting administrator has the right code but must still be refused.
-  expectHttpError(admin, '/api/users/confirm-create', 403);
-  await admin.getByLabel('HR Manager OTP Code').fill(createCode);
-  await admin.getByRole('button', { name: 'Authorize & Activate' }).click();
-  await expect(admin.getByText(/Requester cannot approve their own creation request/)).toBeVisible();
+  expect((await denied(admin, '/api/users/confirm-create', 'POST', { challengeId: pending.challengeId, code: createCode })).error).toMatch(/Requester cannot approve their own creation request/);
+  await expect(admin.getByLabel('HR Manager OTP Code')).toHaveCount(0);
   await denied(manager, '/api/users/confirm-create', 'POST', { challengeId: pending.challengeId, code: createCode });
   const wrongApprover = await denied(otherHr, '/api/users/confirm-create', 'POST', { challengeId: pending.challengeId, code: createCode });
   expect(wrongApprover.code).toBe('WRONG_APPROVER');
 
   await hr.getByRole('button', { name: /HR Approvals/ }).click();
-  await hr.getByLabel('Challenge ID', { exact: true }).fill(pending.challengeId);
+  await hr.getByRole('row').filter({hasText:pending.challengeId}).getByRole('button',{name:'Review employee request'}).click();
   await hr.getByLabel('6-Digit Approver OTP').fill(createCode);
   const approvalResponse = hr.waitForResponse(r => r.url().endsWith('/api/users/confirm-create'));
-  await hr.getByRole('button', { name: 'Authorize Action with OTP' }).click();
+  await hr.getByRole('button', { name: 'Record HR decision' }).click();
   const approval = await approvalResponse;
   expect(approval.status()).toBe(201);
   const { user } = await approval.json();
-  await expect(hr.getByText(/successfully approved and activated/)).toBeVisible();
+  await expect(hr.getByText(/successfully approved/)).toBeVisible();
   const path = `/api/users/${user.id}`;
   await denied(manager, path, 'PATCH', { full_name: 'Unauthorized Edit' });
   await denied(manager, path, 'DELETE');
@@ -137,21 +135,17 @@ test('employee lifecycle requires independent approval and revokes an existing s
   expect(deact.hrManagerEmail).toBe('hr@example.test');
   const deactCode = await otpFor(deact.hrManagerEmail, 'employee_deactivation', sinceDeactivate);
   expect((await employee.request.get('/api/auth/session')).status()).toBe(200);
-  expectHttpError(admin, `${path}/confirm-deactivate`, 403);
-  await admin.getByLabel('HR Manager Approval OTP').fill(deactCode);
-  await admin.getByRole('button', { name: 'Confirm Deactivation' }).click();
-  await expect(admin.getByText(/Requester cannot approve their own deactivation request/)).toBeVisible();
+  expect((await denied(admin, path+'/confirm-deactivate', 'POST', { challengeId: deact.challengeId, code: deactCode })).error).toMatch(/Requester cannot approve their own deactivation request/);
+  await expect(admin.getByLabel('HR Manager Approval OTP')).toHaveCount(0);
   await denied(manager, `${path}/confirm-deactivate`, 'POST', { challengeId: deact.challengeId, code: deactCode });
   expect((await denied(otherHr, `${path}/confirm-deactivate`, 'POST', { challengeId: deact.challengeId, code: deactCode })).code).toBe('WRONG_APPROVER');
 
   // Reopen the queue for the separate request. A cold development route compile
   // can refresh the dashboard and return its client-side tabs to the overview.
   await hr.getByRole('button', { name: /HR Approvals/ }).click();
-  await hr.getByLabel('Approval Action').selectOption('deactivate');
-  await hr.getByLabel('Target Employee ID').fill(String(user.id));
-  await hr.getByLabel('Challenge ID', { exact: true }).fill(deact.challengeId);
+  await hr.getByRole('row').filter({hasText:deact.challengeId}).getByRole('button',{name:'Review employee request'}).click();
   await hr.getByLabel('6-Digit Approver OTP').fill(deactCode);
-  await hr.getByRole('button', { name: 'Authorize Action with OTP' }).click();
+  await hr.getByRole('button', { name: 'Record HR decision' }).click();
   await expect(hr.getByText(/successfully deactivated and all active sessions revoked/)).toBeVisible();
   expect((await (await admin.request.get(path)).json()).user.status).toBe('inactive');
   // Explicitly replay the old cookie: a UI redirect alone cannot prove revocation.

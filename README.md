@@ -10,6 +10,15 @@ mapping, migration safeguards, verification evidence and remaining limitations.
 This implementation does **not** resolve the SRS's outstanding business policies.
 Historical integration reports describe earlier revisions, not current results.
 
+The connected workspace and current verification are documented in
+[the whole-project report](docs/whole-project-verification.md),
+[the 102-requirement matrix](docs/srs-requirement-matrix.md),
+[deployment configuration](docs/whole-project-operations.md), and
+[the decision register](docs/whole-project-decisions.md).
+Dashboard tabs use one URL contract; the existing `/savings` and
+`/fixed-deposits` links redirect into that workspace. New fictional demo seeds
+write a unique ignored connection file and preserve earlier demo/configuration files.
+
 ## Install and configure
 
 Use Node.js 22 or later and npm. The root `package-lock.json` is authoritative.

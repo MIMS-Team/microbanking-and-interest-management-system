@@ -11,7 +11,7 @@ export default defineConfig({
     environment: 'node',
     // Bound concurrent scrypt/embedded-database setup so the existing hook timeout
     // remains reliable on development machines and CI. All tests still execute.
-    maxWorkers: 2,
+    maxWorkers: 1,
     include: ['lib/server/**/*.test.{ts,tsx}'],
     testTimeout: 20000,
     exclude: ['tests/**', '**/node_modules/**'],

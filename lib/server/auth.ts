@@ -474,7 +474,7 @@ export async function validateSessionToken(
   if (sessionWithEmp.revoked_at) return null;
 
   // Check if employee account is active
-  if (sessionWithEmp.employee.status !== 'active') return null;
+  if (sessionWithEmp.employee.status !== 'active'||sessionWithEmp.employee.onboarding_required) return null;
 
   if(!await employeeHasPermission(sessionWithEmp.employee.id,'auth.login')) return null;
   const now = new Date();
@@ -742,7 +742,9 @@ export async function initiateEmployeeCreation(
 
   // Dual-control routing: Find Higher Management approver
   const higherManagers = await dbListEmployees({ role: 'higher_manager', status: 'active' });
-  const hrApprover = higherManagers.find((m) => m.id !== adminActor.id) ?? higherManagers[0] ?? adminActor;
+  const eligible=await Promise.all(higherManagers.map(async person=>({person,allowed:person.id!==adminActor.id && await employeeHasPermission(person.id,'employees.approve')})));
+  const hrApprover=eligible.find(candidate=>candidate.allowed)?.person;
+  if(!hrApprover)throw new AuthError('An active independent higher manager with employee approval permission is required.',409);
 
   const rawPassword = employeeData.password ?? `TempPass!${randomBytes(4).toString('hex')}`;
   const pwdHash = passwordHash(rawPassword);
@@ -900,7 +902,7 @@ export async function updateEmployeeDetails(
     role: updates.role,
     branch_id: updates.branch_id,
     status: updates.status,
-  });
+  },adminActor);
 
   if (!updated) {
     throw new AuthError('Failed to update employee.', 500);
@@ -951,7 +953,9 @@ export async function initiateEmployeeDeactivation(
   }
 
   const higherManagers = await dbListEmployees({ role: 'higher_manager', status: 'active' });
-  const hrApprover = higherManagers.find((m) => m.id !== adminActor.id) ?? higherManagers[0] ?? adminActor;
+  const eligible=await Promise.all(higherManagers.map(async person=>({person,allowed:person.id!==adminActor.id && await employeeHasPermission(person.id,'employees.approve')})));
+  const hrApprover=eligible.find(candidate=>candidate.allowed)?.person;
+  if(!hrApprover)throw new AuthError('An active independent higher manager with employee approval permission is required.',409);
 
   const rawOtp = generateSecureOtp();
   const challengeId = randomBytes(24).toString('hex');
