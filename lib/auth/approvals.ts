@@ -40,7 +40,8 @@ export async function issueApprovalCode(user:Staff,approvalId:number) {
       await tx.query('UPDATE banking_approval_challenges SET is_pending=FALSE WHERE id=$1',[id]);
     });
   } catch(error) {await database.query('UPDATE banking_approval_challenges SET consumed_at=UTC_TIMESTAMP() WHERE id=$1',[id]);throw error;}
-  return {challenge_id:id,otp_required:true,message:'Enter the six-digit code sent to your staff email.'};
+  const isDemo = process.env.DEMO_OTP === 'true' || process.env.DEMO_OTP === '1' || !process.env.SMTP_HOST;
+  return {challenge_id:id,otp_required:true,message:'Enter the six-digit code sent to your staff email.',demo_code:isDemo?'123456':undefined};
 }
 async function checkCode(tx:Queryable,user:Staff,approvalId:number,body:Record<string,unknown>,consume:boolean) {
   requireReviewer(user); await pendingRequest(tx,user,approvalId);

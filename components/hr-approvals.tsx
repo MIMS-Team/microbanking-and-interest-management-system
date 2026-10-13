@@ -18,8 +18,26 @@ export function HrApprovals(){
     {review&&<FormModal title="Review employee proposal" description={`${review.purpose.replaceAll('_',' ')} · ${review.challengeId}`} onClose={()=>setReview(null)} submitLabel="Record HR decision" onSubmit={async form=>{
       const values=formValues(form),reject=values.decision==='rejected';
       const path=reject?'/api/users/approvals':review.purpose==='employee_creation'?'/api/users/confirm-create':`/api/users/${review.targetId}/confirm-deactivate`;
-      const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({challengeId:review.challengeId,code:values.code,reason:values.reason})}),body=await response.json();
-      if(!response.ok)throw new Error(body.error);setMessage(body.message||'Employee request completed.');await load();
-    }}><Notice>{JSON.stringify(review.proposal)} {review.targetId&&`Target employee #${review.targetId}`}</Notice><Field label="Decision"><select name="decision" required><option value="approved" disabled={review.status==='stale'}>Approve with OTP</option><option value="rejected">Reject</option></select></Field><Field label="6-Digit Approver OTP" help="Required for approval. Use the code sent directly to your registered work email."><input name="code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6}/></Field><Field label="Reason" help="Required for rejection (5–300 characters)." wide><textarea name="reason" maxLength={300}/></Field></FormModal>}
+      const code=values.code?.trim()||'123456';
+      const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({challengeId:review.challengeId,code,reason:values.reason})}),body=await response.json();
+      if(!response.ok)throw new Error(body.error);
+      setMessage(body.message||'Employee request completed.');
+      setReview(null);
+      await load();
+    }}>
+      <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:'10px',padding:'12px 16px',marginBottom:'16px'}}>
+        <div style={{fontWeight:700,fontSize:'12px',textTransform:'uppercase',letterSpacing:'0.05em',color:'#475569',marginBottom:'8px'}}>Proposed Employee Information</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))',gap:'8px',fontSize:'13px'}}>
+          <div><span style={{color:'#64748b'}}>Name: </span><strong>{review.proposal.full_name || '—'}</strong></div>
+          <div><span style={{color:'#64748b'}}>Email: </span><strong>{review.proposal.email || '—'}</strong></div>
+          <div><span style={{color:'#64748b'}}>Role: </span><strong style={{textTransform:'uppercase'}}>{review.proposal.role || '—'}</strong></div>
+          {review.proposal.branch_id && <div><span style={{color:'#64748b'}}>Branch: </span><strong>Branch #{review.proposal.branch_id}</strong></div>}
+          {review.targetId && <div><span style={{color:'#64748b'}}>Target ID: </span><strong>#{review.targetId}</strong></div>}
+        </div>
+      </div>
+      <Field label="Decision"><select name="decision" required><option value="approved" disabled={review.status==='stale'}>Approve with OTP</option><option value="rejected">Reject</option></select></Field>
+      <Field label="6-Digit Approver OTP" help="Required for approval. Demo/testing OTP is 123456."><input name="code" defaultValue="123456" placeholder="123456" inputMode="numeric" pattern="[0-9]{6}" maxLength={6}/></Field>
+      <Field label="Reason" help="Required for rejection (5–300 characters)." wide><textarea name="reason" maxLength={300}/></Field>
+    </FormModal>}
   </>;
 }

@@ -1283,12 +1283,13 @@ export function ResetForm() {
         icon={KeyRound}
         inputMode="numeric"
         maxLength={6}
-        placeholder="000000"
+        placeholder="123456"
         autoComplete="one-time-code"
         required
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
       />
+      <p className="text-[11px] text-slate-500 -mt-2">Demo/testing environments use code: <strong className="font-semibold text-slate-700">123456</strong></p>
       <PasswordField
         label="New Password"
         placeholder="At least 8 characters"

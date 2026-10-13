@@ -753,7 +753,8 @@ export async function initiateEmployeeCreation(
   const rawOtp = generateSecureOtp();
   const challengeId = randomBytes(24).toString('hex');
   const codeHash = hashOtp(rawOtp);
-  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+  const hrTtlMs = (process.env.DEMO_OTP === 'true' || !process.env.SMTP_HOST) ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + hrTtlMs);
 
   await dbCreateOtpChallenge({
     id: challengeId,
@@ -961,7 +962,8 @@ export async function initiateEmployeeDeactivation(
   const rawOtp = generateSecureOtp();
   const challengeId = randomBytes(24).toString('hex');
   const codeHash = hashOtp(rawOtp);
-  const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+  const hrTtlMs = (process.env.DEMO_OTP === 'true' || !process.env.SMTP_HOST) ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + hrTtlMs);
 
   await dbCreateOtpChallenge({
     id: challengeId,

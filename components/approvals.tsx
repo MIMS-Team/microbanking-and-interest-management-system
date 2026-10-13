@@ -91,7 +91,20 @@ export function Approvals({ data, onAction }: ModuleProps) {
             { key: 'requester', label: 'Requested by', render: approval => <div className="stack"><span>{approval.requested_by_name}</span><small>{date(approval.created_at)}</small></div> },
             { key: 'status', label: 'Status', render: approval => <Badge value={approval.status} /> },
             { key: 'reviewer', label: 'Reviewer / Notes', render: approval => <div className="stack"><span>{approval.reviewed_by_name || 'Awaiting review'}</span><small>{approval.notes || '—'}</small></div> },
-            { key: 'action', label: 'Action', render: approval => <button className="button button-secondary button-small" disabled={!canReview(approval)} onClick={() => openReview(approval)}>Review request</button> },
+            { key: 'action', label: 'Action', render: approval => {
+              if (approval.payload?.hr_challenge_required) {
+                return (
+                  <a
+                    href="/dashboard?tab=approvals"
+                    className="button button-secondary button-small"
+                    style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    Go to HR Approvals
+                  </a>
+                );
+              }
+              return <button className="button button-secondary button-small" disabled={!canReview(approval)} onClick={() => openReview(approval)}>Review request</button>;
+            }},
           ]}
         />
       </Panel>
