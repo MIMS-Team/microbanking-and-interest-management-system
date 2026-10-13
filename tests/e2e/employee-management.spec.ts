@@ -29,7 +29,7 @@ async function login(page: Page, email: string, password: string) {
   await page.getByPlaceholder('000000').fill(await otpFor(email, 'login', since));
   await page.getByRole('button', { name: 'Verify & Authorize Session' }).click();
   await page.waitForURL(/\/dashboard/);
-  await expect(page.getByText('Authorized Workspace')).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
 }
 
 async function denied(page: Page, path: string, method: string, body?: object) {
@@ -52,7 +52,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
   await otherHr.close();
   const manager = await newActorPage();
   await login(manager, 'manager@example.test', 'Manager@2026!');
-  await expect(manager.getByRole('button', { name: /Employee Directory/ })).toHaveCount(0);
+  await expect(manager.getByRole('link', { name: 'Employee Directory', exact: true })).toHaveCount(0);
   await manager.close();
   const hr = await newActorPage();
   await login(hr, 'hr@example.test', 'HrManager@2026!');
@@ -60,7 +60,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
     full_name: 'Forbidden Fictional Employee', email: 'forbidden@example.test', role: 'agent', branch_id: 1,
   });
 
-  await admin.getByRole('button', { name: /Employee Directory/ }).click();
+  await admin.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Employee Directory', exact: true }).click();
   await admin.getByRole('button', { name: 'Add New Employee' }).click();
   await admin.getByLabel('Full Name', { exact: true }).fill('Fictional Lifecycle Employee');
   await admin.getByLabel('Work Email', { exact: true }).fill('lifecycle@example.test');
@@ -85,7 +85,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
   const wrongApprover = await denied(otherHr, '/api/users/confirm-create', 'POST', { challengeId: pending.challengeId, code: createCode });
   expect(wrongApprover.code).toBe('WRONG_APPROVER');
 
-  await hr.getByRole('button', { name: /HR Approvals/ }).click();
+  await hr.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'HR Approvals', exact: true }).click();
   await hr.getByRole('row').filter({hasText:pending.challengeId}).getByRole('button',{name:'Review employee request'}).click();
   await hr.getByLabel('6-Digit Approver OTP').fill(createCode);
   const approvalResponse = hr.waitForResponse(r => r.url().endsWith('/api/users/confirm-create'));
@@ -99,7 +99,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
   await denied(manager, path, 'DELETE');
 
   await admin.reload();
-  await admin.getByRole('button', { name: /Employee Directory/ }).click();
+  await admin.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Employee Directory', exact: true }).click();
   const row = admin.getByRole('row').filter({ hasText: 'lifecycle@example.test' });
   await row.getByTitle('Edit details').click();
   await admin.getByLabel('Full Name', { exact: true }).fill('Fictional Updated Employee');
@@ -146,7 +146,7 @@ test('employee lifecycle requires independent approval and revokes an existing s
 
   // Reopen the queue for the separate request. A cold development route compile
   // can refresh the dashboard and return its client-side tabs to the overview.
-  await hr.getByRole('button', { name: /HR Approvals/ }).click();
+  await hr.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'HR Approvals', exact: true }).click();
   await hr.getByRole('row').filter({hasText:deact.challengeId}).getByRole('button',{name:'Review employee request'}).click();
   await hr.getByLabel('6-Digit Approver OTP').fill(deactCode);
   await hr.getByRole('button', { name: 'Record HR decision' }).click();

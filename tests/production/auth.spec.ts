@@ -35,7 +35,7 @@ async function login(page: Page, password: string) {
   await page.getByPlaceholder('000000').fill(await deliveredOtp('LOGIN'));
   await page.getByRole('button', { name: 'Verify & Authorize Session' }).click();
   await page.waitForURL(/\/dashboard/);
-  await expect(page.getByText('Authorized Workspace')).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
   const cookie = (await page.context().cookies()).find(c => c.name === 'microbank_session');
   expect(cookie).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Lax', path: '/' });
   expect(await page.evaluate(() => document.cookie)).not.toContain('microbank_session');
@@ -83,7 +83,7 @@ test('production MySQL + SMTP: HTTPS login, reset, logout and Secure cookie enfo
 
   const tab = await context.newPage();
   await tab.goto('/dashboard');
-  await expect(tab.getByText('Authorized Workspace')).toBeVisible();
+  await expect(tab.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
   const logoutResponse = page.waitForResponse(r => r.url().endsWith('/api/auth/logout'));
   await page.getByRole('button', { name: 'Logout', exact: true }).click();
   const logout = await logoutResponse;
