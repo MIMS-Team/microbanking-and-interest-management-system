@@ -1101,7 +1101,7 @@ export function OtpForm() {
           <div className="mt-1 flex items-center gap-1.5 font-semibold text-slate-900">
             <Clock3 className="h-3.5 w-3.5 text-blue-600" />
             {!initialized ? <span>Loading verification details...</span> : expirySeconds > 0 ? (
-              <span>Code expires in: <span className="font-mono text-blue-600 font-bold">{formatCountdown(expirySeconds)}</span></span>
+              <span>Code expires in: <span className="font-mono text-blue-600 font-bold">{formatCountdown(expirySeconds)}</span> (Demo code: <strong className="text-blue-700">123456</strong>)</span>
             ) : (
               <span className="text-rose-600">Code has expired. Please request a new code.</span>
             )}
