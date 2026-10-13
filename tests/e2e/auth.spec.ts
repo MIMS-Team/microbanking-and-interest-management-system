@@ -419,6 +419,11 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.click('button:has-text("Verify & Authorize Session")');
     await page.waitForURL(/\/dashboard\?tab=admin/);
 
+    // The legacy admin destination redirects to the employee directory. Finish
+    // that navigation and its initial request before logout can revoke cookies.
+    await expect(page).toHaveURL(/\/dashboard\?tab=employees/);
+    await expect(page.getByRole('row').filter({ hasText: 'admin@example.test' })).toBeVisible();
+
     // Simulate transient server logout failure (e.g. 500 error)
     await page.route('**/api/auth/logout', async (route) => {
       await route.fulfill({
