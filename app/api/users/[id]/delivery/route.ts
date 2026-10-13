@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, jsonError, verifyCsrf, enforceRateLimit, NO_CACHE_HEADERS } from '@/lib/server/api';
-import { AuthError, employeeHasPermission, findEmployeeWithAuthByEmail, findEmployeeById, getActiveDbAdapterName, getMySqlPool, getSqliteDb } from '@/lib/server/db';
+import { AuthError, employeeHasPermission, findEmployeeWithAuthByEmail, findEmployeeById, getActiveDbAdapterName, getSqlPool, getSqliteDb } from '@/lib/server/db';
 import { deliverEmployeeNotifications, queueEmployeeNotification } from '@/lib/server/employee-delivery';
 import { requestPasswordReset } from '@/lib/server/auth';
 import type { RowDataPacket } from 'mysql2/promise';
@@ -17,7 +17,7 @@ export async function POST(request:NextRequest,context:{params:Promise<{id:strin
 }
 export async function GET(request:NextRequest,context:{params:Promise<{id:string}>}){
   try{const {user}=await requireUser(request,['admin']);if(!await employeeHasPermission(user.id,'employees.read'))throw new AuthError('Employee read permission is required.',403);const id=Number((await context.params).id);
-    const notifications=getActiveDbAdapterName()==='mysql'?(await getMySqlPool().query<RowDataPacket[]>('SELECT id,kind,status,attempts,created_at,delivered_at,available_at,error_code FROM employee_notifications WHERE employee_id=? ORDER BY id DESC LIMIT 30',[id]))[0]:getSqliteDb().prepare('SELECT id,kind,status,attempts,created_at,delivered_at,available_at,error_code FROM employee_notifications WHERE employee_id=? ORDER BY id DESC LIMIT 30').all(id);
+    const notifications=getActiveDbAdapterName()!=='sqlite'?(await getSqlPool().query<RowDataPacket[]>('SELECT id,kind,status,attempts,created_at,delivered_at,available_at,error_code FROM employee_notifications WHERE employee_id=? ORDER BY id DESC LIMIT 30',[id]))[0]:getSqliteDb().prepare('SELECT id,kind,status,attempts,created_at,delivered_at,available_at,error_code FROM employee_notifications WHERE employee_id=? ORDER BY id DESC LIMIT 30').all(id);
     return NextResponse.json({notifications},{headers:NO_CACHE_HEADERS});
   }catch(error){return jsonError(error);}
 }

@@ -62,7 +62,7 @@ export function mysqlJobDatabase(connection) {
   const query=async(sql,params=[])=>{
     const ordered=[];const converted=sql.replace(/\$(\d+)/g,(_,n)=>{ordered.push(params[Number(n)-1]);return '?';});
     const [result]=await connection.query(converted,ordered);
-    return {rows:Array.isArray(result)?result:[],insertId:result.insertId,affectedRows:result.affectedRows};
+    return {rows:Array.isArray(result)?result:result.insertId?[{id:result.insertId}]:[],insertId:result.insertId,affectedRows:result.affectedRows};
   };
   const db={query,transaction:async callback=>{
     await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');await connection.beginTransaction();

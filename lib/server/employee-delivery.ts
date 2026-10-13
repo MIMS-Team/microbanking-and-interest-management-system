@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import type { RowDataPacket } from 'mysql2/promise';
-import { AuthError, getActiveDbAdapterName, getMySqlPool, getSqliteDb, runInTransaction, parseDateSafe } from './db';
+import { AuthError, getActiveDbAdapterName, getSqlPool, getSqliteDb, runInTransaction, parseDateSafe } from './db';
 import { passwordHash } from './auth';
 
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -32,7 +32,7 @@ export async function deliverEmployeeNotifications(employeeId?:number){
   if(!claimed)return {status:'idle'};
   let tokenHash:string|undefined;
   try{
-    const employee=getActiveDbAdapterName()==='mysql'?(await getMySqlPool().query<RowDataPacket[]>('SELECT * FROM staff WHERE id=?',[claimed.employee_id]))[0][0]:getSqliteDb().prepare('SELECT * FROM staff WHERE id=?').get(claimed.employee_id);
+    const employee=getActiveDbAdapterName()!=='sqlite'?(await getSqlPool().query<RowDataPacket[]>('SELECT * FROM staff WHERE id=?',[claimed.employee_id]))[0][0]:getSqliteDb().prepare('SELECT * FROM staff WHERE id=?').get(claimed.employee_id);
     if(!employee)throw new Error('ACCOUNT_UNAVAILABLE');
     let text='Your MIMS employee account was updated. Contact your administrator if you did not expect this change.';
     let subject='MIMS employee account notification';

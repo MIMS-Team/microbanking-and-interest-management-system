@@ -12,7 +12,7 @@ import {
 } from './rate-limit';
 import { OtpDeliveryError } from './email';
 import { hasOwnedE2eEnvironment } from '../../scripts/e2e-environment.mjs';
-import { getActiveDbAdapterName, getMySqlPool } from './db';
+import { getActiveDbAdapterName, getSqlPool } from './db';
 import { sharedRateLimit } from './shared-rate-limit';
 import { isIP } from 'node:net';
 
@@ -132,10 +132,10 @@ export function enforceRateLimit(
 
   const ip = getClientIp(request) ?? '127.0.0.1';
 
-  if (getActiveDbAdapterName() === 'mysql') {
+  if (getActiveDbAdapterName() !== 'sqlite') {
     const keys = [`${action}:ip:${ip}`];
     if (identifier?.trim()) keys.push(`${action}:id:${identifier.trim().toLowerCase()}`);
-    return Promise.resolve().then(()=>sharedRateLimit(getMySqlPool(), keys, config.maxAttempts, config.windowMs)).then(result => {
+    return Promise.resolve().then(()=>sharedRateLimit(getSqlPool(), keys, config.maxAttempts, config.windowMs)).then(result => {
       if (!result.allowed) throw new RateLimitError(undefined, result.resetInSeconds);
     }).catch(error => {
       if (error instanceof RateLimitError) throw error;

@@ -1,5 +1,5 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import { getMySqlPool } from './server/db';
+import { getSqlPool } from './server/db';
 export interface Queryable {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[]; insertId?: number; affectedRows?: number }>;
 }
@@ -7,7 +7,8 @@ export interface Database extends Queryable {
   transaction<T>(work: (tx: Queryable) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
-/** Numbered bindings are an application convention. SQL is native MySQL. */
+/** Retain numbered bindings for both backends. PostgreSQL executes the bounded
+ * dialect bridge in lib/postgres-sql.mjs; MySQL uses its native parameter API. */
 export function bind(sql: string, params: unknown[]) {
   const values: unknown[] = [];
   const statement = sql.replace(/'(?:(?:'')|[^'])*'|`[^`]*`|\$(\d+)/g, (token, index) => {
@@ -31,7 +32,7 @@ function connectionQueries(connection: Pick<PoolConnection, 'query'>): Queryable
 }
 /** Runtime never creates schemas or seeds. Auth and banking share this pool. */
 export async function getDb(): Promise<Database> {
-  const pool = getMySqlPool();
+  const pool = getSqlPool();
   return {
     ...connectionQueries(pool),
     transaction: async <T>(work: (tx: Queryable) => Promise<T>) => {

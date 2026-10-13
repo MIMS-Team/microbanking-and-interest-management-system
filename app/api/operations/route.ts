@@ -1,14 +1,14 @@
 import { NextRequest,NextResponse } from 'next/server';
 import { requireUser,jsonError,NO_CACHE_HEADERS,verifyCsrf } from '@/lib/server/api';
-import { AuthError,employeeHasPermission,getMySqlPool } from '@/lib/server/db';
+import { AuthError,employeeHasPermission,getSqlPool } from '@/lib/server/db';
 import { deliverEmployeeNotifications } from '@/lib/server/employee-delivery';
 export const runtime='nodejs';
 export async function GET(request:NextRequest){
   try{const {user}=await requireUser(request,['admin','higher_manager']);if(!await employeeHasPermission(user.id,'operations.read'))throw new AuthError('Operator read permission is required.',403);
-    const [jobs]=await getMySqlPool().query(`SELECT j.id,j.job,j.boundary,j.status,j.attempt,j.started_at,j.finished_at,j.notification_status,c.retry_after,c.lease_until,
+    const [jobs]=await getSqlPool().query(`SELECT j.id,j.job,j.boundary,j.status,j.attempt,j.started_at,j.finished_at,j.notification_status,c.retry_after,c.lease_until,
       CASE WHEN j.status='failed' THEN 'Job failed. Review restricted operator logs and the retry deadline.' ELSE NULL END AS failure_notice
       FROM job_runs j LEFT JOIN job_claims c ON c.run_id=j.id ORDER BY j.id DESC LIMIT 50`);
-    const [notifications]=await getMySqlPool().query('SELECT n.id,s.full_name,n.kind,n.status,n.attempts,n.created_at,n.delivered_at,n.error_code FROM employee_notifications n JOIN staff s ON s.id=n.employee_id ORDER BY n.id DESC LIMIT 50');
+    const [notifications]=await getSqlPool().query('SELECT n.id,s.full_name,n.kind,n.status,n.attempts,n.created_at,n.delivered_at,n.error_code FROM employee_notifications n JOIN staff s ON s.id=n.employee_id ORDER BY n.id DESC LIMIT 50');
     return NextResponse.json({jobs,notifications},{headers:NO_CACHE_HEADERS});
   }catch(error){return jsonError(error);}
 }

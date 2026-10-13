@@ -7,6 +7,7 @@ import { validateE2eEnvironment } from '../../scripts/e2e-environment.mjs';
 import { randomBytes } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import mysql from 'mysql2/promise';
+import {createPostgresPool,relationalPostgresPool} from '../postgres.mjs';
 
 export type Role = 'agent' | 'manager' | 'higher_manager' | 'admin';
 export type EmployeeStatus = 'active' | 'inactive';
@@ -135,20 +136,23 @@ export interface AuditAttemptData {
 // Adapter Selection & Configuration
 // ---------------------------------------------------------
 
-let testAdapterOverride: 'mysql' | 'sqlite' | null = null;
+let testAdapterOverride: 'mysql' | 'postgres' | 'sqlite' | null = null;
 let mysqlPoolInstance: Pool | null = null;
 let sqliteDbInstance: DatabaseSync | null = null;
 
-export function setDbAdapterForTest(adapter: 'mysql' | 'sqlite' | null): void {
+export function setDbAdapterForTest(adapter: 'mysql' | 'postgres' | 'sqlite' | null): void {
   testAdapterOverride = adapter;
 }
 
-export function getActiveDbAdapterName(): 'mysql' | 'sqlite' {
+export function getActiveDbAdapterName(): 'mysql' | 'postgres' | 'sqlite' {
   if (testAdapterOverride) return testAdapterOverride;
-  if(process.env.NODE_ENV==='production'&&process.env.MIMS_AUTH_DB_ADAPTER==='sqlite')throw new AuthError('Production requires the canonical MySQL authentication database.',503,'DB_CONFIG_INVALID');
-  if (process.env.MIMS_AUTH_DB_ADAPTER === 'mysql') return 'mysql';
+  if(process.env.NODE_ENV==='production'&&process.env.MIMS_AUTH_DB_ADAPTER==='sqlite')throw new AuthError('Production requires the canonical relational authentication database.',503,'DB_CONFIG_INVALID');
+  const configured=process.env.MIMS_AUTH_DB_ADAPTER;
+  if(configured && !['mysql','postgres','sqlite'].includes(configured))throw new AuthError('Unknown database adapter.',503,'DB_CONFIG_INVALID');
+  if(configured==='postgres'||(!configured&&process.env.DATABASE_URL))return 'postgres';
+  if (configured === 'mysql') return 'mysql';
   if (process.env.MIMS_AUTH_DB_ADAPTER === 'sqlite') return 'sqlite';
-  if (process.env.NODE_ENV === 'production') return 'mysql';
+  if (process.env.NODE_ENV === 'production') return 'postgres';
   if (process.env.DB_HOST && process.env.NODE_ENV !== 'test') return 'mysql';
   return 'sqlite';
 }
@@ -168,8 +172,13 @@ function toIso(val: unknown): string {
 // MySQL 8.0 Adapter Implementation
 // ---------------------------------------------------------
 
-export function getMySqlPool(): Pool {
+export function getSqlPool(): Pool {
   if (mysqlPoolInstance) return mysqlPoolInstance;
+  if(getActiveDbAdapterName()==='postgres') {
+    // Only the small query/result API is used by authentication callbacks.
+    mysqlPoolInstance=relationalPostgresPool(createPostgresPool(process.env.DATABASE_URL)) as unknown as Pool;
+    return mysqlPoolInstance;
+  }
 
   const host = process.env.DB_HOST || process.env.MYSQL_HOST;
   const port = Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306);
@@ -353,7 +362,7 @@ export async function closePoolForTest(): Promise<void> {
 export async function withMySqlTransaction<T>(
   callback: (conn: PoolConnection) => Promise<T>
 ): Promise<T> {
-  const pool = getMySqlPool();
+  const pool = getSqlPool();
   const conn = await pool.getConnection();
   try {
     await conn.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
@@ -393,7 +402,7 @@ export async function runInTransaction<T>(
   sqliteCallback: (db: DatabaseSync) => T
 ): Promise<T> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
+  if (adapter !== 'sqlite') {
     return withMySqlTransaction(mysqlCallback);
   }
   return withSqliteTransaction(sqliteCallback);
@@ -406,8 +415,8 @@ export async function runInTransaction<T>(
 export async function resetDatabase(): Promise<void> {
   if(process.env.NODE_ENV!=='test'&&process.env.VITEST!=='true')throw new AuthError('Database reset is restricted to isolated test fixtures.',403);
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute('DELETE FROM authentication_audit');
     await pool.execute('DELETE FROM employee_sessions');
     await pool.execute('DELETE FROM otp_resend_reservations');
@@ -436,8 +445,8 @@ export async function findEmployeeByEmail(email: string): Promise<PublicEmployee
   const normalized = email.trim().toLowerCase();
   const adapter = getActiveDbAdapterName();
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE LOWER(email) = ? LIMIT 1`,
       [normalized]
@@ -474,8 +483,8 @@ export async function findEmployeeWithAuthByEmail(email: string): Promise<Employ
   const normalized = email.trim().toLowerCase();
   const adapter = getActiveDbAdapterName();
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT s.id, s.full_name, s.email, s.role, s.branch_id, s.status, s.created_at,
               s.password_hash as password_hash, s.must_change_password, s.temporary_password_expires_at,
@@ -531,8 +540,8 @@ export async function findEmployeeWithAuthByEmail(email: string): Promise<Employ
 
 export async function findEmployeeById(id: number): Promise<PublicEmployee | null> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE id = ? LIMIT 1`,
       [id]
@@ -567,8 +576,8 @@ export async function findEmployeeById(id: number): Promise<PublicEmployee | nul
 
 export async function getEmployeePasswordHash(employeeId: number): Promise<string | null> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT s.password_hash as password_hash
        FROM staff s
@@ -595,8 +604,8 @@ export async function getEmployeePasswordHash(employeeId: number): Promise<strin
 
 export async function recordFailedLogin(employeeId: number): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, updated_at)
        VALUES (?, (SELECT password_hash FROM staff WHERE id = ?), 1, CURRENT_TIMESTAMP)
@@ -618,8 +627,8 @@ export async function recordFailedLogin(employeeId: number): Promise<void> {
 
 export async function clearFailedLoginAttempts(employeeId: number): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `UPDATE staff_authentication SET failed_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE employee_id = ?`,
       [employeeId]
@@ -639,8 +648,8 @@ export async function lockEmployee(employeeId: number, lockedUntil: Date): Promi
   const adapter = getActiveDbAdapterName();
   const dateStr = lockedUntil.toISOString().slice(0, 19).replace('T', ' ');
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, locked_until, updated_at)
        VALUES (?, (SELECT password_hash FROM staff WHERE id = ?), 5, ?, CURRENT_TIMESTAMP)
@@ -662,8 +671,8 @@ export async function lockEmployee(employeeId: number, lockedUntil: Date): Promi
 
 export async function updateLastLogin(employeeId: number): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `INSERT INTO staff_authentication (employee_id, password_hash, failed_attempts, last_login_at, updated_at)
        VALUES (?, (SELECT password_hash FROM staff WHERE id = ?), 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -689,8 +698,8 @@ export async function recordAuthenticationAttempt(data: AuditAttemptData): Promi
   const adapter = getActiveDbAdapterName();
   const detailsJson = data.details ? JSON.stringify(data.details) : null;
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `INSERT INTO authentication_audit (employee_id, email, event_type, ip_address, user_agent, details, created_at)
        VALUES (?, LOWER(?), ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
@@ -725,7 +734,7 @@ export async function createOtpChallenge(data: CreateOtpData): Promise<void> {
   const metadataJson = data.metadata ? JSON.stringify(data.metadata) : null;
   const expiresIso = data.expires_at.toISOString();
 
-  if (adapter === 'mysql') {
+  if (adapter !== 'sqlite') {
     return withMySqlTransaction(async (pool) => {
     const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
     const isPendingVal = data.is_pending ? 1 : 0;
@@ -805,8 +814,8 @@ export async function findOtpChallenge(
   const adapter = getActiveDbAdapterName();
   const pendingClause = includePending ? '' : 'AND (is_pending = 0 OR is_pending IS NULL)';
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT id, employee_id, purpose, code_hash, attempts, max_attempts, expires_at, consumed_at, metadata, is_pending, created_at
        FROM otp_challenges
@@ -851,8 +860,8 @@ export async function findOtpChallenge(
 
 export async function incrementOtpAttempts(id: string): Promise<number> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(`UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = ?`, [id]);
     const [rows] = await pool.execute<RowDataPacket[]>(`SELECT attempts FROM otp_challenges WHERE id = ?`, [id]);
     const row = rows[0] as { attempts: number } | undefined;
@@ -872,8 +881,8 @@ export async function incrementOtpAttempts(id: string): Promise<number> {
  */
 export async function consumeOtpChallenge(id: string): Promise<boolean> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [result] = await pool.execute<ResultSetHeader>(
       `UPDATE otp_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ? AND consumed_at IS NULL AND attempts <= max_attempts`,
       [id]
@@ -892,7 +901,7 @@ export async function consumeOtpChallenge(id: string): Promise<boolean> {
 
 export async function deleteOtpChallenge(id: string): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
+  if (adapter !== 'sqlite') {
     await withMySqlTransaction(async conn=>{
       await conn.execute(`UPDATE approvals SET expires_at=CURRENT_TIMESTAMP,notes='OTP delivery failed; request expired without a human decision'
         WHERE id=(SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.approval_id')) AS UNSIGNED) FROM otp_challenges WHERE id=? AND is_pending=0) AND status='pending'`,[id]);
@@ -939,7 +948,7 @@ export async function acquireOtpResendReservation(
   const now = new Date();
   const newToken = randomBytes(24).toString('hex');
 
-  if (adapter === 'mysql') {
+  if (adapter !== 'sqlite') {
     return withMySqlTransaction(async (conn) => {
       // 1. Lock and inspect original challenge
       const [rows] = await conn.execute<RowDataPacket[]>(
@@ -1150,7 +1159,7 @@ export async function finalizeOtpResend(
 ): Promise<{ finalized: boolean; reason?: string }> {
   const adapter = getActiveDbAdapterName();
 
-  if (adapter === 'mysql') {
+  if (adapter !== 'sqlite') {
     return withMySqlTransaction(async (conn) => {
       // Match acquisition's lock order: original challenge, then reservation.
       // Reversing these locks can deadlock with another concurrent resend.
@@ -1228,7 +1237,7 @@ export async function releaseOtpResendReservation(
 ): Promise<void> {
   const adapter = getActiveDbAdapterName();
 
-  if (adapter === 'mysql') {
+  if (adapter !== 'sqlite') {
     return withMySqlTransaction(async (conn) => {
       await conn.execute(`DELETE FROM otp_challenges WHERE id = ? AND is_pending = 1`, [replacementId]);
       await conn.execute(
@@ -1251,8 +1260,8 @@ export async function createSession(data: CreateSessionData): Promise<void> {
   const adapter = getActiveDbAdapterName();
   const expiresIso = data.expires_at.toISOString();
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const expiresFormatted = expiresIso.slice(0, 19).replace('T', ' ');
     await pool.execute(
       `INSERT INTO employee_sessions (token_hash, employee_id, created_at, last_activity_at, expires_at, ip_address, user_agent)
@@ -1291,8 +1300,8 @@ export async function createSession(data: CreateSessionData): Promise<void> {
 
 export async function findSessionByHash(tokenHash: string): Promise<SessionWithEmployee | null> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT s.token_hash, s.employee_id, s.created_at, s.last_activity_at, s.expires_at, s.revoked_at, s.ip_address, s.user_agent,
               e.id, e.full_name, e.email, e.role, e.branch_id, e.status, e.created_at as emp_created_at,
@@ -1399,8 +1408,8 @@ export async function findSessionByHash(tokenHash: string): Promise<SessionWithE
 
 export async function updateSessionActivity(tokenHash: string): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `UPDATE employee_sessions SET last_activity_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL`,
       [tokenHash]
@@ -1419,8 +1428,8 @@ export async function updateSessionActivity(tokenHash: string): Promise<void> {
 export async function setSessionLastActivityForTest(tokenHash: string, date: Date): Promise<void> {
   const adapter = getActiveDbAdapterName();
   const dateIso = date.toISOString();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `UPDATE employee_sessions SET last_activity_at = ? WHERE token_hash = ?`,
       [dateIso.slice(0, 19).replace('T', ' '), tokenHash]
@@ -1435,8 +1444,8 @@ export async function setSessionLastActivityForTest(tokenHash: string, date: Dat
 export async function setSessionExpiresAtForTest(tokenHash: string, date: Date): Promise<void> {
   const adapter = getActiveDbAdapterName();
   const dateIso = date.toISOString();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `UPDATE employee_sessions SET expires_at = ? WHERE token_hash = ?`,
       [dateIso.slice(0, 19).replace('T', ' '), tokenHash]
@@ -1450,8 +1459,8 @@ export async function setSessionExpiresAtForTest(tokenHash: string, date: Date):
 
 export async function revokeSession(tokenHash: string): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND revoked_at IS NULL`,
       [tokenHash]
@@ -1469,8 +1478,8 @@ export async function revokeSession(tokenHash: string): Promise<void> {
 
 export async function revokeAllEmployeeSessions(employeeId: number): Promise<void> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     await pool.execute(
       `UPDATE employee_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE employee_id = ? AND revoked_at IS NULL`,
       [employeeId]
@@ -1493,8 +1502,8 @@ export async function listEmployees(filters?: {
 }): Promise<PublicEmployee[]> {
   const adapter = getActiveDbAdapterName();
 
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     let query = `SELECT id, full_name, email, role, branch_id, status, created_at FROM staff WHERE 1=1`;
     const params: (string | number)[] = [];
 
@@ -2090,8 +2099,8 @@ export async function confirmEmployeeDeactivationTransaction(
 
 export async function countActiveAdmins(): Promise<number> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM staff WHERE role = 'admin' AND status = 'active'`
     );
@@ -2109,8 +2118,8 @@ export async function getAuditLogsForTest(
   email?: string
 ): Promise<Array<{ id: number; employee_id: number | null; email: string; event_type: string; created_at: string }>> {
   const adapter = getActiveDbAdapterName();
-  if (adapter === 'mysql') {
-    const pool = getMySqlPool();
+  if (adapter !== 'sqlite') {
+    const pool = getSqlPool();
     if (email) {
       const [rows] = await pool.execute<RowDataPacket[]>(
         `SELECT id, employee_id, email, event_type, created_at FROM authentication_audit WHERE LOWER(email) = LOWER(?) ORDER BY id DESC`,
@@ -2165,8 +2174,8 @@ export async function getAuditLogsForTest(
 // SQLite supports only isolated compatibility fixtures. Production permissions
 // always come from the canonical MySQL catalogue and current employee state.
 export async function employeeHasPermission(id:number,permission:string):Promise<boolean> {
-  if(getActiveDbAdapterName()==='mysql') {
-    const [rows]=await getMySqlPool().execute<RowDataPacket[]>(`SELECT s.id FROM staff s
+  if(getActiveDbAdapterName()!=='sqlite') {
+    const [rows]=await getSqlPool().execute<RowDataPacket[]>(`SELECT s.id FROM staff s
       JOIN role_catalog r ON r.code=s.permission_role AND r.business_role=s.role AND r.active=1
       JOIN role_permissions p ON p.role_code=r.code AND p.permission_code=?
       WHERE s.id=? AND s.status='active'`,[permission,id]);
@@ -2177,3 +2186,6 @@ export async function employeeHasPermission(id:number,permission:string):Promise
     'employees.read':['admin','higher_manager'],'employees.manage':['admin','higher_manager'],'employees.approve':['higher_manager']};
   return person?.status==='active' && (grants[permission]??[]).includes(person.role);
 }
+
+/** Legacy MySQL fixtures use the shared result contract. */
+export const getMySqlPool=getSqlPool;
