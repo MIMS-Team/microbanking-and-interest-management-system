@@ -17,6 +17,25 @@ import {
 import type { InAppNotification } from '@/lib/types';
 import type { PublicEmployee } from '@/app/_components';
 
+function formatRelativeTime(isoString: string): string {
+  try {
+    const date = new Date(isoString);
+    const diffMs = Date.now() - date.getTime();
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHours = Math.floor(diffMin / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSec < 60) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  } catch {
+    return '';
+  }
+}
+
 interface NotificationButtonProps {
   user: PublicEmployee | null;
 }
@@ -50,11 +69,14 @@ export function NotificationButton({ user }: NotificationButtonProps) {
   // Initial fetch and 15s polling
   useEffect(() => {
     if (!user) return;
-    void fetchNotifications();
+    const timer = setTimeout(() => {
+      void fetchNotifications();
+    }, 0);
     const interval = setInterval(fetchNotifications, 15000);
     const onFocus = () => void fetchNotifications();
     window.addEventListener('focus', onFocus);
     return () => {
+      clearTimeout(timer);
       clearInterval(interval);
       window.removeEventListener('focus', onFocus);
     };
@@ -140,24 +162,6 @@ export function NotificationButton({ user }: NotificationButtonProps) {
     filter === 'unread' ? !n.is_read : true
   );
 
-  const formatRelativeTime = (isoString: string) => {
-    try {
-      const date = new Date(isoString);
-      const diffMs = Date.now() - date.getTime();
-      const diffSec = Math.floor(diffMs / 1000);
-      const diffMin = Math.floor(diffSec / 60);
-      const diffHours = Math.floor(diffMin / 60);
-      const diffDays = Math.floor(diffHours / 24);
-
-      if (diffSec < 60) return 'Just now';
-      if (diffMin < 60) return `${diffMin}m ago`;
-      if (diffHours < 24) return `${diffHours}h ago`;
-      if (diffDays < 7) return `${diffDays}d ago`;
-      return date.toLocaleDateString();
-    } catch {
-      return '';
-    }
-  };
 
   const getNotificationBadge = (type: string) => {
     switch (type) {
