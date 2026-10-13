@@ -183,7 +183,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     // Successful login to dashboard
     await page.waitForURL(/\/dashboard\?tab=agent/);
     expect(page.url()).toContain('/dashboard?tab=agent');
-    await expect(page.getByText('Authorized Workspace')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
   });
 
@@ -284,7 +284,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.locator('input[placeholder="000000"]').fill(await getDispatchedOtp({ minTimestamp: loginTimestamp }));
     await page.click('button:has-text("Verify & Authorize Session")');
     await page.waitForURL(/\/dashboard\?tab=overview/);
-    await expect(page.getByText('Authorized Workspace')).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const previousSession = (await context.cookies()).find(cookie => cookie.name === 'microbank_session');
     expect(previousSession).toBeDefined();
@@ -384,7 +384,7 @@ test.describe('Real Browser End-to-End Authentication', () => {
     // Open Tab 2 with the same session
     const tab2 = await context.newPage();
     await tab2.goto('/dashboard?tab=admin');
-    await expect(tab2.locator('text=Authorized Workspace')).toBeVisible();
+    await expect(tab2.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
     await expect(tab2.getByRole('row').filter({ hasText: 'admin@example.test' })).toBeVisible();
 
     // Trigger logout in Tab 1
@@ -418,6 +418,11 @@ test.describe('Real Browser End-to-End Authentication', () => {
     await page.locator('input[placeholder="000000"]').fill(otp);
     await page.click('button:has-text("Verify & Authorize Session")');
     await page.waitForURL(/\/dashboard\?tab=admin/);
+
+    // The legacy admin destination redirects to the employee directory. Finish
+    // that navigation and its initial request before logout can revoke cookies.
+    await expect(page).toHaveURL(/\/dashboard\?tab=employees/);
+    await expect(page.getByRole('row').filter({ hasText: 'admin@example.test' })).toBeVisible();
 
     // Simulate transient server logout failure (e.g. 500 error)
     await page.route('**/api/auth/logout', async (route) => {
