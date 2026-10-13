@@ -18,6 +18,7 @@ export async function getRoles(): Promise<{
       id: String(row.role_id),
       title: String(row.title),
     })),
+    // These are the only supplemental roles that can receive administrative OTPs.
     secondaryOtpRoles: ['BM', 'HRM'],
   };
 }

@@ -138,6 +138,7 @@ export default function BranchSavingsAccountsView() {
         throw new Error('The account status response is invalid.');
       }
       setPendingAccount(null);
+      // Reload the filtered rows and active count from the server after changing account status.
       setRefreshKey((current) => current + 1);
     } catch (updateError) {
       console.error('Failed to change branch savings account status:', updateError);

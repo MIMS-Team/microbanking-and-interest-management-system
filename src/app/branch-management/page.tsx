@@ -8,7 +8,7 @@ import BranchSavingsAccountsView from '@/components/branch/BranchSavingsAccounts
 import BranchFixedDepositsView from '@/components/branch/BranchFixedDepositsView';
 import TransactionsView from '@/components/branch/TransactionsView';
 import ApprovalsView from '@/components/branch/ApprovalsView';
-import ReportsView from '@/components/common/ReportsView';
+import HigherManagementReportsView from '@/components/higher-mgmt/HigherManagementReportsView';
 import BranchNetworkView from '@/components/higher-mgmt/BranchNetworkView';
 import { useSession } from '@/context/SessionContext';
 import { getApprovalRequests } from '@/services/approvalService';
@@ -62,7 +62,7 @@ export default function BranchManagementPage() {
         {activeTab === 'fixed-deposits' && <BranchFixedDepositsView />}
         {activeTab === 'transactions' && <TransactionsView />}
         {activeTab === 'approvals' && <ApprovalsView />}
-        {activeTab === 'reports' && <ReportsView />}
+        {activeTab === 'reports' && <HigherManagementReportsView scope="branch-management" />}
         {activeTab === 'branches' && <BranchNetworkView />}
       </main>
     </div>

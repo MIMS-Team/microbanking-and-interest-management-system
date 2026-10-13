@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Derive transaction query scope from the employee's assigned branch, not a request branch ID.
     const branchId = await getActiveBranchManagerBranchId(employeeId);
     if (branchId === null) {
       return NextResponse.json({ message: 'An active branch manager session is required.' }, { status: 403 });

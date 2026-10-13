@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { Employee, UserRole } from '@/types';
 import { mockEmployees } from '@/data/mockData';
 import { portalEmployees } from '@/data/portalEmployees';
@@ -11,7 +11,6 @@ interface SessionContextType {
   currentUser: Employee;
   currentRole: UserRole;
   currentBranchId: string;
-  setCurrentBranchId: (branchId: string) => void;
   logout: () => void;
 }
 
@@ -24,6 +23,7 @@ interface StoredEmployeeSession {
 }
 
 function subscribeToSession(onSessionChange: () => void): () => void {
+  // The custom event also refreshes this tab, where storage events do not fire for its own writes.
   window.addEventListener('storage', onSessionChange);
   window.addEventListener('btrust-session-change', onSessionChange);
   return () => {
@@ -41,7 +41,6 @@ const SessionContext = createContext<SessionContextType | undefined>(undefined);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [currentBranchId, setCurrentBranchId] = useState<string>('BR001');
   const serializedSession = useSyncExternalStore(
     subscribeToSession,
     getSerializedSession,
@@ -98,6 +97,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       : currentRole === 'Higher Management'
         ? portalEmployees.higherManagement
         : portalEmployees.branchManagement;
+  // A stored identity is valid only in the portal assigned to that employee and role.
   const activeSession = storedSession
     ? storedSession.employeeId === expectedPortalEmployee.employeeId &&
       storedSession.roleId === expectedPortalEmployee.roleId
@@ -114,6 +114,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         branchId: String(activeSession.branchId),
       }
     : fallbackUser;
+  const currentBranchId = /^\d+$/.test(currentUser.branchId)
+    ? `BR${currentUser.branchId.padStart(3, '0')}`
+    : currentUser.branchId;
 
   useEffect(() => {
     if (
@@ -129,7 +132,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [expectedPortalEmployee, storedSession]);
 
   const logout = () => {
-    setCurrentBranchId('BR001');
     router.replace('/');
   };
 
@@ -139,7 +141,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         currentRole,
         currentBranchId,
-        setCurrentBranchId,
         logout,
       }}
     >

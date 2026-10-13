@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Derive the data scope from the employee's assigned branch, not a request-provided branch ID.
     const branchId = await getActiveBranchManagerBranchId(employeeId);
     if (branchId === null) {
       return NextResponse.json({ message: 'An active branch manager session is required.' }, { status: 403 });
@@ -124,6 +125,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
+    // Scope the status change to the branch assigned to this manager record.
     const branchId = await getActiveBranchManagerBranchId(body.employeeId);
     if (branchId === null) {
       return NextResponse.json({ message: 'An active branch manager session is required.' }, { status: 403 });

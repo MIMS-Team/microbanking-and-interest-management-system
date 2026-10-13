@@ -2,284 +2,236 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from '@/context/SessionContext';
-import { getBranches } from '@/services/branchService';
-import { getTransactions } from '@/services/transactionService';
-import { getApprovalRequests, approveRequest, rejectRequest } from '@/services/approvalService';
+import type { BranchManagementDashboardData } from '@/types';
 import StatCard from '@/components/common/StatCard';
 import LineChartWithAxes from '@/components/common/LineChartWithAxes';
-import AccountDistributionCard from '@/components/common/AccountDistributionCard';
 import {
   Users,
   Wallet,
   TrendingUp,
-  Clock,
   FileText,
   CheckCircle2,
   Building2,
-  ArrowUpRight,
-  ArrowDownLeft,
-  Check,
-  X,
+  DollarSign,
+  RefreshCw,
 } from 'lucide-react';
 
 interface BranchDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
 }
 
-// Branch Management executive dashboard matching the photo layout
+function isBranchDashboardData(value: unknown): value is BranchManagementDashboardData {
+  if (typeof value !== 'object' || value === null) return false;
+  const data = value as Record<string, unknown>;
+  const isCount = (count: unknown) =>
+    typeof count === 'number' && Number.isSafeInteger(count) && count >= 0;
+  const isAmount = (amount: unknown) =>
+    typeof amount === 'number' && Number.isFinite(amount) && amount >= 0;
+
+  return (
+    typeof data.branchName === 'string' &&
+    typeof data.customers === 'object' && data.customers !== null &&
+    'total' in data.customers && isCount(data.customers.total) &&
+    'active' in data.customers && isCount(data.customers.active) &&
+    typeof data.savings === 'object' && data.savings !== null &&
+    'activeAccounts' in data.savings && isCount(data.savings.activeAccounts) &&
+    'balance' in data.savings && isAmount(data.savings.balance) &&
+    typeof data.fixedDeposits === 'object' && data.fixedDeposits !== null &&
+    'activeCount' in data.fixedDeposits && isCount(data.fixedDeposits.activeCount) &&
+    'balance' in data.fixedDeposits && isAmount(data.fixedDeposits.balance) &&
+    Array.isArray(data.monthlyTransactions) &&
+    data.monthlyTransactions.every((point: unknown) =>
+      typeof point === 'object' && point !== null &&
+      'month' in point && typeof point.month === 'string' &&
+      'deposits' in point && isAmount(point.deposits) &&
+      'withdrawals' in point && isAmount(point.withdrawals) &&
+      'savingsInterest' in point && isAmount(point.savingsInterest) &&
+      'fixedDepositInterest' in point && isAmount(point.fixedDepositInterest)
+    )
+  );
+}
+
 export default function BranchDashboardView({ onNavigateTab }: BranchDashboardViewProps) {
-  const { currentBranchId, setCurrentBranchId } = useSession();
-  const [branches, setBranches] = useState<Awaited<ReturnType<typeof getBranches>>['branches']>([]);
+  const { currentUser } = useSession();
+  const [dashboard, setDashboard] = useState<BranchManagementDashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    const loadBranches = async () => {
-      const result = await getBranches(1, 100);
-      setBranches(result.branches);
+    const controller = new AbortController();
+    const loadDashboard = async () => {
+      const employeeId = Number(currentUser.id);
+      if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
+        setDashboard(null);
+        setError('A valid branch manager session is required.');
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError('');
+      try {
+        const params = new URLSearchParams({ employeeId: String(employeeId) });
+        const response = await fetch(`/api/branch-management/dashboard?${params}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const result: unknown = await response.json();
+          const message =
+            typeof result === 'object' && result !== null && 'message' in result &&
+            typeof result.message === 'string'
+              ? result.message
+              : `Dashboard request failed with status ${response.status}.`;
+          throw new Error(message);
+        }
+
+        const result: unknown = await response.json();
+        if (!isBranchDashboardData(result)) {
+          throw new Error('Branch dashboard returned an invalid data format.');
+        }
+        setDashboard(result);
+      } catch (loadError) {
+        if (controller.signal.aborted) return;
+        console.error('Failed to load Branch Management dashboard:', loadError);
+        setDashboard(null);
+        setError(loadError instanceof Error ? loadError.message : 'Branch dashboard data could not be loaded.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
     };
 
-    loadBranches();
-  }, []);
+    void loadDashboard();
+    return () => controller.abort();
+  }, [currentUser.id, refreshKey]);
 
-  // Branch-specific transactions and approvals
-  const [transactions] = useState(getTransactions(currentBranchId).slice(0, 4));
-  const [approvals, setApprovals] = useState(getApprovalRequests(currentBranchId));
-
-  const currentBranch = branches.find((b) => b.id === currentBranchId) || branches[0];
-  const pendingApprovals = approvals.filter((a) => a.status === 'Pending');
-
-  // Handle quick approval from dashboard
-  const handleQuickApprove = (id: string) => {
-    const res = approveRequest(id);
-    if (res.success) {
-      setApprovals(getApprovalRequests(currentBranchId));
-    }
-  };
-
-  // Handle quick rejection
-  const handleQuickReject = (id: string) => {
-    const res = rejectRequest(id, 'Reviewed and declined via dashboard shortcut.');
-    if (res.success) {
-      setApprovals(getApprovalRequests(currentBranchId));
-    }
-  };
+  const count = (value: number | undefined) =>
+    loading ? 'Loading...' : error || value === undefined ? 'Unavailable' : value.toLocaleString();
+  const formatBalance = (value: number | undefined) =>
+    loading ? 'Loading...' : error || value === undefined
+      ? 'Unavailable'
+      : `Rs. ${value.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const currentMonth = dashboard?.monthlyTransactions.at(-1);
+  const previousMonth = dashboard?.monthlyTransactions.at(-2);
+  // Use the same deposits-minus-withdrawals totals as the monthly chart.
+  const currentMonthNetDeposits = currentMonth
+    ? currentMonth.deposits - currentMonth.withdrawals
+    : undefined;
+  const previousMonthNetDeposits = previousMonth
+    ? previousMonth.deposits - previousMonth.withdrawals
+    : undefined;
+  const formatNetDeposits = (value: number | undefined) =>
+    value === undefined
+      ? ''
+      : `${value < 0 ? '-Rs. ' : 'Rs. '}${Math.abs(value).toLocaleString('en-LK', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`;
 
   return (
     <div className="space-y-6 pb-12">
-      {/* 1. Header Section matching photo */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-              Management Dashboard
-            </h1>
-            {/* Branch Switcher Badge */}
-            <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-xl text-xs font-semibold text-blue-800">
-              <Building2 className="w-3.5 h-3.5 text-blue-600" />
-              <select
-                value={currentBranchId}
-                onChange={(e) => setCurrentBranchId(e.target.value)}
-                className="bg-transparent border-none text-blue-900 font-bold focus:outline-hidden cursor-pointer"
-                title="Active Branch"
-              >
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Management Dashboard</h1>
+            <div className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800">
+              <Building2 className="h-3.5 w-3.5 text-blue-600" />
+              <span className="font-bold text-blue-900">
+                {dashboard?.branchName ?? currentUser.branchId}
+              </span>
             </div>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Overview of branch performance, accounts, and pending actions.
+          <p className="mt-1 text-xs text-slate-500">
+            Branch customer, savings, and fixed-deposit performance.
           </p>
         </div>
 
-        {/* Action Buttons matching photo */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => onNavigateTab('reports')}
-            className="inline-flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition-colors hover:bg-slate-50"
           >
-            <FileText className="w-4 h-4 text-slate-500" />
+            <FileText className="h-4 w-4 text-slate-500" />
             <span>Export Report</span>
           </button>
-
           <button
             onClick={() => onNavigateTab('approvals')}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-slate-800"
           >
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             <span>Review Approvals</span>
-            {pendingApprovals.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 bg-blue-600 text-white rounded-full text-[10px] font-bold">
-                {pendingApprovals.length}
-              </span>
-            )}
           </button>
         </div>
       </div>
 
-      {/* 2. 4 Stat Cards matching reference screenshot */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      {error && (
+        <div role="alert" className="flex items-center justify-between gap-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setRefreshKey((key) => key + 1)}
+            className="inline-flex shrink-0 items-center gap-2 font-semibold hover:text-rose-950"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* These branch-level cards mirror the bank-wide dashboard metrics, excluding bank-wide branch totals. */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
-          title="Total Customers"
-          value="12,845"
-          trend="↗ +8.2%"
-          trendLabel="Active & registered customers"
-          isPositive={true}
-          icon={Users}
-        />
-        <StatCard
-          title="Total Deposits"
-          value="Rs. 84.2M"
-          trend="↗ +12.5%"
-          trendLabel="Savings + FD balances"
-          isPositive={true}
+          title="Available Fixed Deposits"
+          value={formatBalance(dashboard?.fixedDeposits.balance)}
+          trend={dashboard ? count(dashboard.fixedDeposits.activeCount) : ''}
+          trendLabel="Active fixed-deposit accounts"
+          isPositive
           icon={Wallet}
         />
         <StatCard
-          title="Active Accounts"
-          value="9,312"
-          trend="↗ +3.1%"
-          trendLabel="Savings accounts active"
-          isPositive={true}
+          title="Consolidated Customers"
+          value={count(dashboard?.customers.total)}
+          trend={dashboard ? count(dashboard.customers.active) : ''}
+          trendLabel="Active · total registered customers"
+          isPositive
+          icon={Users}
+        />
+        <StatCard
+          title="Active Savings Accounts"
+          value={count(dashboard?.savings.activeAccounts)}
+          trend=""
+          trendLabel="Active customer accounts"
+          isPositive
           icon={TrendingUp}
         />
         <StatCard
-          title="Pending Approvals"
-          value="24"
-          trend="↘ -4"
-          trendLabel="Awaiting manager review"
-          isPositive={false}
-          icon={Clock}
+          title="Current Savings Balance"
+          value={formatBalance(dashboard?.savings.balance)}
+          trend=""
+          trendLabel="Total balance in active savings accounts"
+          isPositive
+          icon={DollarSign}
+        />
+        <StatCard
+          title="Net Deposits Current Month"
+          value={loading ? 'Loading...' : error ? 'Unavailable' : formatNetDeposits(currentMonthNetDeposits)}
+          trend={dashboard ? formatNetDeposits(previousMonthNetDeposits) : ''}
+          trendLabel="Last month's net deposits"
+          isPositive={previousMonthNetDeposits === undefined || previousMonthNetDeposits >= 0}
+          icon={TrendingUp}
         />
       </div>
 
-      {/* 3. Middle Section: Line Chart & Account Distribution Cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <LineChartWithAxes />
+      {/* Chart data shares the same branch-scoped monthly aggregates as the net-deposit card. */}
+      {dashboard ? (
+        <LineChartWithAxes monthlyData={dashboard.monthlyTransactions} />
+      ) : (
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 text-sm text-slate-500 shadow-2xs">
+          {loading ? 'Loading branch transaction history...' : 'Branch transaction history is unavailable.'}
         </div>
-        <div className="lg:col-span-1">
-          <AccountDistributionCard />
-        </div>
-      </div>
+      )}
 
-      {/* 4. Bottom Row: Recent Transactions & Pending Approvals List */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Transactions List */}
-        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Recent Transactions</h3>
-              <p className="text-xs text-slate-400">Processed within {currentBranch?.name ?? 'your branch'}</p>
-            </div>
-            <button
-              onClick={() => onNavigateTab('transactions')}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
-            >
-              <span>View all</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div className="divide-y divide-slate-100 mt-2">
-            {transactions.length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">No recent branch transactions</p>
-            ) : (
-              transactions.map((t) => (
-                <div key={t.id} className="py-3 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-8 h-8 rounded-xl flex items-center justify-center ${
-                        t.type === 'Deposit'
-                          ? 'bg-emerald-50 text-emerald-600'
-                          : 'bg-rose-50 text-rose-600'
-                      }`}
-                    >
-                      {t.type === 'Deposit' ? (
-                        <ArrowDownLeft className="w-4 h-4" />
-                      ) : (
-                        <ArrowUpRight className="w-4 h-4" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-semibold text-slate-900">{t.customerName}</div>
-                      <div className="text-[11px] text-slate-400">{t.accountNumber} • {t.timestamp}</div>
-                    </div>
-                  </div>
-
-                  <div className="text-right">
-                    <div
-                      className={`font-bold ${
-                        t.type === 'Deposit' ? 'text-emerald-600' : 'text-slate-900'
-                      }`}
-                    >
-                      {t.type === 'Deposit' ? '+' : '-'}Rs. {t.amount.toLocaleString()}
-                    </div>
-                    <div className="text-[10px] text-slate-400">{t.processedBy}</div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Pending Approvals Queue */}
-        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-2xs">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Pending Approvals Queue</h3>
-              <p className="text-xs text-slate-400">Field agent submissions requiring sign-off</p>
-            </div>
-            <button
-              onClick={() => onNavigateTab('approvals')}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
-            >
-              <span>Manage ({pendingApprovals.length})</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div className="divide-y divide-slate-100 mt-2">
-            {pendingApprovals.length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">No pending approvals</p>
-            ) : (
-              pendingApprovals.slice(0, 3).map((req) => (
-                <div key={req.id} className="py-3 flex items-center justify-between text-xs gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-900">{req.customerName}</span>
-                      <span className="px-2 py-0.2 bg-blue-50 text-blue-700 rounded-md text-[10px] font-medium border border-blue-100">
-                        {req.category}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">{req.details}</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">By {req.submittedBy}</div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => handleQuickApprove(req.id)}
-                      className="p-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
-                      title="Approve"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleQuickReject(req.id)}
-                      className="p-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
-                      title="Reject"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

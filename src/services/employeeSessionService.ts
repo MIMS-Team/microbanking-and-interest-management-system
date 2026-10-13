@@ -23,6 +23,7 @@ export async function getEmployeeLoginSessions(
   const searchTerm = `%${search.trim()}%`;
   const hasSearch = search.trim().length > 0;
 
+  // Keep the page and count predicates aligned so totals describe the same filtered sessions.
   const [rows, countRows] = await Promise.all([
     sql`
       SELECT s.session_id, s.employee_id, e.name AS employee_name, r.title AS role_title,

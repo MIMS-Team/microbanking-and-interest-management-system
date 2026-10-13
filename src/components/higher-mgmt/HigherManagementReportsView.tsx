@@ -217,6 +217,7 @@ function buildSummaryMetrics(
 function csvCell(value: unknown): string {
   if (typeof value === 'number') return String(value);
   let text = String(value ?? '');
+  // Prefix formula-like values so spreadsheet applications treat exported text as data.
   if (/^[\s]*[=+\-@]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 }
@@ -242,7 +243,12 @@ function downloadCsv(report: ComprehensiveReport): void {
   URL.revokeObjectURL(url);
 }
 
-export default function HigherManagementReportsView() {
+export default function HigherManagementReportsView({
+  scope = 'higher-management',
+}: {
+  scope?: 'higher-management' | 'branch-management';
+}) {
+  const isBranchManagement = scope === 'branch-management';
   const { currentUser } = useSession();
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [selectedReportId, setSelectedReportId] =
@@ -251,6 +257,7 @@ export default function HigherManagementReportsView() {
   const [startDate, setStartDate] = useState(`${today.slice(0, 4)}-01-01`);
   const [endDate, setEndDate] = useState(`${today.slice(0, 4)}-12-31`);
   const [branchId, setBranchId] = useState('0');
+  const [assignedBranchName, setAssignedBranchName] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
   const [filterOptions, setFilterOptions] = useState<HigherManagementReportFilterOption[]>([]);
@@ -266,6 +273,7 @@ export default function HigherManagementReportsView() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   useEffect(() => {
+    if (isBranchManagement) return;
     const loadBranches = async () => {
       try {
         const response = await fetch('/api/branches?type=names', { cache: 'no-store' });
@@ -298,26 +306,29 @@ export default function HigherManagementReportsView() {
       }
     };
     void loadBranches();
-  }, []);
+  }, [isBranchManagement]);
 
   useEffect(() => {
-    // Reload dropdown choices when the report category or branch changes.
+    // Keep report categories limited to values available within the current reporting scope.
     const loadFilterOptions = async () => {
       const employeeId = Number(currentUser.id);
       if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
         setFilterOptions([]);
-        setFilterLoadError('A valid Higher Management session is required.');
+        setFilterLoadError(`A valid ${isBranchManagement ? 'Branch Management' : 'Higher Management'} session is required.`);
         return;
       }
 
       const query = new URLSearchParams({
         employeeId: String(employeeId),
         report: selectedReportId,
-        branchId,
         filterOptions: '1',
       });
+      if (!isBranchManagement) query.set('branchId', branchId);
+      const endpoint = isBranchManagement
+        ? '/api/branch-management/reports'
+        : '/api/higher-management/reports';
       try {
-        const response = await fetch(`/api/higher-management/reports?${query}`, {
+        const response = await fetch(`${endpoint}?${query}`, {
           cache: 'no-store',
         });
         const contentType = response.headers.get('content-type') ?? '';
@@ -336,11 +347,14 @@ export default function HigherManagementReportsView() {
           throw new Error('Report filter options could not be loaded.');
         }
         setFilterOptions(result.options);
+        if ('branchName' in result && typeof result.branchName === 'string') {
+          setAssignedBranchName(result.branchName);
+        }
         setSelectedFilter('All');
         setAppliedFilter('All');
         setFilterLoadError('');
       } catch (error) {
-        console.error('Failed to load Higher Management report filters:', error);
+        console.error('Failed to load report filters:', error);
         setFilterOptions([]);
         setFilterLoadError(
           error instanceof Error ? error.message : 'Report filter options could not be loaded.',
@@ -348,7 +362,7 @@ export default function HigherManagementReportsView() {
       }
     };
     void loadFilterOptions();
-  }, [branchId, currentUser.id, selectedReportId]);
+  }, [branchId, currentUser.branchId, currentUser.id, isBranchManagement, selectedReportId]);
 
   const selectedDefinition = reportDefinitions.find(
     (definition) => definition.id === selectedReportId,
@@ -377,6 +391,7 @@ export default function HigherManagementReportsView() {
     // Apply the submitted category and text filters to the complete result set.
     if (appliedFilter !== 'All') {
       if (selectedReportId === 'agent-transactions' || selectedReportId === 'customer-activity') {
+        // Compound options include the branch so duplicate names do not match each other.
         const selected = JSON.parse(appliedFilter) as [string, string];
         const [name, branch] = selected;
         const nameColumn = selectedReportId === 'agent-transactions' ? 'agent_name' : 'customer_name';
@@ -415,7 +430,7 @@ export default function HigherManagementReportsView() {
     }
     const employeeId = Number(currentUser.id);
     if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
-      setErrorMessage('A valid Higher Management session is required.');
+      setErrorMessage(`A valid ${isBranchManagement ? 'Branch Management' : 'Higher Management'} session is required.`);
       return;
     }
 
@@ -424,13 +439,16 @@ export default function HigherManagementReportsView() {
     const query = new URLSearchParams({
       employeeId: String(employeeId),
       report: selectedReportId,
-      branchId,
       startDate,
       endDate,
     });
+    if (!isBranchManagement) query.set('branchId', branchId);
+    const endpoint = isBranchManagement
+      ? '/api/branch-management/reports'
+      : '/api/higher-management/reports';
 
     try {
-      const response = await fetch(`/api/higher-management/reports?${query.toString()}`, {
+      const response = await fetch(`${endpoint}?${query.toString()}`, {
         cache: 'no-store',
       });
       const contentType = response.headers.get('content-type') ?? '';
@@ -453,16 +471,22 @@ export default function HigherManagementReportsView() {
         result === null ||
         !('rows' in result) ||
         !Array.isArray(result.rows) ||
-        !result.rows.every(isReportRow)
+        !result.rows.every(isReportRow) ||
+        (isBranchManagement && (!('branchName' in result) || typeof result.branchName !== 'string'))
       ) {
         throw new Error('The report response is invalid.');
       }
       const rows = result.rows;
       const selectedBranch = branches.find((branch) => branch.id === branchId);
+      const reportBranchName = isBranchManagement && 'branchName' in result &&
+        typeof result.branchName === 'string'
+        ? result.branchName
+        : selectedBranch?.name ?? 'All Branches';
+      if (isBranchManagement) setAssignedBranchName(reportBranchName);
       const report = toReport(
         selectedDefinition,
         rows,
-        selectedBranch?.name ?? 'All Branches',
+        reportBranchName,
         startDate,
         endDate,
         currentUser.name,
@@ -485,7 +509,7 @@ export default function HigherManagementReportsView() {
       <header className="flex flex-col gap-2">
         <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight text-slate-900">
           <FileText className="h-5 w-5 text-blue-600" />
-          Executive Reports
+          {isBranchManagement ? 'Branch Reports' : 'Executive Reports'}
         </h2>
         <p className="text-sm text-slate-500">
           Search the five financial reports and export the complete matching results.
@@ -517,7 +541,7 @@ export default function HigherManagementReportsView() {
             </select>
           </label>
 
-          <label className="text-xs font-semibold text-slate-700">
+          {!isBranchManagement && <label className="text-xs font-semibold text-slate-700">
             Branch
             <select
               value={branchId}
@@ -533,7 +557,16 @@ export default function HigherManagementReportsView() {
               <option value="0">All Branches</option>
               {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
             </select>
-          </label>
+          </label>}
+
+          {isBranchManagement && (
+            <div className="text-xs font-semibold text-slate-700">
+              Branch
+              <div className="mt-1.5 rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-800">
+                {assignedBranchName || currentUser.branchName || 'Assigned branch'}
+              </div>
+            </div>
+          )}
 
           <label className="text-xs font-semibold text-slate-700">
             From
@@ -586,14 +619,14 @@ export default function HigherManagementReportsView() {
             value={selectedFilter}
             onChange={setSelectedFilter}
             placeholder="Select a filter"
-            disabled={Boolean(branchLoadError)}
+            disabled={!isBranchManagement && Boolean(branchLoadError)}
           />
           <p className="self-end pb-2 text-xs text-slate-500">
             Choose a category value and enter optional text, then click Search to apply both filters.
           </p>
         </div>
 
-        {branchLoadError && <p className="mt-3 text-xs text-rose-700">{branchLoadError}</p>}
+        {!isBranchManagement && branchLoadError && <p className="mt-3 text-xs text-rose-700">{branchLoadError}</p>}
         {filterLoadError && <p className="mt-3 text-xs text-amber-700">{filterLoadError} You can still search all records.</p>}
         {errorMessage && <p role="alert" className="mt-3 text-xs font-medium text-rose-700">{errorMessage}</p>}
 
@@ -620,7 +653,7 @@ export default function HigherManagementReportsView() {
           )}
           <button
             type="submit"
-            disabled={isLoading || Boolean(branchLoadError)}
+            disabled={isLoading || (!isBranchManagement && Boolean(branchLoadError))}
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
           >
             <Search className="h-4 w-4" />

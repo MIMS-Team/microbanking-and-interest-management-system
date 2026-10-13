@@ -26,6 +26,7 @@ function isNonNegativeInteger(value: unknown): value is number {
 
 function isDashboardData(value: unknown): value is HigherManagementDashboardData {
   if (typeof value !== 'object' || value === null) return false;
+  // Validate the API payload before dashboard metrics use its values.
   const data = value as Record<string, unknown>;
   const validCounts = (counts: unknown) =>
     typeof counts === 'object' &&
@@ -107,6 +108,7 @@ export default function HigherMgmtDashboardView({ onNavigateTab }: HigherMgmtDas
           throw new Error(`Dashboard request failed with status ${response.status}.`);
         }
         const result: unknown = await response.json();
+        // Malformed responses are shown as an error instead of partial or misleading metrics.
         if (!isDashboardData(result)) {
           throw new Error('Higher Management dashboard returned an invalid data format.');
         }
@@ -122,6 +124,7 @@ export default function HigherMgmtDashboardView({ onNavigateTab }: HigherMgmtDas
     };
 
     void loadDashboard();
+    // Ignore this request if a refresh starts or the dashboard unmounts before it completes.
     return () => controller.abort();
   }, [refreshKey]);
 

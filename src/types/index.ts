@@ -66,6 +66,7 @@ export interface EmployeeRecord extends Omit<Employee, 'role'> {
   username: string;
   roleId: string;
   role: string;
+  // Supplemental OTP-recipient roles are separate from the employee's primary access role.
   secondaryOtpRoles: Array<'BM' | 'HRM'>;
 }
 
@@ -133,6 +134,13 @@ export interface HigherManagementDashboardData {
   }>;
 }
 
+export interface BranchManagementDashboardData {
+  branchName: string;
+  customers: { total: number; active: number };
+  savings: { activeAccounts: number; balance: number };
+  fixedDeposits: { activeCount: number; balance: number };
+  monthlyTransactions: HigherManagementDashboardData['monthlyTransactions'];
+}
 
 // Staff and employee account entity
 export interface Employee {
