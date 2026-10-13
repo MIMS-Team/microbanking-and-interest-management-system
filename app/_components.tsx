@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { BankMark } from '@/components/bank-mark';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -14,18 +15,15 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  Landmark,
   LockKeyhole,
   LogOut,
   Mail,
-  Menu,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
   UserCheck,
   UserRound,
   Users,
-  X,
 } from 'lucide-react';
 
 export type Role = 'agent' | 'manager' | 'higher_manager' | 'admin';
@@ -253,17 +251,15 @@ export function getInitials(name: string): string {
     .toUpperCase();
 }
 
-export function RavinduLogo({ compact = false, dark = false }: { compact?: boolean; dark?: boolean }) {
+export function RavinduLogo({ compact = false, dark = false, href = '/login' }: { compact?: boolean; dark?: boolean; href?: string }) {
   return (
-    <Link href="/login" className="flex items-center gap-3 group">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25 transition group-hover:scale-105">
-        <Landmark className="h-5 w-5 text-white" />
-      </span>
+    <Link href={href} className={`bank-logo ${dark ? 'bank-logo-dark' : ''}`} aria-label="B-Trust Bank home">
+      <BankMark className="bank-logo-symbol" />
       {!compact && (
         <span>
-          <span className={`block text-sm font-extrabold tracking-[0.1em] ${dark ? 'text-white' : 'text-slate-900'}`}>B-TRUST MIMS</span>
-          <span className={`block text-[10px] font-semibold uppercase tracking-[0.16em] ${dark ? 'text-blue-300' : 'text-blue-600'}`}>
-            Microbanking & Interest Platform
+          <strong>B-Trust Bank</strong>
+          <span className="bank-logo-caption">
+            Microbanking · MIMS
           </span>
         </span>
       )}
@@ -370,70 +366,32 @@ export function AuthFrame({
   description: string;
 }) {
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      <div className="grid min-h-screen lg:grid-cols-[1fr_1.1fr]">
-        <section className="relative hidden overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-12 text-slate-100 lg:flex lg:flex-col lg:justify-between shadow-2xl">
-          <div className="absolute -right-32 -top-32 h-96 w-96 rounded-full bg-blue-600/20 blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-32 -left-20 h-80 w-80 rounded-full bg-indigo-600/20 blur-3xl pointer-events-none" />
-          <div className="absolute top-1/2 left-1/3 h-64 w-64 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
-
-          <div className="relative z-10 flex items-center justify-between">
-            <RavinduLogo dark />
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-blue-200 backdrop-blur-md">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              SOC2 Type II · TLS 1.3
-            </div>
+    <main className="auth-page">
+      <section className="auth-story" aria-label="B-Trust Bank">
+        <RavinduLogo />
+        <div className="auth-story-content">
+          <span className="auth-kicker">YOUR EVERYDAY BANKING WORKSPACE</span>
+          <h1>A clear view.<br />A better banking day.</h1>
+          <p>Customers, accounts and daily operations. One connected workspace for your team.</p>
+          <div className="auth-illustration" aria-hidden="true">
+            <div className="auth-illustration-top"><BankMark /><span>B-Trust Bank</span><span className="auth-dot" /></div>
+            <div className="auth-illustration-lines"><span /><span /><span /></div>
+            <div className="auth-illustration-bars">{[38,55,47,71,65,88,78].map((height,index)=><i key={index} style={{height:height+'%'}} />)}</div>
+            <div className="auth-illustration-bottom"><ShieldCheck size={16} /><span>Built around your role</span></div>
           </div>
-
-          <div className="relative z-10 max-w-lg my-auto py-10">
-            <div className="inline-block rounded-full bg-blue-500/15 px-3.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-400 border border-blue-500/30 mb-5">
-              {label}
-            </div>
-            <h1 className="text-4xl font-black leading-tight tracking-tight text-white">
-              Secure Banking Access & Authorization
-            </h1>
-            <p className="mt-4 text-sm leading-relaxed text-slate-300 max-w-md">
-              Enterprise-grade multi-factor identity verification, role-based controls, and dual-authorization employee management.
-            </p>
-
-            <div className="mt-8 space-y-3.5 text-xs font-medium text-slate-200">
-              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm shadow-xs">
-                <ShieldCheck className="h-5 w-5 text-blue-400 shrink-0" />
-                <span>6-digit cryptographic random OTP challenge</span>
-              </div>
-              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm shadow-xs">
-                <BadgeCheck className="h-5 w-5 text-indigo-400 shrink-0" />
-                <span>Database session tracking & automatic idle timeout</span>
-              </div>
-              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3.5 backdrop-blur-sm shadow-xs">
-                <UserCheck className="h-5 w-5 text-emerald-400 shrink-0" />
-                <span>Higher management dual-approval for employee provisioning</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="relative z-10 flex items-center justify-between text-xs text-slate-400 border-t border-white/10 pt-6">
-            <span>B-Trust Bank · MIMS</span>
-            <span>Enterprise Security Guaranteed</span>
-          </div>
-        </section>
-
-        <section className="flex items-center justify-center p-6 sm:p-12 lg:p-16">
-          <div className="w-full max-w-md">
-            <div className="mb-8 lg:hidden">
-              <RavinduLogo />
-            </div>
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-8 sm:p-10 shadow-xl shadow-slate-200/50">
-              <div className="inline-block rounded-md bg-blue-50 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-blue-600 border border-blue-100">
-                {label}
-              </div>
-              <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-900">{title}</h2>
-              <p className="mt-2 text-xs leading-5 text-slate-600">{description}</p>
-              <div className="mt-6">{children}</div>
-            </div>
-          </div>
-        </section>
-      </div>
+        </div>
+        <p className="auth-story-footer">Microbanking &amp; Interest Management System</p>
+      </section>
+      <section className="auth-form-area">
+        <div className="auth-mobile-brand"><RavinduLogo /></div>
+        <div className="auth-form-card">
+          <span className="auth-kicker">{label}</span>
+          <h2>{title}</h2>
+          <p className="auth-description">{description}</p>
+          <div className="auth-form-content">{children}</div>
+        </div>
+        <p className="auth-form-footer"><LockKeyhole size={14} /> Access is verified with a one-time code.</p>
+      </section>
     </main>
   );
 }
@@ -442,15 +400,38 @@ export function RavinduShell({
   children,
   title,
   eyebrow,
+  navigation,
+  showHeading = true,
 }: {
   children: ReactNode;
   title: string;
   eyebrow: string;
+  navigation?: ReactNode;
+  showHeading?: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const [session, setSession] = useState<PublicEmployee | null>(null);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const navigationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const nav = navigationRef.current?.querySelector<HTMLElement>('.workspace-nav');
+    const selected = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !selected) return;
+    function keepSelectedVisible() {
+      if (!nav || !selected) return;
+      const bounds = nav.getBoundingClientRect();
+      const item = selected.getBoundingClientRect();
+      if (item.left < bounds.left || item.right > bounds.right) {
+        nav.scrollLeft += item.left - bounds.left - (bounds.width - item.width) / 2;
+      }
+    }
+    keepSelectedVisible();
+    const observer = new ResizeObserver(keepSelectedVisible);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [pathname, searchParams, navigation]);
 
   useEffect(() => {
     fetch('/api/auth/session', { credentials: 'include' })
@@ -490,7 +471,6 @@ export function RavinduShell({
 
   const userRole = session?.role ?? 'agent';
   const roleName = roleLabels[userRole];
-  const roleStyle = roleDetails[userRole];
   const initials = getInitials(session?.full_name ?? 'Employee User');
 
   // Role-based navigation items
@@ -502,89 +482,36 @@ export function RavinduShell({
   ];
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      <header className="border-b border-slate-200/80 bg-white/85 backdrop-blur-md sticky top-0 z-30 shadow-xs">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3 lg:px-8">
-          <RavinduLogo />
-          <button
-            onClick={() => setMobileOpen(!mobileOpen)}
-            className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"
-            aria-label="Toggle navigation"
-          >
-            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
-          {session && (
-            <nav className="hidden items-center gap-1.5 lg:flex">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const active = pathname === item.href || (item.href.includes('tab=') && pathname.includes('/dashboard'));
-                return (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition ${
-                      active
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {item.label}
-                  </Link>
-                );
+    <div className="bank-app">
+      <a href="#workspace-content" className="skip-link">Skip to content</a>
+      <header className="bank-header">
+        <div className="bank-header-inner">
+          <RavinduLogo href="/dashboard" />
+          <div ref={navigationRef} className="bank-primary-nav">
+            {navigation || <nav aria-label="Main navigation" className="workspace-nav">
+              {navItems.map(item => {
+                const active = item.href.includes('?')
+                  ? pathname === '/dashboard' && searchParams.get('tab') === new URLSearchParams(item.href.split('?')[1]).get('tab')
+                  : pathname === item.href && (item.href !== '/dashboard' || !searchParams.get('tab') || searchParams.get('tab') === 'overview');
+                return <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}><item.icon size={16} />{item.label}</Link>;
               })}
-              <LogoutButton
-                variant="nav"
-                onLogoutSuccess={() => setSession(null)}
-              />
-            </nav>
-          )}
+            </nav>}
+          </div>
+          <div className="bank-account">
+            <Link className="bank-account-link" href="/profile" aria-label="My profile">
+              <span className="avatar">{initials}</span>
+              <span className="bank-account-name"><strong>{session?.full_name || 'Your workspace'}</strong><small>{roleName}</small></span>
+            </Link>
+            <LogoutButton variant="nav" className="bank-logout" onLogoutSuccess={() => setSession(null)} />
+          </div>
         </div>
-        {mobileOpen && session && (
-          <nav className="space-y-1 border-t border-slate-200 px-5 py-3 lg:hidden bg-white/95 backdrop-blur-md">
-            {navItems.map((item) => (
-              <Link
-                onClick={() => setMobileOpen(false)}
-                key={item.label}
-                href={item.href}
-                className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            ))}
-            <LogoutButton
-              variant="mobile"
-              onLogoutSuccess={() => {
-                setSession(null);
-                setMobileOpen(false);
-              }}
-            />
-          </nav>
-        )}
       </header>
-
-      <div className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
-        <div className="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">{eyebrow}</p>
-            <h1 className="mt-1.5 text-3xl font-black tracking-tight text-slate-900">{title}</h1>
-          </div>
-          <div className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white px-4 py-2.5 shadow-xs">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-sm font-black text-white shadow-xs">
-              {initials}
-            </div>
-            <div>
-              <p className="text-xs font-bold text-slate-900">{session?.full_name ?? 'Authenticated User'}</p>
-              <span className={`inline-block mt-0.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${roleStyle.tone}`}>
-                {roleName}
-              </span>
-            </div>
-          </div>
-        </div>
+      <main id="workspace-content" tabIndex={-1} className="bank-content">
+        {showHeading && <div className="shell-heading"><p>{eyebrow}</p><h1>{title}</h1></div>}
         {children}
-      </div>
-    </main>
+      </main>
+      <footer className="bank-footer"><span>B-Trust Bank · MIMS</span><span>{roleName} workspace</span></footer>
+    </div>
   );
 }
 
@@ -836,7 +763,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
+        className="button button-primary full-width"
       >
         {submitting ? (
           <>
@@ -1139,7 +1066,7 @@ export function OtpForm() {
       <button
         type="submit"
         disabled={!initialized || !currentChallengeId || submitting || resending || code.length !== 6 || expirySeconds === 0}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50"
+        className="button button-primary full-width"
       >
         {submitting ? (
           <>
@@ -1288,7 +1215,7 @@ export function ResetForm() {
             if (redirectTimer.current) clearTimeout(redirectTimer.current);
             router.push('/login');
           }}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700"
+          className="button button-primary full-width"
         >
           Proceed to Login <ArrowRight className="h-4 w-4" />
         </button>
@@ -1320,7 +1247,7 @@ export function ResetForm() {
         <button
           type="submit"
           disabled={submitting}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
+          className="button button-primary full-width"
         >
           {submitting ? 'Dispatching OTP...' : 'Send Recovery OTP'} <ArrowRight className="h-4 w-4" />
         </button>
@@ -1390,7 +1317,7 @@ export function ResetForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 hover:shadow-blue-500/35 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60"
+        className="button button-primary full-width"
       >
         {submitting ? 'Updating...' : 'Set New Password'} <ArrowRight className="h-4 w-4" />
       </button>

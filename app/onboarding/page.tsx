@@ -57,7 +57,7 @@ export default function Onboarding() {
           </div>
           <Link
             href="/login"
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700"
+            className="button button-primary full-width"
           >
             Sign in to Workspace <ArrowRight className="h-4 w-4" />
           </Link>
@@ -106,7 +106,7 @@ export default function Onboarding() {
             <button
               type="submit"
               disabled={busy}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/25 transition hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60"
+              className="button button-primary full-width"
             >
               {busy ? (
                 <>

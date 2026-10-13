@@ -8,7 +8,6 @@ import {
   RefreshCw,
   Search,
   UserMinus,
-  UserPlus,
   X,
 } from 'lucide-react';
 import {
@@ -18,6 +17,7 @@ import {
   roleDetails,
   roleLabels,
 } from '@/app/_components';
+import { Modal } from './ui';
 
 export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmployee | null }) {
   const [employees, setEmployees] = useState<PublicEmployee[]>([]);
@@ -212,7 +212,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
   });
 
   return (
-    <div className="space-y-6"><div className="pagination"><span>{total} employees ? Page {page} of {Math.max(1,Math.ceil(total/20))}</span><label>Sort employees<select value={sort} onChange={e=>{setSort(e.target.value);setPage(1);}}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label><button disabled={page<=1} onClick={()=>setPage(page-1)}>Previous employees</button><button disabled={page*20>=total} onClick={()=>setPage(page+1)}>Next employees</button></div>
+    <div className="employee-workspace space-y-6">
       {deactError && <p role="alert">{deactError}</p>}
       {deactSubmitting && <p role="status">Requesting deactivation...</p>}
       {notification && (
@@ -230,7 +230,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
       {/* Header & Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-black text-slate-900">Employee Directory</h2>
+          <h1>Employee Directory</h1>
           <p className="text-xs text-slate-500">
             Manage bank employee accounts. Dual authorization required for user creation and deactivation.
           </p>
@@ -240,7 +240,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
             setCreateModal(true);
             setCreateError('');
           }}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:from-blue-700 hover:to-indigo-700 hover:-translate-y-0.5 active:translate-y-0"
+          className="button button-primary"
         >
           <Plus className="h-4 w-4" /> Add New Employee
         </button>
@@ -253,6 +253,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
           <input
             type="text"
             placeholder="Search employees by name or email..."
+            aria-label="Search employees"
             value={search}
             onChange={(e) => {setSearch(e.target.value);setPage(1);}}
             className="w-full rounded-xl border border-slate-200 py-2 pl-10 pr-4 text-xs outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/10"
@@ -260,6 +261,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
         </div>
 
         <select
+          aria-label="Filter employee roles"
           value={roleFilter}
           onChange={(e) => {setRoleFilter(e.target.value);setPage(1);}}
           className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-600"
@@ -272,6 +274,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
         </select>
 
         <select
+          aria-label="Filter employee statuses"
           value={statusFilter}
           onChange={(e) => {setStatusFilter(e.target.value);setPage(1);}}
           className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-600"
@@ -321,7 +324,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
                     <tr key={emp.id} className="transition-colors hover:bg-slate-50/80">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-xs font-black text-white shadow-sm ring-1 ring-white/10">
+                          <div className="avatar">
                             {emp.full_name.charAt(0)}
                           </div>
                           <div>
@@ -404,25 +407,12 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
         )}
       </div>
 
+      <div className="pagination"><span>{total} employees · Page {page} of {Math.max(1,Math.ceil(total/20))}</span><label>Sort employees<select value={sort} onChange={e=>{setSort(e.target.value);setPage(1);}}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label><button disabled={page<=1} onClick={()=>setPage(page-1)}>Previous employees</button><button disabled={page*20>=total} onClick={()=>setPage(page+1)}>Next employees</button></div>
+
       {/* MODAL 1: Create Employee (Step 1) */}
       {createModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 animate-scale-up">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-              <h3 className="text-base font-black text-slate-900 flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100">
-                  <UserPlus className="h-4 w-4" />
-                </span>
-                Add New Employee
-              </h3>
-              <button 
-                onClick={() => setCreateModal(false)} 
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
+        <Modal title="Add New Employee" onClose={() => { if (!createSubmitting) setCreateModal(false); }}>
+          <div className="modal-body">
             <form onSubmit={handleStartCreate} className="mt-4 space-y-4">
               <Field
                 label="Full Name"
@@ -475,6 +465,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
               <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100">
                 <button
                   type="button"
+                  disabled={createSubmitting}
                   onClick={() => setCreateModal(false)}
                   className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
                 >
@@ -483,35 +474,20 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
                 <button
                   type="submit"
                   disabled={createSubmitting}
-                  className="rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50"
+                  className="button button-primary"
                 >
                   {createSubmitting ? 'Requesting...' : 'Request HR Approval'}
                 </button>
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* MODAL 3: Edit Employee */}
       {editEmployee && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 animate-scale-up">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-              <h3 className="text-base font-black text-slate-900 flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100">
-                  <Edit className="h-4 w-4" />
-                </span>
-                Update Employee
-              </h3>
-              <button 
-                onClick={() => setEditEmployee(null)} 
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
+        <Modal title="Update Employee" onClose={() => { if (!editSubmitting) setEditEmployee(null); }}>
+          <div className="modal-body">
             <form onSubmit={handleSaveEdit} className="mt-4 space-y-4">
               <Field
                 label="Full Name"
@@ -561,6 +537,7 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
               <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100">
                 <button
                   type="button"
+                  disabled={editSubmitting}
                   onClick={() => setEditEmployee(null)}
                   className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
                 >
@@ -569,14 +546,14 @@ export function EmployeeManagerView({ currentUser }: { currentUser: PublicEmploy
                 <button
                   type="submit"
                   disabled={editSubmitting}
-                  className="rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50"
+                  className="button button-primary"
                 >
                   {editSubmitting ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
 
     </div>
