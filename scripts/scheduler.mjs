@@ -32,7 +32,7 @@ async function runJobs() {
     {
       try {
         await new Promise((resolve, reject) => {
-          const child = spawn(process.execPath, ['scripts/database-backup.mjs'], { env: process.env, windowsHide: true, stdio: 'inherit' });
+          const child = spawn(process.execPath, ['scripts/backup-router.mjs'], { env: process.env, windowsHide: true, stdio: 'inherit' });
           child.on('error', reject);
           child.on('exit', code => code === 0 ? resolve() : reject(new Error('Backup failed.')));
         });
