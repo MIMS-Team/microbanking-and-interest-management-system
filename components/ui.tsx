@@ -31,7 +31,17 @@ export function DataTable<T extends { id: number }>({ rows, columns, search, fil
 
 export function Modal({ title, description, onClose, children, wide = false }: { title: string; description?: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null); const id = useId();
-  useEffect(() => { const dialog = ref.current; dialog?.showModal(); return () => dialog?.close(); }, []);
+  useEffect(() => {
+    const dialog = ref.current;
+    const previousFocus = document.activeElement;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+    };
+  }, []);
   return <dialog ref={ref} className={`modal ${wide ? 'modal-wide' : ''}`} aria-labelledby={id} onCancel={event => { event.preventDefault(); onClose(); }}><div className="modal-heading"><div><h2 id={id}>{title}</h2>{description && <p>{description}</p>}</div><button type="button" className="icon-button" onClick={onClose} aria-label="Close dialog"><X size={20} /></button></div>{children}</dialog>;
 }
 export function Field({ label: text, children, help, wide }: { label: string; children: ReactNode; help?: string; wide?: boolean }) { return <label className={`field ${wide ? 'field-wide' : ''}`}><span>{text}</span>{children}{help && <small>{help}</small>}</label>; }

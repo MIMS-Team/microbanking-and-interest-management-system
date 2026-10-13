@@ -6,8 +6,7 @@ import { Customers } from '@/components/customers';
 import { Approvals } from '@/components/approvals';
 import { Notice } from '@/components/ui';
 import type { ActionPayload, Bootstrap } from '@/lib/types';
-import styles from './workspace.module.css';
-import { RequireSession, LogoutButton } from '../_components';
+import { RequireSession, RavinduShell } from '../_components';
 
 export default function CustomerWorkspace() {
   return <RequireSession><CustomerContent /></RequireSession>;
@@ -56,25 +55,20 @@ function CustomerContent() {
   }
 
   const customerData = data && { ...data, approvals: data.approvals.filter(item => item.type.startsWith('customer.')) };
-  return <main className={styles.workspace}>
-    <header className={styles.header}>
-      <div><strong>B-Trust Bank</strong><p>Customer workspace</p></div>
-      <a href="/dashboard">Back to dashboard</a>
-      <LogoutButton />
-    </header>
-    <nav className={styles.toolbar} aria-label="Customer workspace">
+  return <RavinduShell eyebrow="Customer relationships" title="Customer workspace" showHeading={false}>
+    <nav className="customer-workspace-toolbar" aria-label="Customer workspace">
       <div>
         <button className="button" aria-pressed={tab === 'customers'} onClick={() => setTab('customers')}>Customers</button>
         <button className="button" aria-pressed={tab === 'approvals'} onClick={() => setTab('approvals')}>Customer approvals</button>
       </div>
       <button className="button button-secondary" disabled={loading} onClick={() => { setLoading(true); void refresh(); }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
     </nav>
-    {data && <p className={styles.identity}>{data.user.full_name} · {data.user.branch_name || 'All branches'}</p>}
+    {data && <p className="muted customer-identity">{data.user.full_name} · {data.user.branch_name || 'All branches'}</p>}
     {message && <div role="status"><Notice tone="success">{message}</Notice></div>}
     {error && <Notice tone="error">{error} Use Refresh to try again.</Notice>}
     {loading && !data && <p role="status">Loading your customer workspace…</p>}
     {customerData && (data.user.role === 'admin'
       ? <Notice>Customer records are available to assigned agents and managers. Use the dashboard for employee administration.</Notice>
       : tab === 'customers' ? <Customers data={customerData} onAction={onAction} /> : <Approvals data={customerData} onAction={onAction} />)}
-  </main>;
+  </RavinduShell>;
 }

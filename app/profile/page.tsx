@@ -56,10 +56,9 @@ function ProfileContent() {
   return (
     <RavinduShell eyebrow="Personal Credentials" title="Your Employee Profile">
       <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-        <section className="rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-8 text-white shadow-xl border border-white/10 flex flex-col justify-between relative overflow-hidden">
-          <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-blue-600/15 blur-3xl pointer-events-none" />
+        <section className="profile-summary">
           <div className="relative z-10">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-xl font-black text-white shadow-lg shadow-blue-500/25">
+            <div className="avatar avatar-large">
               {employee.full_name
                 .split(' ')
                 .slice(0, 2)
@@ -88,18 +87,18 @@ function ProfileContent() {
               </div>
               <div className="flex items-center gap-3">
                 <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                <span>MFA / OTP Authentication Active</span>
+                <span>Sign-in verified with OTP</span>
               </div>
             </div>
           </div>
 
           <div className="relative z-10 mt-8 pt-5 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
             <span>Status: <strong className="text-emerald-400 capitalize">{employee.status}</strong></span>
-            <span>Policy: Strict RBAC</span>
+            <span>Role-based access</span>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200/90 bg-white p-8 shadow-sm">
+        <section className="profile-capabilities panel-content panel">
           <div className="mb-6 flex items-center justify-between">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-600">Account Scope</p>
@@ -139,7 +138,7 @@ function ProfileContent() {
               <div className="mt-4">
                 <Link
                   href="/passwordreset"
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-indigo-700"
+                  className="button button-primary"
                 >
                   <KeyRound className="h-3.5 w-3.5 text-white" /> Change Password with OTP
                 </Link>
