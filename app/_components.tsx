@@ -498,6 +498,7 @@ export function RavinduShell({
           <div className="bank-account">
             <NotificationButton user={session} />
             <UserProfileButton session={session} onLogoutSuccess={() => setSession(null)} />
+            <LogoutButton variant="nav" className="bank-logout" onLogoutSuccess={() => setSession(null)} />
           </div>
         </div>
       </header>
