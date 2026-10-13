@@ -8,7 +8,6 @@ import {
   Users,
   Building2,
   KeyRound,
-  Database,
   Lock,
   UserPlus,
   ArrowUpRight,
@@ -195,19 +194,6 @@ export default function AdminDashboardView({ onNavigateTab }: AdminDashboardView
           </div>
 
           <div className="divide-y divide-slate-100 mt-2 space-y-1">
-            <div className="py-2.5 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2.5">
-                <Database className="w-4 h-4 text-blue-600" />
-                <div>
-                  <div className="font-semibold text-slate-800">Neon PostgreSQL</div>
-                  <div className="text-[10px] text-slate-400">Live database query response</div>
-                </div>
-              </div>
-              <span className="text-emerald-600 font-semibold font-mono">
-              {dashboard ? `ONLINE (${dashboard.databaseLatencyMs.toFixed(1)}ms)` : loadError ? 'UNAVAILABLE' : 'CHECKING'}
-              </span>
-            </div>
-
             <div className="py-2.5 flex items-center justify-between text-xs">
               <div className="flex items-center gap-2.5">
               <KeyRound className="w-4 h-4 text-indigo-600" />

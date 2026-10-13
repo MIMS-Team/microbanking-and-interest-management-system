@@ -6,7 +6,7 @@ const sources = {
       return {
         async query(sql) {
           if (sql.includes('DATABASE()')) return [[{ name: config.database }]];
-          if (sql.includes('schema_migrations')) return [[{ completed: 11 }]];
+          if (sql.includes('schema_migrations')) return [[{ completed: 12 }]];
           if (sql.includes('FROM staff')) return [[{ employees: 6 }]];
           throw new Error('Unexpected fixture query: ' + sql);
         },

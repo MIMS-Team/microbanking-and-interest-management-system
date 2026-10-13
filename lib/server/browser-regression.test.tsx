@@ -158,7 +158,7 @@ describe('Real Browser & Component Regression Test Suite', () => {
               status: 'active',
               created_at: new Date().toISOString(),
             },
-            dashboardUrl: '/dashboard?tab=admin',
+            dashboardUrl: '/admin',
           }),
         };
       }
@@ -190,7 +190,7 @@ describe('Real Browser & Component Regression Test Suite', () => {
     });
 
     // Navigates to admin role dashboard
-    expect(mockPush).toHaveBeenCalledWith('/dashboard?tab=admin');
+    expect(mockPush).toHaveBeenCalledWith('/admin');
   });
 
   it('4. OtpForm: resend updates challenge ID in URL and accepts fresh OTP code', async () => {

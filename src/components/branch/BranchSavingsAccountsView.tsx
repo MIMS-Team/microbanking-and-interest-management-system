@@ -117,7 +117,7 @@ export default function BranchSavingsAccountsView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           employeeId: Number(currentUser.id),
-          accountNo: Number(pendingAccount.accountNumber),
+          accountNo: pendingAccount.accountNumber,
         }),
       });
       const result: unknown = await response.json();

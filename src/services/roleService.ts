@@ -8,9 +8,16 @@ export async function getRoles(): Promise<{
   secondaryOtpRoles: Array<'BM' | 'HRM'>;
 }> {
   const roleRows = await sql`
-    SELECT role_id, title
-    FROM role
-    ORDER BY title
+    SELECT code AS role_id,
+      CASE business_role
+        WHEN 'higher_manager' THEN 'Higher Management'
+        WHEN 'manager' THEN 'Branch Manager'
+        WHEN 'agent' THEN 'Field Agent'
+        ELSE 'Admin'
+      END AS title
+    FROM role_catalog
+    WHERE active = true
+    ORDER BY display_name
   `;
 
   return {

@@ -30,7 +30,7 @@ launcher rather than starting Next.js directly:
 npm run dev:full
 ```
 
-It discovers the newest reachable `.data/disposable-demo*.env`, verifies all 11
+It discovers the newest reachable `.data/disposable-demo*.env`, verifies all 12
 migrations and seeded staff, and starts the Next.js app, a loopback-only OTP inbox,
 and the employee-notification worker. It prints the application and inbox URLs and
 writes `.data/local-project-runtime.json`. Verify the running stack with
@@ -67,8 +67,8 @@ was modified during the database integration task.
 that installation path. `database/history/` contains historical MySQL references
 and must not be executed as installation scripts.
 `npm run seed:dev` creates and seeds a **new disposable MySQL database**.
-It requires explicit `TEST_MYSQL_*` settings, never reads an existing target from
-`DB_*`, and writes restricted application connection settings into the ignored
+It requires explicit `TEST_MYSQL_*` settings (which may be stored in the ignored
+`.env.local`), never reads an existing target from `DB_*`, and writes restricted application connection settings into the ignored
 `.data/disposable-demo-<uuid>.env`. The local launcher discovers these files. It
 leaves all existing databases untouched.
 Dummy employees use `admin@btrust.local`, `higher@btrust.local`,

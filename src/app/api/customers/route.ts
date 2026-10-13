@@ -5,7 +5,7 @@ import {
 } from '@/services/adminCustomerService';
 import { sendCustomerPasswordResetEmail } from '@/services/passwordEmailService';
 
-// GET /api/customers — return a searchable, paginated customer list from Neon.
+// GET /api/customers — return a searchable, paginated customer list from MySQL.
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const page = Number(params.get('page') ?? 1);

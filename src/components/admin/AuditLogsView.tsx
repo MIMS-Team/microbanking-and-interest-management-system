@@ -122,7 +122,7 @@ export default function AuditLogsView() {
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Employee Login Sessions</h3>
-              <p className="text-xs text-slate-400 mt-1">Session history recorded in Neon PostgreSQL</p>
+              <p className="text-xs text-slate-400 mt-1">Session history recorded in MySQL</p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="flex">

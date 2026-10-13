@@ -145,7 +145,7 @@ export default function UserManagementView() {
     return () => controller.abort();
   }, [empPage, empPageSize, employeeSearch, employeeSearchColumn, employeeRoleFilter, employeeStatusFilter, employeeBranchFilter, employeeRefreshKey]);
 
-  // Load customer rows and search results from Neon using server-side pagination.
+  // Load customer rows and search results from MySQL using server-side pagination.
   useEffect(() => {
     const controller = new AbortController();
     const params = new URLSearchParams({
@@ -1100,7 +1100,8 @@ export default function UserManagementView() {
                   <option value="">All statuses</option>
                   <option value="Active">Active</option>
                   <option value="Inactive">Inactive</option>
-                  <option value="Blocked">Blocked</option>
+                  <option value="Pending">Pending</option>
+                  <option value="Rejected">Rejected</option>
                 </select>
               </div>
               <div className="xl:col-span-4">
@@ -1154,7 +1155,7 @@ export default function UserManagementView() {
                   {customerLoading ? (
                     <tr>
                       <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
-                        Loading customer records from Neon...
+                        Loading customer records from MySQL...
                       </td>
                     </tr>
                   ) : customerError ? (

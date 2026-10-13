@@ -3,6 +3,7 @@
   --ink:#20221f; --navy:#20221f; --ink-secondary:#464b45; --muted:#656b63;
   --surface:#f6f7f3; --surface-card:#fff; --border:#e2e5de; --border-subtle:#eef0eb;
   --blue-primary:#26669a; --blue-hover:#194f79; --blue-subtle:#edf5fb;
+  --action-primary:#C7B70D; --action-primary-hover:#B3A50B;
   --chart-blue:#78b6e8; --chart-lilac:#b9b1e8;
   --emerald:#21744b; --emerald-subtle:#edf7f0; --amber:#926017; --amber-subtle:#fbf4e5;
   --purple:#705a99; --purple-subtle:#f3eff9; --rose:#a53c43; --rose-subtle:#fbefef;
@@ -44,9 +45,14 @@ fieldset { border:0; margin:0; padding:0; min-width:0; }
 .bank-logo-caption { display:block; font-size:10px; letter-spacing:.05em; color:var(--muted); margin-top:1px; }
 .bank-primary-nav { flex:1; min-width:0; }
 .workspace-nav { display:flex; gap:4px; overflow-x:auto; align-items:center; padding:4px; scrollbar-width:thin; scrollbar-color:#d6dcd1 transparent; }
-.workspace-nav a { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:10px 12px; border-radius:8px; color:var(--muted); font-size:12px; font-weight:600; text-decoration:none; white-space:nowrap; min-height:40px; }
-.workspace-nav a:hover { color:var(--ink); background:#edf0e9; }
-.workspace-nav a[aria-current=page] { background:var(--ink); color:white; box-shadow:0 2px 5px #20221f20; }
+.workspace-nav :is(a,button) { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:10px 12px; border:0; border-radius:8px; color:var(--muted); font-size:12px; font-weight:600; text-decoration:none; white-space:nowrap; min-height:40px; background:transparent; }
+.workspace-nav :is(a,button):hover { color:var(--ink); background:#edf0e9; }
+.workspace-nav :is(a,button)[aria-current=page] { background:var(--ink); color:white; box-shadow:0 2px 5px #20221f20; }
+.workspace-nav .role-nav-badge { border-radius:20px; padding:1px 7px; background:#edf0e9; font-size:11px; }
+.workspace-nav button[aria-current=page] .role-nav-badge { color:var(--ink); }
+.role-header-navigation { display:flex; align-items:center; gap:8px; width:100%; min-width:0; }
+.role-header-navigation .workspace-nav { flex:1; min-width:0; }
+.role-password-button { flex-shrink:0; }
 .bank-account { display:flex; align-items:center; gap:12px; padding-left:18px; border-left:1px solid var(--border); flex-shrink:0; }
 .bank-account-link { display:flex; align-items:center; gap:9px; text-decoration:none; color:var(--ink); }
 .bank-account-name strong { display:block; font-size:12px; font-weight:650; max-width:135px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -65,8 +71,10 @@ fieldset { border:0; margin:0; padding:0; min-width:0; }
 .date-pill { display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; min-height:40px; font-size:12px; background:#fcfdfa; color:var(--muted); white-space:nowrap; }
 .button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:40px; padding:10px 16px; border:1px solid var(--border); border-radius:8px; font-size:12px; font-weight:600; background:white; color:var(--ink); text-decoration:none; transition:background .15s,border-color .15s; }
 .button:hover:not(:disabled) { background:#f0f2ec; border-color:#bdc5b7; }
-.button-primary { color:white; background:var(--ink); border-color:var(--ink); }
-.button-primary:hover:not(:disabled) { background:#3a3e36; color:white; border-color:#3a3e36; }
+.button-primary { color:var(--ink); background:var(--action-primary); border-color:var(--action-primary); box-shadow:0 2px 6px #938f8030; }
+.button-primary:hover:not(:disabled) { background:var(--action-primary-hover); color:var(--ink); border-color:var(--action-primary-hover); box-shadow:0 4px 10px #6b685240; }
+button.bg-slate-900,button.bg-slate-800,button.bg-blue-600 { color:var(--ink); background:var(--action-primary); border-color:var(--action-primary); box-shadow:0 2px 6px #938f8030; }
+button.bg-slate-900:hover:not(:disabled),button.bg-slate-800:hover:not(:disabled),button.bg-blue-600:hover:not(:disabled) { color:var(--ink); background:var(--action-primary-hover); border-color:var(--action-primary-hover); box-shadow:0 4px 10px #6b685240; }
 .button-secondary { background:white; color:var(--ink-secondary); }
 .button-ghost { color:var(--blue-primary); background:var(--blue-subtle); border-color:#d5e5f1; }
 .button-small { padding:7px 12px; min-height:34px; font-size:12px; }

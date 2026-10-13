@@ -168,7 +168,7 @@ export interface Customer {
   assignedBranchId: string;
   assignedAgentId: string;
   assignedAgentName: string;
-  status: 'Active' | 'Inactive' | 'Blocked';
+  status: 'Active' | 'Inactive' | 'Blocked' | 'Pending' | 'Rejected';
   assignedBranchName?: string;
   registeredDate: string;
 }

@@ -11,73 +11,75 @@ export async function getHigherManagementDashboardData(): Promise<HigherManageme
     getAdminDashboardData(),
     getBranchNetwork(1, 100),
     sql`
-      SELECT LOWER(r.title) AS title, COUNT(e.employee_id)::int AS total
-      FROM role r
-      LEFT JOIN employee e ON e.role_id = r.role_id
-      GROUP BY r.role_id, r.title
+      SELECT r.business_role AS title, COUNT(e.id) AS total
+      FROM role_catalog r
+      LEFT JOIN staff e ON e.permission_role = r.code
+      WHERE r.active = true
+      GROUP BY r.code, r.business_role
     `,
     sql`
-      SELECT b.branch_id,
+      SELECT b.id AS branch_id,
         COALESCE((SELECT SUM(sa.balance)
-          FROM savings_account sa
-          WHERE sa.branch_id = b.branch_id AND sa.status = 'A'), 0) AS savings_balance,
-        COALESCE((SELECT SUM(fd.principal_amount)
-          FROM fixed_deposit fd
-          JOIN savings_account sa ON sa.account_no = fd.account_no
-          WHERE sa.branch_id = b.branch_id AND fd.status = 'A'), 0) AS fixed_deposit_balance,
-        (SELECT COUNT(*)::int
-          FROM fixed_deposit fd
-          JOIN savings_account sa ON sa.account_no = fd.account_no
-          WHERE sa.branch_id = b.branch_id AND fd.status = 'A') AS active_fixed_deposit_count,
-        (SELECT COUNT(*)::int
-          FROM savings_account sa
-          WHERE sa.branch_id = b.branch_id AND sa.status = 'A') AS active_accounts,
-        (SELECT COUNT(*)::int
-          FROM customer c
-          WHERE c.branch_id = b.branch_id
-            AND c.register_date >= date_trunc('month', CURRENT_DATE)) AS customers_this_month,
-        (SELECT COUNT(*)::int
-          FROM customer c
-          WHERE c.branch_id = b.branch_id
-            AND c.register_date >= date_trunc('month', CURRENT_DATE) - INTERVAL '1 month'
-            AND c.register_date < date_trunc('month', CURRENT_DATE)) AS customers_previous_month
-      FROM branch b
-      ORDER BY b.branch_id
+          FROM savings_accounts sa
+          WHERE sa.branch_id = b.id AND sa.status = 'active'), 0) AS savings_balance,
+        COALESCE((SELECT SUM(fd.principal)
+          FROM fixed_deposits fd
+          JOIN savings_accounts sa ON sa.id = fd.source_account_id
+          WHERE sa.branch_id = b.id AND fd.status = 'active'), 0) AS fixed_deposit_balance,
+        (SELECT COUNT(*)
+          FROM fixed_deposits fd
+          JOIN savings_accounts sa ON sa.id = fd.source_account_id
+          WHERE sa.branch_id = b.id AND fd.status = 'active') AS active_fixed_deposit_count,
+        (SELECT COUNT(*)
+          FROM savings_accounts sa
+          WHERE sa.branch_id = b.id AND sa.status = 'active') AS active_accounts,
+        (SELECT COUNT(*)
+          FROM customers c
+          WHERE c.branch_id = b.id
+            AND c.created_at >= CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE)) AS customers_this_month,
+        (SELECT COUNT(*)
+          FROM customers c
+          WHERE c.branch_id = b.id
+            AND c.created_at >= DATE_SUB(CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE), INTERVAL 1 MONTH)
+            AND c.created_at < CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE)) AS customers_previous_month
+      FROM branches b
+      ORDER BY b.id
     `,
     sql`
       SELECT sa.branch_id,
-        SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'D') AS deposits,
-        SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'W') AS withdrawals,
-        SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'I') AS savings_interest,
-        SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'F') AS fixed_deposit_interest,
-        COUNT(*) FILTER (WHERE e.branch_id::integer <> sa.branch_id)::int AS branch_mismatches
-      FROM normal_transaction nt
-      JOIN savings_account sa ON sa.account_no = nt.account_no
-      JOIN employee e ON e.employee_id = nt.employee_id
-      WHERE nt.transaction_timestamp >= DATE '2026-02-01'
-        AND nt.transaction_timestamp < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+        SUM(CASE WHEN le.type = 'deposit' THEN le.amount ELSE 0 END) AS deposits,
+        SUM(CASE WHEN le.type = 'withdrawal' THEN ABS(le.amount) ELSE 0 END) AS withdrawals,
+        SUM(CASE WHEN le.type = 'savings_interest' THEN le.amount ELSE 0 END) AS savings_interest,
+        SUM(CASE WHEN le.type = 'fixed_deposit_interest' THEN le.amount ELSE 0 END) AS fixed_deposit_interest,
+        SUM(CASE WHEN s.branch_id <> sa.branch_id THEN 1 ELSE 0 END) AS branch_mismatches
+      FROM ledger_entries le
+      JOIN savings_accounts sa ON sa.id = le.account_id
+      JOIN money_operations o ON o.id = le.operation_id
+      JOIN staff s ON s.id = o.actor_id
+      WHERE le.created_at >= DATE '2026-02-01'
+        AND le.created_at < DATE_ADD(CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE), INTERVAL 1 MONTH)
       GROUP BY sa.branch_id
     `,
     // Include all transaction types and zero-activity months from February 2026 onward.
     sql`
-      WITH months AS (
-        SELECT generate_series(
-          DATE '2026-02-01',
-          date_trunc('month', CURRENT_DATE),
-          INTERVAL '1 month'
-        )::date AS month
+      WITH RECURSIVE months AS (
+        SELECT DATE('2026-02-01') AS month
+        UNION ALL
+        SELECT DATE_ADD(month, INTERVAL 1 MONTH)
+        FROM months
+        WHERE month < CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE)
       ),
       totals AS (
-        SELECT date_trunc('month', transaction_timestamp)::date AS month,
-          SUM(amount) FILTER (WHERE transaction_type = 'D') AS deposits,
-          SUM(amount) FILTER (WHERE transaction_type = 'W') AS withdrawals,
-          SUM(amount) FILTER (WHERE transaction_type = 'I') AS savings_interest,
-          SUM(amount) FILTER (WHERE transaction_type = 'F') AS fixed_deposit_interest
-        FROM normal_transaction
-        WHERE transaction_timestamp >= DATE '2026-02-01'
-          AND transaction_timestamp < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
-          AND transaction_type IN ('D', 'W', 'I', 'F')
-        GROUP BY date_trunc('month', transaction_timestamp)
+        SELECT CAST(DATE_FORMAT(created_at, '%Y-%m-01') AS DATE) AS month,
+          SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END) AS deposits,
+          SUM(CASE WHEN type = 'withdrawal' THEN ABS(amount) ELSE 0 END) AS withdrawals,
+          SUM(CASE WHEN type = 'savings_interest' THEN amount ELSE 0 END) AS savings_interest,
+          SUM(CASE WHEN type = 'fixed_deposit_interest' THEN amount ELSE 0 END) AS fixed_deposit_interest
+        FROM ledger_entries
+        WHERE created_at >= DATE '2026-02-01'
+          AND created_at < DATE_ADD(CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE), INTERVAL 1 MONTH)
+          AND type IN ('deposit', 'withdrawal', 'savings_interest', 'fixed_deposit_interest')
+        GROUP BY month
       )
       SELECT months.month,
         COALESCE(totals.deposits, 0) AS deposits,
@@ -104,13 +106,11 @@ export async function getHigherManagementDashboardData(): Promise<HigherManageme
     if (!Number.isSafeInteger(count) || count < 0) {
       throw new Error('Invalid employee role count returned for Higher Management dashboard.');
     }
-    const title = String(row.title ?? '').trim();
-    if (title === 'ceo') roleDistribution.ceos += count;
-    else if (title === 'higher management') roleDistribution.higherManagement += count;
-    else if (title === 'hrm') roleDistribution.hrm += count;
-    else if (title.includes('branch manager')) roleDistribution.branchManagers += count;
-    else if (title.includes('agent')) roleDistribution.agents += count;
-    else if (title.includes('admin')) roleDistribution.administrators += count;
+    const role = String(row.title ?? '').trim();
+    if (role === 'higher_manager') roleDistribution.higherManagement += count;
+    else if (role === 'manager') roleDistribution.branchManagers += count;
+    else if (role === 'agent') roleDistribution.agents += count;
+    else if (role === 'admin') roleDistribution.administrators += count;
   }
 
   const financeByBranch = new Map(

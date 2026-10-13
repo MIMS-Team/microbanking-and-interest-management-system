@@ -313,15 +313,7 @@ export default function HigherManagementReportsView({
   useEffect(() => {
     // Keep report categories limited to values available within the current reporting scope.
     const loadFilterOptions = async () => {
-      const employeeId = Number(currentUser.id);
-      if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
-        setFilterOptions([]);
-        setFilterLoadError(`A valid ${isBranchManagement ? 'Branch Management' : 'Higher Management'} session is required.`);
-        return;
-      }
-
       const query = new URLSearchParams({
-        employeeId: String(employeeId),
         report: selectedReportId,
         filterOptions: '1',
       });
@@ -430,16 +422,10 @@ export default function HigherManagementReportsView({
       setErrorMessage('Choose a valid date range.');
       return;
     }
-    const employeeId = Number(currentUser.id);
-    if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
-      setErrorMessage(`A valid ${isBranchManagement ? 'Branch Management' : 'Higher Management'} session is required.`);
-      return;
-    }
 
     setIsLoading(true);
     setErrorMessage('');
     const query = new URLSearchParams({
-      employeeId: String(employeeId),
       report: selectedReportId,
       startDate,
       endDate,
@@ -462,9 +448,13 @@ export default function HigherManagementReportsView({
         const message =
           typeof result === 'object' &&
           result !== null &&
-          'message' in result &&
-          typeof result.message === 'string'
-            ? result.message
+          (('message' in result && typeof result.message === 'string') ||
+            ('error' in result && typeof result.error === 'string'))
+            ? 'message' in result && typeof result.message === 'string'
+              ? result.message
+              : 'error' in result && typeof result.error === 'string'
+                ? result.error
+                : 'The report could not be generated.'
             : 'The report could not be generated.';
         throw new Error(message);
       }

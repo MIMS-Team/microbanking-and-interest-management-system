@@ -22,8 +22,15 @@ interface StoredEmployeeSession {
   roleId: string;
 }
 
+interface AuthenticatedEmployeeSession {
+  id: number;
+  full_name: string;
+  email: string;
+  role: 'agent' | 'manager' | 'higher_manager' | 'admin';
+  branch_id: number | null;
+}
+
 function subscribeToSession(onSessionChange: () => void): () => void {
-  // The custom event also refreshes this tab, where storage events do not fire for its own writes.
   window.addEventListener('storage', onSessionChange);
   window.addEventListener('btrust-session-change', onSessionChange);
   return () => {
@@ -33,7 +40,32 @@ function subscribeToSession(onSessionChange: () => void): () => void {
 }
 
 function getSerializedSession(): string | null {
-  return sessionStorage.getItem('btrust_session');
+  return JSON.stringify([
+    sessionStorage.getItem('btrust_session'),
+    localStorage.getItem('mims-user-session'),
+  ]);
+}
+
+function isAuthenticatedEmployeeSession(value: unknown): value is AuthenticatedEmployeeSession {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    typeof value.id === 'number' &&
+    Number.isSafeInteger(value.id) &&
+    value.id > 0 &&
+    'full_name' in value &&
+    typeof value.full_name === 'string' &&
+    'email' in value &&
+    typeof value.email === 'string' &&
+    'role' in value &&
+    ['agent', 'manager', 'higher_manager', 'admin'].includes(String(value.role)) &&
+    'branch_id' in value &&
+    (value.branch_id === null ||
+      (typeof value.branch_id === 'number' &&
+        Number.isSafeInteger(value.branch_id) &&
+        value.branch_id > 0))
+  );
 }
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
@@ -46,41 +78,65 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     getSerializedSession,
     () => null
   );
-  const storedSession = useMemo<StoredEmployeeSession | null>(() => {
+  const { storedSession, authenticatedSession } = useMemo(() => {
     if (!serializedSession) {
-      return null;
+      return { storedSession: null, authenticatedSession: null };
     }
 
     try {
-      const session: unknown = JSON.parse(serializedSession);
+      const snapshot: unknown = JSON.parse(serializedSession);
       if (
-        typeof session !== 'object' ||
-        session === null ||
-        !('employeeId' in session) ||
-        typeof session.employeeId !== 'number' ||
-        !('branchId' in session) ||
-        typeof session.branchId !== 'number' ||
-        !('name' in session) ||
-        typeof session.name !== 'string' ||
-        !('email' in session) ||
-        typeof session.email !== 'string' ||
-        !('roleId' in session) ||
-        typeof session.roleId !== 'string'
+        !Array.isArray(snapshot) ||
+        snapshot.length !== 2 ||
+        (snapshot[0] !== null && typeof snapshot[0] !== 'string') ||
+        (snapshot[1] !== null && typeof snapshot[1] !== 'string')
       ) {
-        console.error('Stored employee session has an invalid shape.');
-        return null;
+        console.error('Stored employee sessions have an invalid format.');
+        return { storedSession: null, authenticatedSession: null };
       }
 
-      return {
-        employeeId: session.employeeId,
-        branchId: session.branchId,
-        name: session.name,
-        email: session.email,
-        roleId: session.roleId,
-      };
+      const legacyValue: unknown = snapshot[0] ? JSON.parse(snapshot[0]) : null;
+      const authenticatedValue: unknown = snapshot[1] ? JSON.parse(snapshot[1]) : null;
+      let storedSession: StoredEmployeeSession | null = null;
+      let authenticatedSession: AuthenticatedEmployeeSession | null = null;
+
+      if (
+        typeof legacyValue === 'object' &&
+        legacyValue !== null &&
+        'employeeId' in legacyValue &&
+        typeof legacyValue.employeeId === 'number' &&
+        'branchId' in legacyValue &&
+        typeof legacyValue.branchId === 'number' &&
+        'name' in legacyValue &&
+        typeof legacyValue.name === 'string' &&
+        'email' in legacyValue &&
+        typeof legacyValue.email === 'string' &&
+        'roleId' in legacyValue &&
+        typeof legacyValue.roleId === 'string'
+      ) {
+        storedSession = {
+          employeeId: legacyValue.employeeId,
+          branchId: legacyValue.branchId,
+          name: legacyValue.name,
+          email: legacyValue.email,
+          roleId: legacyValue.roleId,
+        };
+      } else if (legacyValue !== null) {
+        console.error('Stored employee session has an invalid shape.');
+      }
+
+      if (authenticatedValue !== null) {
+        if (!isAuthenticatedEmployeeSession(authenticatedValue)) {
+          console.error('Authenticated employee session has an invalid shape.');
+        } else {
+          authenticatedSession = authenticatedValue;
+        }
+      }
+
+      return { storedSession, authenticatedSession };
     } catch (error) {
-      console.error('Failed to read stored employee session:', error);
-      return null;
+      console.error('Failed to read stored employee sessions:', error);
+      return { storedSession: null, authenticatedSession: null };
     }
   }, [serializedSession]);
 
@@ -114,10 +170,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         branchId: String(activeSession.branchId),
       }
     : fallbackUser;
-  const currentBranchId = /^\d+$/.test(currentUser.branchId)
-    ? `BR${currentUser.branchId.padStart(3, '0')}`
-    : currentUser.branchId;
-
+  const authenticatedRole: UserRole | null =
+      authenticatedSession?.role === 'admin'
+        ? 'Admin'
+        : authenticatedSession?.role === 'higher_manager'
+          ? 'Higher Management'
+          : authenticatedSession?.role === 'manager'
+            ? 'Branch Manager'
+            : null;
+  const sessionUser: Employee | null =
+      authenticatedSession && authenticatedRole === currentRole
+        ? {
+            ...fallbackUser,
+            id: String(authenticatedSession.id),
+            name: authenticatedSession.full_name,
+            email: authenticatedSession.email,
+            role:
+              authenticatedSession.role === 'admin'
+                ? 'Admin'
+                : authenticatedSession.role === 'higher_manager'
+                  ? 'Higher Management'
+                  : authenticatedSession.role === 'manager'
+                    ? 'Branch Manager'
+                    : 'Field Agent',
+            branchId: authenticatedSession.branch_id === null ? '' : String(authenticatedSession.branch_id),
+          }
+        : null;
+  const sessionCurrentUser = sessionUser ?? currentUser;
   useEffect(() => {
     if (
       !storedSession ||
@@ -138,9 +217,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   return (
     <SessionContext.Provider
       value={{
-        currentUser,
+        currentUser: sessionCurrentUser,
         currentRole,
-        currentBranchId,
+        currentBranchId: /^\d+$/.test(sessionCurrentUser.branchId)
+          ? `BR${sessionCurrentUser.branchId.padStart(3, '0')}`
+          : sessionCurrentUser.branchId,
         logout,
       }}
     >

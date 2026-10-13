@@ -2,7 +2,7 @@
 
 The root `app/` is the application. Authentication, approvals, ledger, reporting,
 rate limits, invitations and delivery state share canonical MySQL. Forward
-migrations `007`–`011` extend committed migrations `001`–`006`; existing developer
+migrations `007`–`012` extend committed migrations `001`–`006`; existing developer
 and production databases were not migrated by this task. Run the reviewed
 installation/upgrade path with explicit migration credentials before starting
 the updated runtime. Failed/interrupted migrations need operator inspection.

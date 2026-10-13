@@ -19,7 +19,7 @@ try{
     const child=spawn(process.execPath,['--import','tsx','scripts/recovery-drill.ts'],{windowsHide:true,env:{...process.env,RECOVERY_BACKUP_FILE:file,RECOVERY_BACKUP_KEY:key,MYSQL_BINARY:process.env.MYSQL_BINARY||(bin?path.join(bin,process.platform==='win32'?'mysql.exe':'mysql'):'mysql')},stdio:['ignore','pipe','pipe']});let output='';child.stdout.on('data',chunk=>{output+=chunk;if(output.length>1024*1024)child.kill();});child.stderr.on('data',chunk=>process.stderr.write(chunk));child.once('error',reject);child.once('exit',code=>code===0?resolve(JSON.parse(output)):reject(new Error('Recovery drill exited '+code)));
   });
   for(const [field,value]of Object.entries(expected))if(String(result.counts[field])!==String(value))throw new Error('Recovery count/balance mismatch: '+field);
-  if(result.versions.length!==11||result.versions.some(v=>v.status!=='complete'))throw new Error('Recovery migration inventory mismatch.');
+  if(result.versions.length!==12||result.versions.some(v=>v.status!=='complete'))throw new Error('Recovery migration inventory mismatch.');
   console.log(JSON.stringify({recovery_target:result.target,counts:result.counts,migration_versions:result.versions.length,preflight:result.preflight,source_counts_match:true},null,2));
 }finally{
   await source?.close();const info=await lstat(directory);

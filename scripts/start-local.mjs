@@ -67,7 +67,7 @@ async function selectDatabase() {
       const [[identity]] = await connection.query('SELECT DATABASE() AS name');
       const [[migrations]] = await connection.query("SELECT COUNT(*) AS completed FROM schema_migrations WHERE status='complete'");
       const [[employees]] = await connection.query('SELECT COUNT(*) AS employees FROM staff');
-      if (identity.name !== environment.DB_NAME || Number(migrations.completed) !== 11 || Number(employees.employees) < 1) {
+      if (identity.name !== environment.DB_NAME || Number(migrations.completed) !== 12 || Number(employees.employees) < 1) {
         throw new Error('database is not a complete seeded MIMS database');
       }
       return { environment, file, database: identity.name, modifiedAt: statSync(file).mtimeMs };
@@ -76,7 +76,7 @@ async function selectDatabase() {
     } finally { await connection?.end(); }
   }
   const detail = failures.length ? `\nChecked:\n- ${failures.join('\n- ')}` : '';
-  throw new Error(`No reachable seeded local MySQL database was found.${detail}\nRun npm run seed:dev with TEST_MYSQL_* configured, then retry npm run dev:full.`);
+  throw new Error(`No reachable seeded local MySQL database was found.${detail}\nAdd TEST_MYSQL_HOST/PORT/USER/PASSWORD for the isolated local MySQL server to .env.local, run npm run seed:dev, then retry npm run dev:full.`);
 }
 
 async function portAvailable(port) {

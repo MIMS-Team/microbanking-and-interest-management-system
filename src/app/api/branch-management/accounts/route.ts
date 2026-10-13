@@ -117,9 +117,8 @@ export async function PATCH(request: NextRequest) {
     typeof body.employeeId !== 'number' ||
     !Number.isSafeInteger(body.employeeId) ||
     body.employeeId < 1 ||
-    typeof body.accountNo !== 'number' ||
-    !Number.isSafeInteger(body.accountNo) ||
-    body.accountNo < 1
+    typeof body.accountNo !== 'string' ||
+    !/^[-A-Za-z0-9]{1,24}$/.test(body.accountNo)
   ) {
     return NextResponse.json({ message: 'Invalid account status request.' }, { status: 400 });
   }

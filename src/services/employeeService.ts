@@ -3,9 +3,22 @@
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { EmployeeRecord } from '@/types';
-import sql from '@/src/lib/db';
+import sql, { withSqlTransaction } from '@/src/lib/db';
 import { validateOtp } from '@/services/otpService';
 
+function databaseBoolean(value: unknown): boolean {
+  return value === true || value === 1 || value === '1';
+}
+
+function otpRolesForStaffRole(
+  businessRole: unknown,
+  requestedRoles: Array<'BM' | 'HRM'>,
+): Array<'BM' | 'HRM'> {
+  const roles = new Set(requestedRoles);
+  if (businessRole === 'manager') roles.add('BM');
+  if (businessRole === 'higher_manager') roles.add('HRM');
+  return [...roles];
+}
 
 function mapEmployee(row: Record<string, unknown>): EmployeeRecord {
   const openedDateValue = row.opened_date;
@@ -25,12 +38,12 @@ function mapEmployee(row: Record<string, unknown>): EmployeeRecord {
     roleId: String(row.role_id ?? ''),
     role: String(row.role_title ?? ''),
     secondaryOtpRoles: [
-      ...(row.has_bm_otp_role === true ? ['BM' as const] : []),
-      ...(row.has_hrm_otp_role === true ? ['HRM' as const] : []),
+      ...(databaseBoolean(row.has_bm_otp_role) ? ['BM' as const] : []),
+      ...(databaseBoolean(row.has_hrm_otp_role) ? ['HRM' as const] : []),
     ],
     branchId: String(row.branch_id ?? ''),
     branchName: String(row.branch_name ?? ''),
-    status: row.is_active === true ? 'Active' : 'Suspended',
+    status: databaseBoolean(row.is_active) ? 'Active' : 'Suspended',
     createdAt,
   };
 }
@@ -54,73 +67,79 @@ export async function getEmployees(
   // Apply identical filters to the page and count queries so totals include every matching employee.
   const [rows, countRows] = await Promise.all([
     sql`
-      SELECT e.employee_id, e.branch_id, b.name AS branch_name, e.name,
-        e.username, e.email, e.mobile_no, e.role_id, r.title AS role_title,
-        e.is_active, e.opened_date,
+      SELECT e.id AS employee_id, e.branch_id, b.name AS branch_name, e.full_name AS name,
+        e.username, e.email, e.phone AS mobile_no, e.permission_role AS role_id,
+        CASE r.business_role
+          WHEN 'higher_manager' THEN 'Higher Management'
+          WHEN 'manager' THEN 'Branch Manager'
+          WHEN 'agent' THEN 'Field Agent'
+          ELSE 'Admin'
+        END AS role_title,
+        (e.status = 'active') AS is_active, e.created_at AS opened_date,
         EXISTS (
-          SELECT 1 FROM otpsenders os
-          WHERE os.employee_id = e.employee_id AND os.otprole = 'BM'
+          SELECT 1 FROM staff_otp_roles os
+          WHERE os.staff_id = e.id AND os.otp_role = 'BM'
         ) AS has_bm_otp_role,
         EXISTS (
-          SELECT 1 FROM otpsenders os
-          WHERE os.employee_id = e.employee_id AND os.otprole = 'HRM'
+          SELECT 1 FROM staff_otp_roles os
+          WHERE os.staff_id = e.id AND os.otp_role = 'HRM'
         ) AS has_hrm_otp_role
-      FROM employee e
-      JOIN branch b ON b.branch_id = e.branch_id
-      JOIN role r ON r.role_id = e.role_id
+      FROM staff e
+      LEFT JOIN branches b ON b.id = e.branch_id
+      LEFT JOIN role_catalog r ON r.code = e.permission_role
       WHERE (
         ${!hasSearch}
-        OR (${searchColumn === 'name'} AND e.name ILIKE ${searchTerm})
-        OR (${searchColumn === 'employee_id'} AND e.employee_id::text ILIKE ${searchTerm})
+        OR (${searchColumn === 'name'} AND LOWER(e.full_name) LIKE LOWER(${searchTerm}))
+        OR (${searchColumn === 'employee_id'} AND CAST(e.id AS CHAR) LIKE ${searchTerm})
       )
       AND (
         ${!hasRole}
-        OR (${!isOtpRole} AND e.role_id = ${roleId})
+        OR (${!isOtpRole} AND e.permission_role = ${roleId})
         OR (
           ${isOtpRole}
           AND EXISTS (
-            SELECT 1 FROM otpsenders role_sender
-            WHERE role_sender.employee_id = e.employee_id
-              AND role_sender.otprole = ${otpRole}
+            SELECT 1 FROM staff_otp_roles role_sender
+            WHERE role_sender.staff_id = e.id
+              AND role_sender.otp_role = ${otpRole}
           )
         )
       )
       AND (
         ${status === ''}
-        OR (${status === 'Active'} AND e.is_active = true)
-        OR (${status === 'Suspended'} AND e.is_active = false)
+        OR (${status === 'Active'} AND e.status = 'active')
+        OR (${status === 'Suspended'} AND e.status = 'inactive')
       )
-      AND (${branchId === ''} OR e.branch_id::text = ${branchId})
-      ORDER BY e.employee_id
+      AND (${branchId === ''} OR e.branch_id = ${branchId})
+      ORDER BY e.id
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`
       SELECT COUNT(*) AS total
-      FROM employee e
-      JOIN branch b ON b.branch_id = e.branch_id
+      FROM staff e
+      LEFT JOIN branches b ON b.id = e.branch_id
       WHERE (
         ${!hasSearch}
-        OR (${searchColumn === 'name'} AND e.name ILIKE ${searchTerm})
-        OR (${searchColumn === 'employee_id'} AND e.employee_id::text ILIKE ${searchTerm})
+        OR (${searchColumn === 'name'} AND LOWER(e.full_name) LIKE LOWER(${searchTerm}))
+        OR (${searchColumn === 'employee_id'} AND CAST(e.id AS CHAR) LIKE ${searchTerm})
       )
       AND (
         ${!hasRole}
-        OR (${!isOtpRole} AND e.role_id = ${roleId})
+        OR (${!isOtpRole} AND e.permission_role = ${roleId})
         OR (
           ${isOtpRole}
           AND EXISTS (
-            SELECT 1 FROM otpsenders role_sender
-            WHERE role_sender.employee_id = e.employee_id
-              AND role_sender.otprole = ${otpRole}
+            SELECT 1 FROM staff_otp_roles role_sender
+            WHERE role_sender.staff_id = e.id
+              AND role_sender.otp_role = ${otpRole}
           )
         )
       )
       AND (
         ${status === ''}
-        OR (${status === 'Active'} AND e.is_active = true)
-        OR (${status === 'Suspended'} AND e.is_active = false)
+        OR (${status === 'Active'} AND e.status = 'active')
+        OR (${status === 'Suspended'} AND e.status = 'inactive')
       )
-      AND (${branchId === ''} OR e.branch_id::text = ${branchId})
+      AND (${branchId === ''} OR e.branch_id = ${branchId})
     `,
   ]);
 
@@ -137,100 +156,86 @@ export async function getMissingEmployeeCoverage(
   deactivate = false
 ): Promise<string[] | null> {
   const employeeRows = await sql`
-    SELECT e.is_active, r.title AS role_title,
+    SELECT e.status, e.role, e.permission_role,
       EXISTS (
-        SELECT 1 FROM otpsenders os
-        WHERE os.employee_id = e.employee_id AND os.otprole = 'BM'
+        SELECT 1 FROM staff_otp_roles os
+        WHERE os.staff_id = e.id AND os.otp_role = 'BM'
       ) AS has_bm_otp_role,
       EXISTS (
-        SELECT 1 FROM otpsenders os
-        WHERE os.employee_id = e.employee_id AND os.otprole = 'HRM'
+        SELECT 1 FROM staff_otp_roles os
+        WHERE os.staff_id = e.id AND os.otp_role = 'HRM'
       ) AS has_hrm_otp_role
-    FROM employee e
-    JOIN role r ON r.role_id = e.role_id
-    WHERE e.employee_id = ${employeeId}
+    FROM staff e
+    WHERE e.id = ${employeeId}
   `;
   if (employeeRows.length === 0) return null;
 
   const current = employeeRows[0];
   const targetRoleRows = targetRoleId
-    ? await sql`SELECT title FROM role WHERE role_id = ${targetRoleId}`
+    ? await sql`SELECT business_role FROM role_catalog WHERE code = ${targetRoleId}`
     : [];
   if (targetRoleId && targetRoleRows.length === 0) return null;
+  const effectiveRequestedOtpRoles = targetRoleId && requestedOtpRoles !== null
+    ? otpRolesForStaffRole(targetRoleRows[0].business_role, requestedOtpRoles)
+    : requestedOtpRoles;
 
-  const remainsActive = current.is_active === true && !deactivate;
+  const remainsActive = current.status === 'active' && !deactivate;
   const losesAdmin = remainsActive &&
-    current.role_title === 'Admin' &&
+    current.role === 'admin' &&
     targetRoleId !== null &&
-    targetRoleRows[0]?.title !== 'Admin';
+    targetRoleRows[0]?.business_role !== 'admin';
   const losesBm = remainsActive &&
-    current.has_bm_otp_role === true &&
-    requestedOtpRoles !== null &&
-    !requestedOtpRoles.includes('BM');
+    databaseBoolean(current.has_bm_otp_role) &&
+    effectiveRequestedOtpRoles !== null &&
+    !effectiveRequestedOtpRoles.includes('BM');
   const losesHrm = remainsActive &&
-    current.has_hrm_otp_role === true &&
-    requestedOtpRoles !== null &&
-    !requestedOtpRoles.includes('HRM');
-  const losesCeo = remainsActive &&
-    current.role_title === 'CEO' &&
-    targetRoleId !== null &&
-    targetRoleRows[0]?.title !== 'CEO';
-  const losesAnyOnDeactivation = current.is_active === true && deactivate;
+    databaseBoolean(current.has_hrm_otp_role) &&
+    effectiveRequestedOtpRoles !== null &&
+    !effectiveRequestedOtpRoles.includes('HRM');
+  const losesAnyOnDeactivation = current.status === 'active' && deactivate;
 
-  if (!losesAdmin && !losesBm && !losesHrm && !losesCeo && !losesAnyOnDeactivation) {
+  if (!losesAdmin && !losesBm && !losesHrm && !losesAnyOnDeactivation) {
     return [];
   }
 
   const replacementRows = await sql`
     SELECT
       EXISTS (
-        SELECT 1 FROM employee e
-        JOIN role r ON r.role_id = e.role_id
-        WHERE r.title = 'Admin'
-          AND e.is_active = true
-          AND e.employee_id <> ${employeeId}
+        SELECT 1 FROM staff e
+        WHERE e.role = 'admin'
+          AND e.status = 'active'
+          AND e.id <> ${employeeId}
       ) AS has_admin_replacement,
       EXISTS (
-        SELECT 1 FROM otpsenders os
-        JOIN employee e ON e.employee_id = os.employee_id
-        WHERE os.otprole = 'BM'
-          AND e.is_active = true
-          AND e.employee_id <> ${employeeId}
+        SELECT 1 FROM staff_otp_roles os
+        JOIN staff e ON e.id = os.staff_id
+        WHERE os.otp_role = 'BM'
+          AND e.status = 'active'
+          AND e.id <> ${employeeId}
       ) AS has_bm_replacement,
       EXISTS (
-        SELECT 1 FROM otpsenders os
-        JOIN employee e ON e.employee_id = os.employee_id
-        WHERE os.otprole = 'HRM'
-          AND e.is_active = true
-          AND e.employee_id <> ${employeeId}
-      ) AS has_hrm_replacement,
-      EXISTS (
-        SELECT 1 FROM employee e
-        JOIN role r ON r.role_id = e.role_id
-        WHERE r.title = 'CEO'
-          AND e.is_active = true
-          AND e.employee_id <> ${employeeId}
-      ) AS has_ceo_replacement
+        SELECT 1 FROM staff_otp_roles os
+        JOIN staff e ON e.id = os.staff_id
+        WHERE os.otp_role = 'HRM'
+          AND e.status = 'active'
+          AND e.id <> ${employeeId}
+      ) AS has_hrm_replacement
   `;
   const replacements = replacementRows[0];
   const missing: string[] = [];
   if (
-    (losesAdmin || (losesAnyOnDeactivation && current.role_title === 'Admin')) &&
+    (losesAdmin || (losesAnyOnDeactivation && current.role === 'admin')) &&
     !replacements.has_admin_replacement
   ) {
     missing.push('Admin');
   }
-  if ((losesBm || (losesAnyOnDeactivation && current.has_bm_otp_role === true)) &&
+  if ((losesBm || (losesAnyOnDeactivation && databaseBoolean(current.has_bm_otp_role))) &&
       !replacements.has_bm_replacement) {
     missing.push('BM');
   }
-  if ((losesHrm || (losesAnyOnDeactivation && current.has_hrm_otp_role === true)) &&
+  if ((losesHrm || (losesAnyOnDeactivation && databaseBoolean(current.has_hrm_otp_role))) &&
       !replacements.has_hrm_replacement) {
     missing.push('HRM');
-  }
-  if ((losesCeo || (losesAnyOnDeactivation && current.role_title === 'CEO')) &&
-      !replacements.has_ceo_replacement) {
-    missing.push('CEO');
   }
   return missing;
 }
@@ -251,11 +256,16 @@ export async function createEmployee(
 ): Promise<
   { employee: EmployeeRecord; temporaryPassword: string } | null | 'invalid-secondary-role'
 > {
-  const roleRows = await sql`SELECT title FROM role WHERE role_id = ${data.roleId}`;
-  const isHigherManagement = roleRows[0]?.title === 'Higher Management';
+  const roleRows = await sql`
+    SELECT business_role
+    FROM role_catalog
+    WHERE code = ${data.roleId} AND active = true
+  `;
+  const isHigherManagement = roleRows[0]?.business_role === 'higher_manager';
   if (roleRows.length === 0 || (!isHigherManagement && data.secondaryOtpRoles.length > 0)) {
     return 'invalid-secondary-role';
   }
+  const otpRoles = otpRolesForStaffRole(roleRows[0].business_role, data.secondaryOtpRoles);
 
   const otpValid = await validateOtp(otpCode, otpId, otpEmployeeId, 'EC');
   if (!otpValid) {
@@ -264,55 +274,55 @@ export async function createEmployee(
 
   const temporaryPassword = randomBytes(12).toString('base64url');
   const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-  const employeeRows = data.secondaryOtpRoles.length > 0
-    ? await sql`
-    WITH created_employee AS (
-      INSERT INTO employee
-        (branch_id, name, username, password, email, mobile_no, role_id, is_active, opened_date)
+  const employeeRows = await withSqlTransaction(async (transactionSql) => {
+    const insertRows = await transactionSql`
+      INSERT INTO staff
+        (branch_id, full_name, username, password_hash, email, phone, role, permission_role, status)
       VALUES
         (${data.branchId}, ${data.name}, ${data.username}, ${passwordHash},
-         ${data.email}, ${data.phone}, ${data.roleId}, true, CURRENT_DATE)
-      RETURNING employee_id, branch_id, name, username, email, mobile_no,
-        role_id, is_active, opened_date
-    ),
-    assigned_sender_role AS (
-      INSERT INTO otpsenders (employee_id, otprole)
-      SELECT employee_id, sender_role.otprole
-      FROM created_employee
-      CROSS JOIN (
-        SELECT 'BM'::char(3) AS otprole WHERE ${data.secondaryOtpRoles.includes('BM')}
-        UNION ALL
-        SELECT 'HRM'::char(3) AS otprole WHERE ${data.secondaryOtpRoles.includes('HRM')}
-      ) sender_role
-      RETURNING employee_id
-    )
-    SELECT e.employee_id, e.branch_id, b.name AS branch_name, e.name,
-      e.username, e.email, e.mobile_no, e.role_id, r.title AS role_title,
-      e.is_active, e.opened_date,
-      ${data.secondaryOtpRoles.includes('BM')} AS has_bm_otp_role,
-      ${data.secondaryOtpRoles.includes('HRM')} AS has_hrm_otp_role
-    FROM created_employee e
-    JOIN branch b ON b.branch_id = e.branch_id
-    JOIN role r ON r.role_id = e.role_id
-  `
-    : await sql`
-    WITH created_employee AS (
-      INSERT INTO employee
-        (branch_id, name, username, password, email, mobile_no, role_id, is_active, opened_date)
-      VALUES
-        (${data.branchId}, ${data.name}, ${data.username}, ${passwordHash},
-         ${data.email}, ${data.phone}, ${data.roleId}, true, CURRENT_DATE)
-      RETURNING employee_id, branch_id, name, username, email, mobile_no,
-        role_id, is_active, opened_date
-    )
-    SELECT e.employee_id, e.branch_id, b.name AS branch_name, e.name,
-      e.username, e.email, e.mobile_no, e.role_id, r.title AS role_title,
-      e.is_active, e.opened_date,
-      false AS has_bm_otp_role, false AS has_hrm_otp_role
-    FROM created_employee e
-    JOIN branch b ON b.branch_id = e.branch_id
-    JOIN role r ON r.role_id = e.role_id
-  `;
+         ${data.email}, ${data.phone}, ${roleRows[0].business_role}, ${data.roleId}, 'active')
+    `;
+    const newEmployeeId = Number(insertRows[0]?.insertId);
+    if (!Number.isSafeInteger(newEmployeeId) || newEmployeeId < 1) {
+      throw new Error('The new employee was created without a valid identifier.');
+    }
+
+    await transactionSql`
+      INSERT INTO staff_authentication (employee_id, password_hash)
+      VALUES (${newEmployeeId}, ${passwordHash})
+    `;
+
+    for (const otpRole of otpRoles) {
+      await transactionSql`
+        INSERT INTO staff_otp_roles (staff_id, otp_role)
+        VALUES (${newEmployeeId}, ${otpRole})
+      `;
+    }
+
+    return transactionSql`
+      SELECT e.id AS employee_id, e.branch_id, b.name AS branch_name, e.full_name AS name,
+        e.username, e.email, e.phone AS mobile_no, e.permission_role AS role_id,
+        CASE r.business_role
+          WHEN 'higher_manager' THEN 'Higher Management'
+          WHEN 'manager' THEN 'Branch Manager'
+          WHEN 'agent' THEN 'Field Agent'
+          ELSE 'Admin'
+        END AS role_title,
+        (e.status = 'active') AS is_active, e.created_at AS opened_date,
+        EXISTS (
+          SELECT 1 FROM staff_otp_roles os
+          WHERE os.staff_id = e.id AND os.otp_role = 'BM'
+        ) AS has_bm_otp_role,
+        EXISTS (
+          SELECT 1 FROM staff_otp_roles os
+          WHERE os.staff_id = e.id AND os.otp_role = 'HRM'
+        ) AS has_hrm_otp_role
+      FROM staff e
+      LEFT JOIN branches b ON b.id = e.branch_id
+      JOIN role_catalog r ON r.code = e.permission_role
+      WHERE e.id = ${newEmployeeId}
+    `;
+  });
 
   return {
     employee: mapEmployee(employeeRows[0] as Record<string, unknown>),
@@ -335,16 +345,22 @@ export async function updateEmployee(
   otpId: number,
   otpEmployeeId: number
 ): Promise<boolean | null | 'invalid-otp' | 'invalid-secondary-role' | 'missing-otp-role-replacement' | 'missing-ceo-replacement'> {
-  const roleRows = await sql`SELECT title FROM role WHERE role_id = ${data.roleId}`;
-  const isHigherManagement = roleRows[0]?.title === 'Higher Management';
+  const roleRows = await sql`
+    SELECT business_role
+    FROM role_catalog
+    WHERE code = ${data.roleId} AND active = true
+  `;
+  const businessRole = roleRows[0]?.business_role;
+  const isHigherManagement = businessRole === 'higher_manager';
   if (roleRows.length === 0 || (!isHigherManagement && data.secondaryOtpRoles.length > 0)) {
     return 'invalid-secondary-role';
   }
+  const otpRoles = otpRolesForStaffRole(businessRole, data.secondaryOtpRoles);
 
   const missingCoverage = await getMissingEmployeeCoverage(
     employeeId,
     data.roleId,
-    data.secondaryOtpRoles
+    otpRoles
   );
   if (missingCoverage === null) return null;
   if (missingCoverage.includes('CEO')) return 'missing-ceo-replacement';
@@ -355,157 +371,83 @@ export async function updateEmployee(
     return 'invalid-otp';
   }
 
-  const currentEmployeeRows = await sql`
-    SELECT e.is_active, r.title AS role_title, os.otprole
-    FROM employee e
-    JOIN role r ON r.role_id = e.role_id
-    LEFT JOIN otpsenders os
-      ON os.employee_id = e.employee_id
-      AND os.otprole IN ('BM', 'HRM')
-    WHERE e.employee_id = ${employeeId}
-  `;
-  if (currentEmployeeRows.length === 0) return null;
-  const hasExistingAssignments = currentEmployeeRows.some((row: Record<string, unknown>) => row.otprole === 'BM' || row.otprole === 'HRM');
-  const hasRequestedAssignments = data.secondaryOtpRoles.length > 0;
-  const losesAdmin =
-    currentEmployeeRows[0].is_active === true &&
-    currentEmployeeRows[0].role_title === 'Admin' &&
-    roleRows[0].title !== 'Admin';
-  const losesCeo =
-    currentEmployeeRows[0].is_active === true &&
-    currentEmployeeRows[0].role_title === 'CEO' &&
-    roleRows[0].title !== 'CEO';
-
-  if (!hasExistingAssignments && !hasRequestedAssignments && !losesAdmin && !losesCeo) {
-    const result = await sql`
-      UPDATE employee
-      SET branch_id = ${data.branchId},
-        name = ${data.name},
-        username = ${data.username},
-        email = ${data.email},
-        mobile_no = ${data.phone},
-        role_id = ${data.roleId}
-      WHERE employee_id = ${employeeId}
-      RETURNING employee_id
+  return withSqlTransaction(async (transactionSql) => {
+    const currentRows = await transactionSql`
+      SELECT e.status, e.role, os.otp_role
+      FROM staff e
+      LEFT JOIN staff_otp_roles os
+        ON os.staff_id = e.id AND os.otp_role IN ('BM', 'HRM')
+      WHERE e.id = ${employeeId}
+      FOR UPDATE
     `;
-    return result.length > 0;
-  }
+    if (currentRows.length === 0) return null;
 
-  const result = await sql`
-    WITH previous_employee AS (
-      SELECT e.employee_id, e.is_active, current_role.title AS role_title
-      FROM employee e
-      JOIN role current_role ON current_role.role_id = e.role_id
-      WHERE e.employee_id = ${employeeId}
-    ),
-    requested_sender_roles AS (
-      SELECT 'BM'::char(3) AS otprole WHERE ${data.secondaryOtpRoles.includes('BM')}
-      UNION ALL
-      SELECT 'HRM'::char(3) AS otprole WHERE ${data.secondaryOtpRoles.includes('HRM')}
-    ),
-    replacement_check AS (
-      SELECT EXISTS (
-        SELECT 1
-        FROM otpsenders outgoing
-        JOIN previous_employee previous
-          ON previous.employee_id = outgoing.employee_id
-        WHERE outgoing.otprole IN ('BM', 'HRM')
-          AND NOT EXISTS (
-            SELECT 1 FROM requested_sender_roles requested
-            WHERE requested.otprole = outgoing.otprole
-          )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM otpsenders replacement
-            JOIN employee replacement_employee
-              ON replacement_employee.employee_id = replacement.employee_id
-            WHERE replacement.otprole = outgoing.otprole
-              AND replacement.employee_id <> outgoing.employee_id
-              AND replacement_employee.is_active = true
-          )
-      ) OR EXISTS (
-        SELECT 1
-        FROM previous_employee previous
-        JOIN role target_role ON target_role.role_id = ${data.roleId}
-        WHERE previous.is_active = true
-          AND previous.role_title = 'Admin'
-          AND target_role.title <> 'Admin'
-          AND NOT EXISTS (
-            SELECT 1 FROM employee replacement
-            JOIN role replacement_role ON replacement_role.role_id = replacement.role_id
-            WHERE replacement_role.title = 'Admin'
-              AND replacement.is_active = true
-              AND replacement.employee_id <> previous.employee_id
-          )
-      ) AS replacement_missing,
-      EXISTS (
-        SELECT 1
-        FROM previous_employee previous
-        JOIN role target_role ON target_role.role_id = ${data.roleId}
-        WHERE previous.is_active = true
-          AND previous.role_title = 'CEO'
-          AND target_role.title <> 'CEO'
-          AND NOT EXISTS (
-            SELECT 1 FROM employee replacement
-            JOIN role replacement_role ON replacement_role.role_id = replacement.role_id
-            WHERE replacement_role.title = 'CEO'
-              AND replacement.is_active = true
-              AND replacement.employee_id <> previous.employee_id
-          )
-      ) AS ceo_missing
-    ),
-    updated_employee AS (
-      UPDATE employee e
+    const current = currentRows[0];
+    const currentOtpRoles = currentRows
+      .map((row) => row.otprole)
+      .filter((role): role is 'BM' | 'HRM' => role === 'BM' || role === 'HRM');
+    const removedOtpRoles = currentOtpRoles.filter((role) => !otpRoles.includes(role));
+    const active = current.status === 'active';
+    const losesAdmin = active && current.role === 'admin' && businessRole !== 'admin';
+
+    for (const otpRole of removedOtpRoles) {
+      const replacementRows = await transactionSql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM staff_otp_roles os
+          JOIN staff e ON e.id = os.staff_id
+          WHERE os.otp_role = ${otpRole}
+            AND e.status = 'active'
+            AND e.id <> ${employeeId}
+        ) AS has_replacement
+      `;
+      if (!databaseBoolean(replacementRows[0]?.has_replacement)) {
+        return 'missing-otp-role-replacement';
+      }
+    }
+
+    if (losesAdmin) {
+      const replacementRows = await transactionSql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM staff e
+          WHERE e.role = 'admin'
+            AND e.status = 'active'
+            AND e.id <> ${employeeId}
+        ) AS has_replacement
+      `;
+      if (!databaseBoolean(replacementRows[0]?.has_replacement)) {
+        return 'missing-otp-role-replacement';
+      }
+    }
+    await transactionSql`
+      UPDATE staff
       SET branch_id = ${data.branchId},
-        name = ${data.name},
+        full_name = ${data.name},
         username = ${data.username},
         email = ${data.email},
-        mobile_no = ${data.phone},
-        role_id = ${data.roleId}
-      FROM previous_employee previous
-      CROSS JOIN replacement_check check_result
-      WHERE e.employee_id = previous.employee_id
-        AND check_result.replacement_missing = false
-        AND check_result.ceo_missing = false
-      RETURNING e.employee_id
-    ),
-    removed_sender_roles AS (
-      DELETE FROM otpsenders os
-      USING updated_employee updated
-      WHERE os.employee_id = updated.employee_id
-        AND os.otprole IN ('BM', 'HRM')
-        AND NOT EXISTS (
-          SELECT 1 FROM requested_sender_roles requested
-          WHERE requested.otprole = os.otprole
-        )
-      RETURNING os.employee_id
-    ),
-    assigned_sender_roles AS (
-      INSERT INTO otpsenders (employee_id, otprole)
-      SELECT updated.employee_id, requested.otprole
-      FROM updated_employee updated
-      CROSS JOIN requested_sender_roles requested
-      CROSS JOIN (SELECT COUNT(*) FROM removed_sender_roles) removed
-      WHERE NOT EXISTS (
-        SELECT 1 FROM otpsenders existing
-        WHERE existing.employee_id = updated.employee_id
-          AND existing.otprole = requested.otprole
-      )
-      RETURNING employee_id
-    )
-    SELECT
-      (SELECT replacement_missing FROM replacement_check) AS replacement_missing,
-      (SELECT ceo_missing FROM replacement_check) AS ceo_missing,
-      (SELECT employee_id FROM updated_employee) AS employee_id
-  `;
-  if (result[0]?.ceo_missing) return 'missing-ceo-replacement';
-  if (result[0]?.replacement_missing) {
-    return 'missing-otp-role-replacement';
-  }
-  if (!result[0]?.employee_id) {
-    return null;
-  }
-  return result.length > 0;
+        phone = ${data.phone},
+        role = ${businessRole},
+        permission_role = ${data.roleId}
+      WHERE id = ${employeeId}
+    `;
+    if (removedOtpRoles.length > 0) {
+      await transactionSql`
+        DELETE FROM staff_otp_roles
+        WHERE staff_id = ${employeeId}
+          AND otp_role IN (${removedOtpRoles})
+      `;
+    }
+    for (const otpRole of otpRoles) {
+      if (!currentOtpRoles.includes(otpRole)) {
+        await transactionSql`
+          INSERT INTO staff_otp_roles (staff_id, otp_role)
+          VALUES (${employeeId}, ${otpRole})
+        `;
+      }
+    }
+    return true;
+  });
 }
 
 export async function toggleEmployeeStatus(
@@ -524,42 +466,26 @@ export async function toggleEmployeeStatus(
     return 'invalid-otp';
   }
 
-  const result = await sql`
-    WITH current_employee AS (
-      SELECT e.employee_id, e.is_active, r.title AS role_title
-      FROM employee e
-      JOIN role r ON r.role_id = e.role_id
-      WHERE e.employee_id = ${employeeId}
-    ),
-    ceo_check AS (
-      SELECT EXISTS (
-        SELECT 1 FROM current_employee current
-        WHERE current.is_active = true
-          AND current.role_title = 'CEO'
-          AND NOT EXISTS (
-            SELECT 1 FROM employee replacement
-            JOIN role replacement_role ON replacement_role.role_id = replacement.role_id
-            WHERE replacement_role.title = 'CEO'
-              AND replacement.is_active = true
-              AND replacement.employee_id <> current.employee_id
-          )
-      ) AS replacement_missing
-    ),
-    updated_employee AS (
-      UPDATE employee e
-      SET is_active = NOT e.is_active
-      FROM current_employee current
-      CROSS JOIN ceo_check
-      WHERE e.employee_id = current.employee_id
-        AND ceo_check.replacement_missing = false
-      RETURNING e.is_active
-    )
-    SELECT ceo_check.replacement_missing, updated_employee.is_active
-    FROM ceo_check
-    LEFT JOIN updated_employee ON true
-  `;
-  if (result[0]?.replacement_missing) return 'missing-ceo-replacement';
-  return result[0]?.is_active == null ? null : Boolean(result[0].is_active);
+  return withSqlTransaction(async (transactionSql) => {
+    const currentRows = await transactionSql`
+      SELECT e.status, e.role
+      FROM staff e
+      WHERE e.id = ${employeeId}
+      FOR UPDATE
+    `;
+    const current = currentRows[0];
+    if (!current) return null;
+
+    await transactionSql`
+      UPDATE staff
+      SET status = IF(status = 'active', 'inactive', 'active')
+      WHERE id = ${employeeId}
+    `;
+    const updatedRows = await transactionSql`
+      SELECT (status = 'active') AS is_active FROM staff WHERE id = ${employeeId}
+    `;
+    return updatedRows[0] ? databaseBoolean(updatedRows[0].is_active) : null;
+  });
 }
 
 export type EmployeePasswordReset = {
@@ -578,13 +504,13 @@ export async function renewEmployeePassword(
   requestingEmployeeId: number
 ): Promise<EmployeePasswordReset | null> {
   const employees = await sql`
-    SELECT recipient.email AS recipient_email, recipient.name AS recipient_name,
-      requester.employee_id AS requester_id, requester.name AS requester_name,
+    SELECT recipient.email AS recipient_email, recipient.full_name AS recipient_name,
+      requester.id AS requester_id, requester.full_name AS requester_name,
       requester.email AS requester_email
-    FROM employee recipient
-    JOIN employee requester
-      ON requester.employee_id = ${requestingEmployeeId}
-    WHERE recipient.employee_id = ${employeeId}
+    FROM staff recipient
+    JOIN staff requester
+      ON requester.id = ${requestingEmployeeId}
+    WHERE recipient.id = ${employeeId}
   `;
   if (employees.length === 0) {
     return null;
@@ -593,14 +519,18 @@ export async function renewEmployeePassword(
   const temporaryPassword = randomBytes(12).toString('base64url');
   const passwordHash = await bcrypt.hash(temporaryPassword, 12);
   const updatedEmployees = await sql`
-    UPDATE employee
-    SET password = ${passwordHash}
-    WHERE employee_id = ${employeeId}
-    RETURNING employee_id
+    UPDATE staff
+    SET password_hash = ${passwordHash}
+    WHERE id = ${employeeId}
   `;
-  if (updatedEmployees.length === 0) {
+  if (Number(updatedEmployees[0]?.affectedRows ?? 0) === 0) {
     return null;
   }
+  await sql`
+    INSERT INTO staff_authentication (employee_id, password_hash)
+    VALUES (${employeeId}, ${passwordHash})
+    ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)
+  `;
 
   return {
     recipientEmail: String(employees[0].recipient_email),
@@ -620,9 +550,9 @@ export async function changeEmployeePassword(
   newPassword: string
 ): Promise<'invalid-current-password' | 'employee-not-found' | 'success'> {
   const employees = await sql`
-    SELECT password
-    FROM employee
-    WHERE employee_id = ${employeeId}
+    SELECT password_hash
+    FROM staff
+    WHERE id = ${employeeId}
   `;
   if (employees.length === 0) {
     return 'employee-not-found';
@@ -630,7 +560,7 @@ export async function changeEmployeePassword(
 
   const isCurrentPasswordValid = await bcrypt.compare(
     currentPassword,
-    String(employees[0].password)
+    String(employees[0].password_hash)
   );
   if (!isCurrentPasswordValid) {
     return 'invalid-current-password';
@@ -638,10 +568,15 @@ export async function changeEmployeePassword(
 
   const passwordHash = await bcrypt.hash(newPassword, 12);
   const updatedEmployees = await sql`
-    UPDATE employee
-    SET password = ${passwordHash}
-    WHERE employee_id = ${employeeId}
-    RETURNING employee_id
+    UPDATE staff
+    SET password_hash = ${passwordHash}
+    WHERE id = ${employeeId}
   `;
-  return updatedEmployees.length > 0 ? 'success' : 'employee-not-found';
+  if (Number(updatedEmployees[0]?.affectedRows ?? 0) === 0) return 'employee-not-found';
+  await sql`
+    INSERT INTO staff_authentication (employee_id, password_hash)
+    VALUES (${employeeId}, ${passwordHash})
+    ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)
+  `;
+  return 'success';
 }

@@ -25,44 +25,44 @@ export async function getAdminCustomers(
   const offset = (page - 1) * pageSize;
   const searchTerm = `%${search.trim()}%`;
   const hasSearch = search.trim().length > 0;
-  const statusCode = status === 'Active' ? 'A' : status === 'Inactive' ? 'I' : 'B';
+  const statusCode = status.toLowerCase();
 
   // Keep row and count filters aligned so pagination reports the full filtered customer total.
   const [rows, countRows] = await Promise.all([
     sql`
-      SELECT c.customer_id, c.branch_id, c.agent_id, c.name, c.nic,
-        c.address, c.mobile_no, c.email, c.date_of_birth, c.register_date,
-        c.status, e.name AS agent_name, b.name AS branch_name
-      FROM customer c
-      LEFT JOIN employee e ON e.employee_id = c.agent_id
-      LEFT JOIN branch b ON b.branch_id = c.branch_id
+      SELECT c.id AS customer_id, c.branch_id, c.agent_id, c.full_name AS name, c.nic,
+        c.address, c.mobile AS mobile_no, c.email, c.date_of_birth, c.created_at AS register_date,
+        c.status, e.full_name AS agent_name, b.name AS branch_name
+      FROM customers c
+      LEFT JOIN staff e ON e.id = c.agent_id
+      LEFT JOIN branches b ON b.id = c.branch_id
       WHERE (
         ${!hasSearch}
-        OR (${searchType === 'name'} AND c.name ILIKE ${searchTerm})
-        OR (${searchType === 'customer_id'} AND c.customer_id::text ILIKE ${searchTerm})
-        OR (${searchType === 'nic'} AND c.nic ILIKE ${searchTerm})
-        OR (${searchType === 'agent_name'} AND COALESCE(e.name, '') ILIKE ${searchTerm})
-        OR (${searchType === 'agent_id'} AND c.agent_id::text ILIKE ${searchTerm})
+        OR (${searchType === 'name'} AND LOWER(c.full_name) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'customer_id'} AND CAST(c.id AS CHAR) LIKE ${searchTerm})
+        OR (${searchType === 'nic'} AND LOWER(c.nic) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'agent_name'} AND LOWER(COALESCE(e.full_name, '')) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'agent_id'} AND CAST(c.agent_id AS CHAR) LIKE ${searchTerm})
       )
       AND (${status === ''} OR c.status = ${statusCode})
-      AND (${branchId === ''} OR c.branch_id::text = ${branchId})
-      ORDER BY c.customer_id
+      AND (${branchId === ''} OR c.branch_id = ${branchId})
+      ORDER BY c.id
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`
-      SELECT COUNT(*)::int AS total
-      FROM customer c
-      LEFT JOIN employee e ON e.employee_id = c.agent_id
+      SELECT COUNT(*) AS total
+      FROM customers c
+      LEFT JOIN staff e ON e.id = c.agent_id
       WHERE (
         ${!hasSearch}
-        OR (${searchType === 'name'} AND c.name ILIKE ${searchTerm})
-        OR (${searchType === 'customer_id'} AND c.customer_id::text ILIKE ${searchTerm})
-        OR (${searchType === 'nic'} AND c.nic ILIKE ${searchTerm})
-        OR (${searchType === 'agent_name'} AND COALESCE(e.name, '') ILIKE ${searchTerm})
-        OR (${searchType === 'agent_id'} AND c.agent_id::text ILIKE ${searchTerm})
+        OR (${searchType === 'name'} AND LOWER(c.full_name) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'customer_id'} AND CAST(c.id AS CHAR) LIKE ${searchTerm})
+        OR (${searchType === 'nic'} AND LOWER(c.nic) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'agent_name'} AND LOWER(COALESCE(e.full_name, '')) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'agent_id'} AND CAST(c.agent_id AS CHAR) LIKE ${searchTerm})
       )
       AND (${status === ''} OR c.status = ${statusCode})
-      AND (${branchId === ''} OR c.branch_id::text = ${branchId})
+      AND (${branchId === ''} OR c.branch_id = ${branchId})
     `,
   ]);
 
@@ -77,7 +77,13 @@ export async function getAdminCustomers(
     assignedBranchId: String(row.branch_id ?? ''),
     assignedAgentId: String(row.agent_id ?? ''),
     assignedAgentName: typeof row.agent_name === 'string' ? row.agent_name : '',
-    status: row.status === 'A' ? 'Active' : row.status === 'B' ? 'Blocked' : 'Inactive',
+    status: row.status === 'active'
+      ? 'Active'
+      : row.status === 'inactive'
+        ? 'Inactive'
+        : row.status === 'pending'
+          ? 'Pending'
+          : 'Rejected',
     assignedBranchName: typeof row.branch_name === 'string' ? row.branch_name : '',
     registeredDate: dateOnly(row.register_date),
   }));
@@ -96,9 +102,9 @@ export async function resetAdminCustomerPassword(
   customerId: string,
 ): Promise<CustomerPasswordReset> {
   const customers = await sql`
-    SELECT customer_id, name, email
-    FROM customer
-    WHERE customer_id = ${customerId}
+    SELECT id AS customer_id, full_name AS name, email
+    FROM customers
+    WHERE id = ${customerId}
     LIMIT 1
   ` as Record<string, unknown>[];
   const customer = customers[0];
@@ -110,14 +116,11 @@ export async function resetAdminCustomerPassword(
 
   const temporaryPassword = randomBytes(12).toString('base64url');
   const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-  const updated = await sql`
-    UPDATE customer
-    SET password = ${passwordHash}
-    WHERE customer_id = ${customerId}
-    RETURNING customer_id
-  ` as Record<string, unknown>[];
-
-  if (updated.length === 0) return { success: false, reason: 'not-found' };
+  await sql`
+    INSERT INTO customer_authentication (customer_id, password_hash)
+    VALUES (${customerId}, ${passwordHash})
+    ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)
+  `;
 
   return {
     success: true,

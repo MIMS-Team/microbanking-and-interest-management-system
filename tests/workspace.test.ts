@@ -38,7 +38,7 @@ test('the scoped migration principal installs and repeats the complete schema wi
     await target.connection.query('CREATE USER '+account+' IDENTIFIED BY '+target.connection.escape(password));created=true;
     await target.connection.query('GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,ALTER,DROP,INDEX,REFERENCES,TRIGGER,CREATE VIEW,SHOW VIEW,CREATE ROUTINE,ALTER ROUTINE,EXECUTE ON `'+target.name+'`.* TO '+account);
     connection=await mysql.createConnection({...target.config,user,password});await migrateDatabase(connection);await migrateDatabase(connection);
-    const [[versions]]=await connection.query<import('mysql2').RowDataPacket[]>('SELECT COUNT(*) AS count FROM schema_migrations WHERE status=\'complete\'');assert.equal(versions.count,11);
+    const [[versions]]=await connection.query<import('mysql2').RowDataPacket[]>('SELECT COUNT(*) AS count FROM schema_migrations WHERE status=\'complete\'');assert.equal(versions.count,12);
     await assert.rejects(connection.query('CREATE DATABASE forbidden_global_schema'),/denied/);
   }finally{await connection?.end();if(created){const [[client]]=await target.connection.query<import('mysql2').RowDataPacket[]>("SELECT SUBSTRING_INDEX(USER(),'@',-1) AS host");await target.connection.query('DROP USER '+target.connection.escape(user)+'@'+target.connection.escape(client.host));}await target.close();}
 });

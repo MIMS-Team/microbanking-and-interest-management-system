@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
+import RoleTabs, { NavItem } from '@/components/common/RoleTabs';
 import BranchDashboardView from '@/components/branch/BranchDashboardView';
 import CustomersView from '@/components/branch/CustomersView';
 import BranchSavingsAccountsView from '@/components/branch/BranchSavingsAccountsView';
@@ -11,6 +11,7 @@ import ApprovalsView from '@/components/branch/ApprovalsView';
 import HigherManagementReportsView from '@/components/higher-mgmt/HigherManagementReportsView';
 import BranchNetworkView from '@/components/higher-mgmt/BranchNetworkView';
 import { useSession } from '@/context/SessionContext';
+import { RavinduShell } from '@/app/_components';
 import {
   LayoutDashboard,
   Users,
@@ -85,26 +86,27 @@ export default function BranchManagementPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* 1. Header adhering to photo template */}
-      <RoleHeader
-        roleBadgeText="MANAGER"
-        tabs={navTabs}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
-
-      {/* 2. Workspace Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'dashboard' && <BranchDashboardView onNavigateTab={setActiveTab} />}
-        {activeTab === 'customers' && <CustomersView />}
-        {activeTab === 'savings' && <BranchSavingsAccountsView />}
-        {activeTab === 'fixed-deposits' && <BranchFixedDepositsView />}
-        {activeTab === 'transactions' && <TransactionsView />}
-        {activeTab === 'approvals' && <ApprovalsView />}
-        {activeTab === 'reports' && <HigherManagementReportsView scope="branch-management" />}
-        {activeTab === 'branches' && <BranchNetworkView />}
-      </main>
-    </div>
+    <RavinduShell
+      eyebrow="Branch operations"
+      title="Branch workspace"
+      showHeading={false}
+      navigation={
+        <RoleTabs
+          roleBadgeText="MANAGER"
+          tabs={navTabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
+      }
+    >
+      {activeTab === 'dashboard' && <BranchDashboardView onNavigateTab={setActiveTab} />}
+      {activeTab === 'customers' && <CustomersView />}
+      {activeTab === 'savings' && <BranchSavingsAccountsView />}
+      {activeTab === 'fixed-deposits' && <BranchFixedDepositsView />}
+      {activeTab === 'transactions' && <TransactionsView />}
+      {activeTab === 'approvals' && <ApprovalsView />}
+      {activeTab === 'reports' && <HigherManagementReportsView scope="branch-management" />}
+      {activeTab === 'branches' && <BranchNetworkView />}
+    </RavinduShell>
   );
 }

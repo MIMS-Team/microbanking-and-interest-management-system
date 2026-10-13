@@ -2,12 +2,11 @@ import sql from '@/src/lib/db';
 
 export async function getActiveBranchManagerBranchId(employeeId: number): Promise<number | null> {
   const employees = await sql`
-    SELECT e.branch_id
-    FROM employee e
-    JOIN role r ON r.role_id = e.role_id
-    WHERE e.employee_id = ${employeeId}
-      AND e.is_active = true
-      AND LOWER(r.title) LIKE '%branch manager%'
+    SELECT branch_id
+    FROM staff
+    WHERE id = ${employeeId}
+      AND status = 'active'
+      AND role = 'manager'
   `;
   const branchId = Number(employees[0]?.branch_id);
   return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
@@ -66,7 +65,14 @@ function ownersFrom(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.filter((owner): owner is string => typeof owner === 'string');
   }
-  if (typeof value === 'string') return value ? value.split('\u001f') : [];
+  if (typeof value === 'string') {
+    if (!value) return [];
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.some((owner) => typeof owner !== 'string')) {
+      throw new Error('The database returned invalid account-owner data.');
+    }
+    return parsed;
+  }
   return [];
 }
 
@@ -87,53 +93,52 @@ export async function getBranchSavingsAccounts(
   const [rows, counts] = await Promise.all([
     sql`
       SELECT
-        sa.account_no,
-        at.type_name,
-        ARRAY(
-          SELECT c.name
-          FROM customer_account ca
-          JOIN customer c ON c.customer_id = ca.customer_id
-          WHERE ca.account_no = sa.account_no
-          ORDER BY c.name, c.customer_id
+        sa.account_number AS account_no,
+        r.name AS type_name,
+        (
+          SELECT JSON_ARRAYAGG(c.full_name)
+          FROM customer_accounts ca
+          JOIN customers c ON c.id = ca.customer_id
+          WHERE ca.account_id = sa.id
         ) AS owners,
-        sa.ownership_type,
+        (SELECT COUNT(*) FROM customer_accounts ca WHERE ca.account_id = sa.id) AS owner_count,
         sa.balance,
-        at.interest_rate,
+        r.annual_rate AS interest_rate,
         sa.status,
-        sa.opened_date
-      FROM savings_account sa
-      JOIN account_type at ON at.type_id = sa.type_id
+        sa.opened_at AS opened_date
+      FROM savings_accounts sa
+      JOIN rates r ON r.id = sa.rate_id
       WHERE sa.branch_id = ${branchId}
         AND (
           NOT ${hasSearch}
-          OR (${searchField === 'account'} AND sa.account_no::text ILIKE ${pattern})
+          OR (${searchField === 'account'} AND CAST(sa.account_number AS CHAR) LIKE ${pattern})
           OR (${searchField === 'customer'} AND EXISTS (
-            SELECT 1 FROM customer_account ca JOIN customer c ON c.customer_id = ca.customer_id
-            WHERE ca.account_no = sa.account_no AND c.name ILIKE ${pattern}
+            SELECT 1 FROM customer_accounts ca JOIN customers c ON c.id = ca.customer_id
+            WHERE ca.account_id = sa.id AND LOWER(c.full_name) LIKE LOWER(${pattern})
           ))
-          OR (${searchField === 'type'} AND at.type_name ILIKE ${pattern})
+          OR (${searchField === 'type'} AND LOWER(r.name) LIKE LOWER(${pattern}))
         )
-        AND (${status === 'all'} OR (${status === 'active'} AND sa.status = 'A') OR (${status === 'inactive'} AND sa.status <> 'A'))
-      ORDER BY sa.account_no
+        AND (${status === 'all'} OR (${status === 'active'} AND sa.status = 'active') OR (${status === 'inactive'} AND sa.status = 'inactive'))
+      ORDER BY sa.account_number
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`
       SELECT
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE sa.status = 'A') AS active_total
-      FROM savings_account sa
-      JOIN account_type at ON at.type_id = sa.type_id
+        SUM(CASE WHEN sa.status = 'active' THEN 1 ELSE 0 END) AS active_total
+      FROM savings_accounts sa
+      JOIN rates r ON r.id = sa.rate_id
       WHERE sa.branch_id = ${branchId}
         AND (
           NOT ${hasSearch}
-          OR (${searchField === 'account'} AND sa.account_no::text ILIKE ${pattern})
+          OR (${searchField === 'account'} AND CAST(sa.account_number AS CHAR) LIKE ${pattern})
           OR (${searchField === 'customer'} AND EXISTS (
-            SELECT 1 FROM customer_account ca JOIN customer c ON c.customer_id = ca.customer_id
-            WHERE ca.account_no = sa.account_no AND c.name ILIKE ${pattern}
+            SELECT 1 FROM customer_accounts ca JOIN customers c ON c.id = ca.customer_id
+            WHERE ca.account_id = sa.id AND LOWER(c.full_name) LIKE LOWER(${pattern})
           ))
-          OR (${searchField === 'type'} AND at.type_name ILIKE ${pattern})
+          OR (${searchField === 'type'} AND LOWER(r.name) LIKE LOWER(${pattern}))
         )
-        AND (${status === 'all'} OR (${status === 'active'} AND sa.status = 'A') OR (${status === 'inactive'} AND sa.status <> 'A'))
+        AND (${status === 'all'} OR (${status === 'active'} AND sa.status = 'active') OR (${status === 'inactive'} AND sa.status = 'inactive'))
     `,
   ]);
 
@@ -142,10 +147,10 @@ export async function getBranchSavingsAccounts(
       accountNumber: String(row.account_no),
       planName: String(row.type_name),
       owners: ownersFrom(row.owners),
-      ownershipType: row.ownership_type === 'J' ? 'Joint' : 'Individual',
+      ownershipType: Number(row.owner_count) > 1 ? 'Joint' : 'Individual',
       balance: toNumber(row.balance, 'balance'),
       interestRate: toNumber(row.interest_rate, 'savings interest rate'),
-      status: row.status === 'A' ? 'Active' : 'Inactive',
+      status: row.status === 'active' ? 'Active' : 'Inactive',
       openedDate: toDate(row.opened_date, 'opened date'),
     })),
     total: toNumber(counts[0]?.total, 'account count'),
@@ -170,68 +175,68 @@ export async function getBranchFixedDeposits(
   const [rows, counts] = await Promise.all([
     sql`
       SELECT
-        fd.fd_id,
-        fd.account_no,
-        ARRAY(
-          SELECT c.name
-          FROM customer_account ca
-          JOIN customer c ON c.customer_id = ca.customer_id
-          WHERE ca.account_no = fd.account_no
-          ORDER BY c.name, c.customer_id
+        fd.id AS fd_id,
+        sa.account_number AS account_no,
+        (
+          SELECT JSON_ARRAYAGG(c.full_name)
+          FROM customer_accounts ca
+          JOIN customers c ON c.id = ca.customer_id
+          WHERE ca.account_id = sa.id
         ) AS owners,
-        fd.principal_amount,
-        fdt.duration_months,
-        fdt.interest_rate,
-        (fd.principal_amount * fdt.interest_rate / 1200) AS monthly_payout,
-        fd.status,
-        fd.start_date,
+        fd.principal AS principal_amount,
+        fd.term_months AS duration_months,
+        fd.annual_rate AS interest_rate,
+        (fd.principal * fd.annual_rate / 1200) AS monthly_payout,
+        CASE
+          WHEN fd.status = 'active' AND fd.maturity_date <= CURRENT_DATE THEN 'matured'
+          ELSE fd.status
+        END AS display_status,
+        fd.opened_at AS start_date,
         fd.maturity_date
-      FROM fixed_deposit fd
-      JOIN savings_account sa ON sa.account_no = fd.account_no
-      JOIN fixed_deposit_type fdt ON fdt.type_id = fd.type_id
+      FROM fixed_deposits fd
+      JOIN savings_accounts sa ON sa.id = fd.source_account_id
       WHERE sa.branch_id = ${branchId}
         AND (
           NOT ${hasSearch}
-          OR (${searchField === 'account'} AND fd.account_no::text ILIKE ${pattern})
+          OR (${searchField === 'account'} AND CAST(sa.account_number AS CHAR) LIKE ${pattern})
           OR (${searchField === 'customer'} AND EXISTS (
-            SELECT 1 FROM customer_account ca JOIN customer c ON c.customer_id = ca.customer_id
-            WHERE ca.account_no = fd.account_no AND c.name ILIKE ${pattern}
+            SELECT 1 FROM customer_accounts ca JOIN customers c ON c.id = ca.customer_id
+            WHERE ca.account_id = sa.id AND LOWER(c.full_name) LIKE LOWER(${pattern})
           ))
-          OR (${searchField === 'duration'} AND fdt.duration_months::text ILIKE ${pattern})
-          OR (${searchField === 'fd-id'} AND fd.fd_id::text ILIKE ${pattern})
+          OR (${searchField === 'duration'} AND CAST(fd.term_months AS CHAR) LIKE ${pattern})
+          OR (${searchField === 'fd-id'} AND CAST(fd.id AS CHAR) LIKE ${pattern})
         )
         AND (
           ${status === 'all'}
-          OR (${status === 'active'} AND fd.status = 'A')
-          OR (${status === 'matured'} AND fd.status = 'D')
-          OR (${status === 'closed'} AND fd.status NOT IN ('A', 'D'))
+          OR (${status === 'active'} AND fd.status = 'active' AND fd.maturity_date > CURRENT_DATE)
+          OR (${status === 'matured'} AND fd.status = 'active' AND fd.maturity_date <= CURRENT_DATE)
+          OR (${status === 'closed'} AND fd.status IN ('closed', 'rejected'))
         )
-      ORDER BY fd.fd_id
+      ORDER BY fd.id
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`
       SELECT
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE fd.status = 'A') AS active_total
-      FROM fixed_deposit fd
-      JOIN savings_account sa ON sa.account_no = fd.account_no
-      JOIN fixed_deposit_type fdt ON fdt.type_id = fd.type_id
+        SUM(CASE WHEN fd.status = 'active' AND fd.maturity_date > CURRENT_DATE THEN 1 ELSE 0 END) AS active_total
+      FROM fixed_deposits fd
+      JOIN savings_accounts sa ON sa.id = fd.source_account_id
       WHERE sa.branch_id = ${branchId}
         AND (
           NOT ${hasSearch}
-          OR (${searchField === 'account'} AND fd.account_no::text ILIKE ${pattern})
+          OR (${searchField === 'account'} AND CAST(sa.account_number AS CHAR) LIKE ${pattern})
           OR (${searchField === 'customer'} AND EXISTS (
-            SELECT 1 FROM customer_account ca JOIN customer c ON c.customer_id = ca.customer_id
-            WHERE ca.account_no = fd.account_no AND c.name ILIKE ${pattern}
+            SELECT 1 FROM customer_accounts ca JOIN customers c ON c.id = ca.customer_id
+            WHERE ca.account_id = sa.id AND LOWER(c.full_name) LIKE LOWER(${pattern})
           ))
-          OR (${searchField === 'duration'} AND fdt.duration_months::text ILIKE ${pattern})
-          OR (${searchField === 'fd-id'} AND fd.fd_id::text ILIKE ${pattern})
+          OR (${searchField === 'duration'} AND CAST(fd.term_months AS CHAR) LIKE ${pattern})
+          OR (${searchField === 'fd-id'} AND CAST(fd.id AS CHAR) LIKE ${pattern})
         )
         AND (
           ${status === 'all'}
-          OR (${status === 'active'} AND fd.status = 'A')
-          OR (${status === 'matured'} AND fd.status = 'D')
-          OR (${status === 'closed'} AND fd.status NOT IN ('A', 'D'))
+          OR (${status === 'active'} AND fd.status = 'active' AND fd.maturity_date > CURRENT_DATE)
+          OR (${status === 'matured'} AND fd.status = 'active' AND fd.maturity_date <= CURRENT_DATE)
+          OR (${status === 'closed'} AND fd.status IN ('closed', 'rejected'))
         )
     `,
   ]);
@@ -245,7 +250,11 @@ export async function getBranchFixedDeposits(
       termMonths: toNumber(row.duration_months, 'FD duration'),
       interestRate: toNumber(row.interest_rate, 'FD interest rate'),
       monthlyInterestPayout: toNumber(row.monthly_payout, 'monthly FD payout'),
-      status: row.status === 'A' ? 'Active' : row.status === 'D' ? 'Matured' : 'Closed',
+      status: row.display_status === 'active'
+        ? 'Active'
+        : row.display_status === 'matured'
+          ? 'Matured'
+          : 'Closed',
       startDate: toDate(row.start_date, 'FD start date'),
       maturityDate: toDate(row.maturity_date, 'FD maturity date'),
     })),
@@ -255,18 +264,23 @@ export async function getBranchFixedDeposits(
 }
 
 export async function toggleBranchSavingsAccountStatus(
-  accountNo: number,
+  accountNumber: string,
   branchId: number,
 ): Promise<'A' | 'I' | null> {
   // Scope the update to the manager's branch and normalize any inactive state back to active.
   const rows = await sql`
-    UPDATE savings_account
-    SET status = CASE WHEN status = 'A' THEN 'I' ELSE 'A' END
-    WHERE account_no = ${accountNo}
+    UPDATE savings_accounts
+    SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END
+    WHERE account_number = ${accountNumber}
       AND branch_id = ${branchId}
-      AND status IN ('A', 'I', 'D')
-    RETURNING status
+      AND status IN ('active', 'inactive')
   `;
-  const status = rows[0]?.status;
-  return status === 'A' || status === 'I' ? status : null;
+  if (Number(rows[0]?.affectedRows ?? 0) === 0) return null;
+  const updated = await sql`
+    SELECT status
+    FROM savings_accounts
+    WHERE account_number = ${accountNumber} AND branch_id = ${branchId}
+  `;
+  const status = updated[0]?.status;
+  return status === 'active' ? 'A' : status === 'inactive' ? 'I' : null;
 }

@@ -12,14 +12,14 @@ function countValue(row: Record<string, unknown>, column: string): number {
   return count;
 }
 
-/** Loads the administrator dashboard metrics directly from the Neon schema. */
+/** Loads the administrator dashboard metrics from the MySQL schema. */
 export async function getAdminDashboardData(): Promise<AdminDashboardData> {
   // Measure a real database round trip instead of reporting a fixed health value.
   const databaseCheckStartedAt = performance.now();
   await sql`SELECT 1`;
   const databaseLatencyMs = Math.round((performance.now() - databaseCheckStartedAt) * 10) / 10;
 
-  // Independent aggregates can run concurrently; status codes follow the supplied schema.
+  // Independent aggregates can run concurrently against the shared MySQL schema.
   const [
     employeeRows,
     customerRows,
@@ -30,44 +30,45 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
     otpRows,
   ] = await Promise.all([
     sql`
-      SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE is_active)::int AS active
-      FROM employee
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+      FROM staff
     `,
     sql`
-      SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE status = 'A')::int AS active
-      FROM customer
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+      FROM customers
     `,
     sql`
-      SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE is_active)::int AS active
-      FROM branch
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+      FROM branches
     `,
     sql`
-      SELECT r.title, COUNT(e.employee_id)::int AS total
-      FROM role r
-      LEFT JOIN employee e ON e.role_id = r.role_id
-      GROUP BY r.role_id, r.title
+      SELECT r.business_role, COUNT(e.id) AS total
+      FROM role_catalog r
+      LEFT JOIN staff e ON e.permission_role = r.code
+      WHERE r.active = true
+      GROUP BY r.code, r.business_role
     `,
     sql`
-      SELECT COUNT(*)::int AS total
-      FROM employee_authentication
-      WHERE session_status = 'A'
+      SELECT COUNT(*) AS total
+      FROM employee_sessions
+      WHERE revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP
     `,
-    // Pending requests are stored separately by customer, account, and fixed-deposit workflow.
     sql`
-      SELECT (
-        (SELECT COUNT(*) FROM approval_request_account WHERE status = 'P') +
-        (SELECT COUNT(*) FROM approval_request_customer WHERE status = 'P') +
-        (SELECT COUNT(*) FROM approval_request_fd WHERE status = 'P')
-      )::int AS total
+      SELECT COUNT(*) AS total
+      FROM approvals
+      WHERE status = 'pending'
     `,
-    // Count only unsuccessful OTP records that have not expired.
-    sql`SELECT COUNT(*)::int AS total FROM otpe WHERE is_success=false and expires_at>CURRENT_TIMESTAMP`,
+    sql`
+      SELECT COUNT(*) AS total
+      FROM otp_challenges
+      WHERE consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    `,
   ]);
 
-  // Combine schema role titles into the four categories displayed by this dashboard.
+  // Combine canonical role categories into the four dashboard groups.
   const roleDistribution = {
     higherManagement: 0,
     branchManagers: 0,
@@ -76,15 +77,15 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
   };
 
   for (const row of roleRows as Record<string, unknown>[]) {
-    const title = String(row.title).trim().toLowerCase();
+    const role = String(row.business_role).trim().toLowerCase();
     const count = countValue(row, 'total');
-    if (title === 'higher management' || title === 'hrm') {
+    if (role === 'higher_manager') {
       roleDistribution.higherManagement += count;
-    } else if (title.includes('branch manager')) {
+    } else if (role === 'manager') {
       roleDistribution.branchManagers += count;
-    } else if (title.includes('agent')) {
+    } else if (role === 'agent') {
       roleDistribution.agents += count;
-    } else if (title.includes('admin')) {
+    } else if (role === 'admin') {
       roleDistribution.administrators += count;
     }
   }

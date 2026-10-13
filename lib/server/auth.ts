@@ -443,11 +443,11 @@ export async function resendOtp(
 export function getDashboardUrlForRole(role: Role): string {
   switch (role) {
     case 'admin':
-      return '/dashboard?tab=admin';
+      return '/admin';
     case 'higher_manager':
-      return '/dashboard?tab=approvals';
+      return '/higher-management';
     case 'manager':
-      return '/dashboard?tab=manager';
+      return '/branch-management';
     case 'agent':
     default:
       return '/dashboard?tab=agent';

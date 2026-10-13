@@ -23,13 +23,12 @@ export async function getBranchCustomerDirectory(
   const [customerPage, agentRows] = await Promise.all([
     getAdminCustomers(page, pageSize, search, searchType, status, String(branchId)),
     sql`
-      SELECT e.employee_id, e.name
-      FROM employee e
-      JOIN role r ON r.role_id = e.role_id
+      SELECT e.id AS employee_id, e.full_name AS name
+      FROM staff e
       WHERE e.branch_id = ${branchId}
-        AND e.is_active = true
-        AND LOWER(r.title) LIKE '%agent%'
-      ORDER BY e.name, e.employee_id
+        AND e.status = 'active'
+        AND e.role = 'agent'
+      ORDER BY e.full_name, e.id
     `,
   ]);
 
@@ -48,15 +47,20 @@ export async function toggleBranchCustomerStatus(
 ): Promise<'A' | 'I' | null> {
   // Only the assigned branch's customer can be toggled; other statuses return to Active.
   const rows = await sql`
-    UPDATE customer
-    SET status = CASE WHEN status = 'A' THEN 'I' ELSE 'A' END
-    WHERE customer_id = ${customerId}
+    UPDATE customers
+    SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END
+    WHERE id = ${customerId}
       AND branch_id = ${branchId}
-      AND status IN ('A', 'I', 'B')
-    RETURNING status
+      AND status IN ('active', 'inactive')
   `;
-  const status = rows[0]?.status;
-  return status === 'A' || status === 'I' ? status : null;
+  if (Number(rows[0]?.affectedRows ?? 0) === 0) return null;
+  const updatedRows = await sql`
+    SELECT status
+    FROM customers
+    WHERE id = ${customerId} AND branch_id = ${branchId}
+  `;
+  const status = updatedRows[0]?.status;
+  return status === 'active' ? 'A' : status === 'inactive' ? 'I' : null;
 }
 
 export async function assignBranchCustomerAgent(
@@ -66,17 +70,24 @@ export async function assignBranchCustomerAgent(
 ): Promise<boolean> {
   // Restrict both the customer and the destination agent to the manager's assigned branch.
   const rows = await sql`
-    UPDATE customer c
-    SET agent_id = e.employee_id
-    FROM employee e
-    JOIN role r ON r.role_id = e.role_id
-    WHERE c.customer_id = ${customerId}
+    UPDATE customers c
+    JOIN staff e ON e.id = ${agentId} AND e.branch_id = ${branchId} AND e.status = 'active' AND e.role = 'agent'
+    SET c.agent_id = e.id
+    WHERE c.id = ${customerId}
       AND c.branch_id = ${branchId}
-      AND e.employee_id = ${agentId}
-      AND e.branch_id = ${branchId}
-      AND e.is_active = true
-      AND LOWER(r.title) LIKE '%agent%'
-    RETURNING c.customer_id
   `;
-  return rows.length > 0;
+  if (Number(rows[0]?.affectedRows ?? 0) > 0) return true;
+  const unchangedAssignment = await sql`
+    SELECT 1
+    FROM customers c
+    JOIN staff e ON e.id = ${agentId}
+      AND e.branch_id = ${branchId}
+      AND e.status = 'active'
+      AND e.role = 'agent'
+    WHERE c.id = ${customerId}
+      AND c.branch_id = ${branchId}
+      AND c.agent_id = e.id
+    LIMIT 1
+  `;
+  return unchangedAssignment.length > 0;
 }

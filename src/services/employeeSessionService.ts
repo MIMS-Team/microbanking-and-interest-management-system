@@ -26,34 +26,51 @@ export async function getEmployeeLoginSessions(
   // Keep the page and count predicates aligned so totals describe the same filtered sessions.
   const [rows, countRows] = await Promise.all([
     sql`
-      SELECT s.session_id, s.employee_id, e.name AS employee_name, r.title AS role_title,
-        s.login_time, s.logout_time, s.session_status, host(s.ip_address) AS ip_address
-      FROM employee_authentication s
-      JOIN employee e ON e.employee_id = s.employee_id
-      JOIN role r ON r.role_id = e.role_id
+      SELECT LEFT(SHA2(s.token_hash, 256), 16) AS session_id, s.employee_id,
+        e.full_name AS employee_name, r.display_name AS role_title,
+        s.created_at AS login_time, s.revoked_at AS logout_time,
+        CASE
+          WHEN s.revoked_at IS NOT NULL THEN 'R'
+          WHEN s.expires_at <= CURRENT_TIMESTAMP THEN 'E'
+          ELSE 'A'
+        END AS session_status,
+        CAST(s.ip_address AS CHAR) AS ip_address
+      FROM employee_sessions s
+      JOIN staff e ON e.id = s.employee_id
+      JOIN role_catalog r ON r.code = e.permission_role
       WHERE (
         ${!hasSearch}
-        OR (${searchType === 'name'} AND e.name ILIKE ${searchTerm})
-        OR (${searchType === 'employee_id'} AND s.employee_id::text ILIKE ${searchTerm})
-        OR (${searchType === 'session_id'} AND s.session_id::text ILIKE ${searchTerm})
-        OR (${searchType === 'ip_address'} AND COALESCE(host(s.ip_address), '') ILIKE ${searchTerm})
+        OR (${searchType === 'name'} AND LOWER(e.full_name) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'employee_id'} AND CAST(s.employee_id AS CHAR) LIKE ${searchTerm})
+        OR (${searchType === 'session_id'} AND LEFT(SHA2(s.token_hash, 256), 16) LIKE ${searchTerm})
+        OR (${searchType === 'ip_address'} AND LOWER(COALESCE(CAST(s.ip_address AS CHAR), '')) LIKE LOWER(${searchTerm}))
       )
-      AND (${status === ''} OR s.session_status = ${status})
-      ORDER BY s.login_time DESC, s.session_id DESC
+      AND (
+        ${status === ''}
+        OR (${status === 'A'} AND s.revoked_at IS NULL AND s.expires_at > CURRENT_TIMESTAMP)
+        OR (${status === 'R'} AND s.revoked_at IS NOT NULL)
+        OR (${status === 'E'} AND s.revoked_at IS NULL AND s.expires_at <= CURRENT_TIMESTAMP)
+      )
+      ORDER BY s.created_at DESC, s.token_hash DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`
-      SELECT COUNT(*)::int AS total
-      FROM employee_authentication s
-      JOIN employee e ON e.employee_id = s.employee_id
+      SELECT COUNT(*) AS total
+      FROM employee_sessions s
+      JOIN staff e ON e.id = s.employee_id
       WHERE (
         ${!hasSearch}
-        OR (${searchType === 'name'} AND e.name ILIKE ${searchTerm})
-        OR (${searchType === 'employee_id'} AND s.employee_id::text ILIKE ${searchTerm})
-        OR (${searchType === 'session_id'} AND s.session_id::text ILIKE ${searchTerm})
-        OR (${searchType === 'ip_address'} AND COALESCE(host(s.ip_address), '') ILIKE ${searchTerm})
+        OR (${searchType === 'name'} AND LOWER(e.full_name) LIKE LOWER(${searchTerm}))
+        OR (${searchType === 'employee_id'} AND CAST(s.employee_id AS CHAR) LIKE ${searchTerm})
+        OR (${searchType === 'session_id'} AND LEFT(SHA2(s.token_hash, 256), 16) LIKE ${searchTerm})
+        OR (${searchType === 'ip_address'} AND LOWER(COALESCE(CAST(s.ip_address AS CHAR), '')) LIKE LOWER(${searchTerm}))
       )
-      AND (${status === ''} OR s.session_status = ${status})
+      AND (
+        ${status === ''}
+        OR (${status === 'A'} AND s.revoked_at IS NULL AND s.expires_at > CURRENT_TIMESTAMP)
+        OR (${status === 'R'} AND s.revoked_at IS NOT NULL)
+        OR (${status === 'E'} AND s.revoked_at IS NULL AND s.expires_at <= CURRENT_TIMESTAMP)
+      )
     `,
   ]);
 

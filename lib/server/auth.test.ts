@@ -110,7 +110,7 @@ describe('Authentication and User Management System Tests', () => {
       const verification = await verifyLoginOtpChallenge(challengeId, otp);
       expect(verification.employee.id).toBe(branchManagerUser.id);
       expect(verification.sessionToken).toBeTruthy();
-      expect(verification.dashboardUrl).toBe('/dashboard?tab=manager');
+      expect(verification.dashboardUrl).toBe('/branch-management');
     });
 
     it('wrong password fails with generic credentials error', async () => {
@@ -199,9 +199,9 @@ describe('Authentication and User Management System Tests', () => {
     });
 
     it('correct role selects matching dashboard URL', () => {
-      expect(getDashboardForRole('admin')).toBe('/dashboard?tab=admin');
-      expect(getDashboardForRole('higher_manager')).toBe('/dashboard?tab=approvals');
-      expect(getDashboardForRole('manager')).toBe('/dashboard?tab=manager');
+      expect(getDashboardForRole('admin')).toBe('/admin');
+      expect(getDashboardForRole('higher_manager')).toBe('/higher-management');
+      expect(getDashboardForRole('manager')).toBe('/branch-management');
       expect(getDashboardForRole('agent')).toBe('/dashboard?tab=agent');
     });
   });

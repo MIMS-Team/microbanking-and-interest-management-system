@@ -28,58 +28,37 @@ export async function getBranchApprovalRequests(
   managerId: number,
   kind: BranchApprovalKind,
 ): Promise<BranchApprovalRequest[]> {
-  // Requests are addressed to the manager and must also have been submitted within their branch.
+  // The canonical approvals table stores each supported request with a typed target and JSON payload.
   const rows = await sql`
-    SELECT *
-    FROM (
-      SELECT
-        'customer'::text AS kind,
-        ar.request_id,
-        ar.customer_id::text AS reference_id,
-        ar.request_type,
-        ar.request_data,
-        ar.request_timestamp,
-        ar.status,
-        requester.name AS submitted_by
-      FROM approval_request_customer ar
-      JOIN employee requester ON requester.employee_id = ar.request_by
-      WHERE ar.request_to = ${managerId}
-        AND requester.branch_id = ${branchId}
-
-      UNION ALL
-
-      SELECT
-        'account'::text AS kind,
-        ar.request_id,
-        ar.account_no::text AS reference_id,
-        ar.request_type,
-        ar.request_data,
-        ar.request_timestamp,
-        ar.status,
-        requester.name AS submitted_by
-      FROM approval_request_account ar
-      JOIN employee requester ON requester.employee_id = ar.request_by
-      WHERE ar.request_to = ${managerId}
-        AND requester.branch_id = ${branchId}
-
-      UNION ALL
-
-      SELECT
-        'fd'::text AS kind,
-        ar.request_id,
-        ar.fd_id::text AS reference_id,
-        ar.request_type,
-        ar.request_data,
-        ar.request_timestamp,
-        ar.status,
-        requester.name AS submitted_by
-      FROM approval_request_fd ar
-      JOIN employee requester ON requester.employee_id = ar.request_by
-      WHERE ar.request_to = ${managerId}
-        AND requester.branch_id = ${branchId}
-    ) requests
-    WHERE ${kind === 'all'} OR requests.kind = ${kind}
-    ORDER BY request_timestamp DESC, request_id DESC
+    SELECT
+      CASE
+        WHEN ar.type LIKE 'customer.%' THEN 'customer'
+        WHEN ar.type LIKE 'account.%' THEN 'account'
+        WHEN ar.type LIKE 'fd.%' THEN 'fd'
+      END AS kind,
+      ar.id AS request_id,
+      CAST(COALESCE(ar.customer_id, ar.account_id, ar.fixed_deposit_id, ar.entity_id) AS CHAR) AS reference_id,
+      ar.type AS request_type,
+      ar.payload AS request_data,
+      ar.created_at AS request_timestamp,
+      CASE ar.status
+        WHEN 'pending' THEN 'P'
+        WHEN 'approved' THEN 'A'
+        WHEN 'rejected' THEN 'R'
+      END AS status,
+      requester.full_name AS submitted_by
+    FROM approvals ar
+    JOIN staff requester ON requester.id = ar.requested_by
+    WHERE ar.intended_approver_id = ${managerId}
+      AND ar.branch_id = ${branchId}
+      AND ar.status = 'pending'
+      AND (
+        ${kind === 'all'}
+        OR (${kind === 'customer'} AND ar.type LIKE 'customer.%')
+        OR (${kind === 'account'} AND ar.type LIKE 'account.%')
+        OR (${kind === 'fd'} AND ar.type LIKE 'fd.%')
+      )
+    ORDER BY ar.created_at DESC, ar.id DESC
   `;
 
   return rows.map((row: Record<string, unknown>) => {
@@ -87,7 +66,7 @@ export async function getBranchApprovalRequests(
     const status = row.status;
     if (
       (requestKind !== 'customer' && requestKind !== 'account' && requestKind !== 'fd') ||
-      (status !== 'P' && status !== 'A' && status !== 'R' && status !== 'E')
+      (status !== 'P' && status !== 'A' && status !== 'R')
     ) {
       throw new Error('Database returned an invalid approval request.');
     }
@@ -111,33 +90,20 @@ export async function getBranchPendingApprovalCount(
   branchId: number,
   managerId: number,
 ): Promise<number> {
-  const counts = await Promise.all([
-    sql`
-      SELECT COUNT(*)::int AS total
-      FROM approval_request_customer ar
-      JOIN employee requester ON requester.employee_id = ar.request_by
-      WHERE ar.request_to = ${managerId}
-        AND ar.status = 'P'
-        AND requester.branch_id = ${branchId}
-    `,
-    sql`
-      SELECT COUNT(*)::int AS total
-      FROM approval_request_account ar
-      JOIN employee requester ON requester.employee_id = ar.request_by
-      WHERE ar.request_to = ${managerId}
-        AND ar.status = 'P'
-        AND requester.branch_id = ${branchId}
-    `,
-    sql`
-      SELECT COUNT(*)::int AS total
-      FROM approval_request_fd ar
-      JOIN employee requester ON requester.employee_id = ar.request_by
-      WHERE ar.request_to = ${managerId}
-        AND ar.status = 'P'
-        AND requester.branch_id = ${branchId}
-    `,
-  ]);
-  return counts.reduce((total, rows) => total + Number(rows[0]?.total ?? 0), 0);
+  const counts = await sql`
+    SELECT COUNT(*) AS total
+    FROM approvals ar
+    JOIN staff requester ON requester.id = ar.requested_by
+    WHERE ar.intended_approver_id = ${managerId}
+      AND ar.branch_id = ${branchId}
+      AND ar.status = 'pending'
+      AND (
+        ar.type LIKE 'customer.%'
+        OR ar.type LIKE 'account.%'
+        OR ar.type LIKE 'fd.%'
+      )
+  `;
+  return Number(counts[0]?.total ?? 0);
 }
 
 export async function updateBranchApprovalStatus(
@@ -147,52 +113,27 @@ export async function updateBranchApprovalStatus(
   kind: Exclude<BranchApprovalKind, 'all'>,
   action: BranchApprovalAction,
 ): Promise<boolean> {
-  const status = action === 'approve' ? 'A' : 'R';
-  // Only pending requests assigned to this manager can transition; target records remain untouched.
-  let rows: Record<string, unknown>[];
-  if (kind === 'customer') {
-    rows = await sql`
-      UPDATE approval_request_customer ar
-      SET status = ${status}, approval_timestamp = CURRENT_TIMESTAMP
-      WHERE ar.request_id = ${requestId}
-        AND ar.request_to = ${managerId}
-        AND ar.status = 'P'
-        AND EXISTS (
-          SELECT 1 FROM employee requester
-          WHERE requester.employee_id = ar.request_by
-            AND requester.branch_id = ${branchId}
-        )
-      RETURNING ar.request_id
-    `;
-  } else if (kind === 'account') {
-    rows = await sql`
-      UPDATE approval_request_account ar
-      SET status = ${status}, approval_timestamp = CURRENT_TIMESTAMP
-      WHERE ar.request_id = ${requestId}
-        AND ar.request_to = ${managerId}
-        AND ar.status = 'P'
-        AND EXISTS (
-          SELECT 1 FROM employee requester
-          WHERE requester.employee_id = ar.request_by
-            AND requester.branch_id = ${branchId}
-        )
-      RETURNING ar.request_id
-    `;
-  } else {
-    rows = await sql`
-      UPDATE approval_request_fd ar
-      SET status = ${status}, approval_timestamp = CURRENT_TIMESTAMP
-      WHERE ar.request_id = ${requestId}
-        AND ar.request_to = ${managerId}
-        AND ar.status = 'P'
-        AND EXISTS (
-          SELECT 1 FROM employee requester
-          WHERE requester.employee_id = ar.request_by
-            AND requester.branch_id = ${branchId}
-        )
-      RETURNING ar.request_id
-    `;
-  }
+  const status = action === 'approve' ? 'approved' : 'rejected';
+  // Only a pending request assigned to this manager can be reviewed.
+  const result = await sql`
+    UPDATE approvals ar
+    SET status = ${status}, reviewed_by = ${managerId}, reviewed_at = CURRENT_TIMESTAMP
+    WHERE ar.id = ${requestId}
+      AND ar.intended_approver_id = ${managerId}
+      AND ar.branch_id = ${branchId}
+      AND ar.status = 'pending'
+      AND ar.requested_by <> ${managerId}
+      AND (
+        (${kind === 'customer'} AND ar.type LIKE 'customer.%')
+        OR (${kind === 'account'} AND ar.type LIKE 'account.%')
+        OR (${kind === 'fd'} AND ar.type LIKE 'fd.%')
+      )
+      AND EXISTS (
+        SELECT 1 FROM staff requester
+        WHERE requester.id = ar.requested_by
+          AND requester.branch_id = ${branchId}
+      )
+  `;
 
-  return rows.length > 0;
+  return Number(result[0]?.affectedRows ?? 0) > 0;
 }

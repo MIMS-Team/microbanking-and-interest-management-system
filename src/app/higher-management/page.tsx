@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
+import RoleTabs, { NavItem } from '@/components/common/RoleTabs';
 import HigherMgmtDashboardView from '@/components/higher-mgmt/HigherMgmtDashboardView';
 import BranchNetworkView from '@/components/higher-mgmt/BranchNetworkView';
 import EmployeeDirectoryView from '@/components/higher-mgmt/EmployeeDirectoryView';
@@ -12,6 +12,7 @@ import {
   FileSpreadsheet,
   Building2,
 } from 'lucide-react';
+import { RavinduShell } from '@/app/_components';
 
 // Dedicated portal interface for Higher Management
 export default function HigherManagementPage() {
@@ -25,23 +26,23 @@ export default function HigherManagementPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* 1. Header adhering to photo template */}
-      <RoleHeader
-        roleBadgeText="HIGHER MGMT"
-        tabs={navTabs}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
-
-
-      {/* 2. Workspace Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'dashboard' && <HigherMgmtDashboardView onNavigateTab={setActiveTab} />}
-        {activeTab === 'employees' && <EmployeeDirectoryView />}
-        {activeTab === 'reports' && <HigherManagementReportsView />}
-        {activeTab === 'branches' && <BranchNetworkView />}
-      </main>
-    </div>
+    <RavinduShell
+      eyebrow="Executive leadership"
+      title="Higher management workspace"
+      showHeading={false}
+      navigation={
+        <RoleTabs
+          roleBadgeText="HIGHER MGMT"
+          tabs={navTabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
+      }
+    >
+      {activeTab === 'dashboard' && <HigherMgmtDashboardView onNavigateTab={setActiveTab} />}
+      {activeTab === 'employees' && <EmployeeDirectoryView />}
+      {activeTab === 'reports' && <HigherManagementReportsView />}
+      {activeTab === 'branches' && <BranchNetworkView />}
+    </RavinduShell>
   );
 }

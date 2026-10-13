@@ -5,6 +5,8 @@ import {
   getHigherManagementReport,
   HigherManagementReportType,
 } from '@/services/higherManagementReportService';
+import { requireUser } from '@/lib/server/api';
+import { errorResponse } from '@/lib/http';
 
 const reportTypes: readonly HigherManagementReportType[] = [
   'agent-transactions',
@@ -26,16 +28,14 @@ function isValidDate(value: string): boolean {
 
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const employeeIdValue = params.get('employeeId') ?? '';
   const reportType = params.get('report');
-  const branchValue = params.get('branchId') ?? '';
+  const branchValue = params.get('branchId') ?? '0';
   const filterOptionsRequested = params.get('filterOptions') === '1';
   const startDate = params.get('startDate') ?? '';
   const endDate = params.get('endDate') ?? '';
 
   // Date validation is needed for report rows, but not for dropdown options.
   if (
-    !/^[1-9]\d*$/.test(employeeIdValue) ||
     !isReportType(reportType) ||
     !/^(0|[1-9]\d*)$/.test(branchValue) ||
     (!filterOptionsRequested &&
@@ -44,32 +44,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Invalid report filters.' }, { status: 400 });
   }
 
-  const employeeId = Number(employeeIdValue);
   const branchId = Number(branchValue);
-  if (!Number.isSafeInteger(employeeId) || !Number.isSafeInteger(branchId)) {
+  if (!Number.isSafeInteger(branchId)) {
     return NextResponse.json({ message: 'Invalid report filters.' }, { status: 400 });
   }
 
   try {
-    const employees = await sql`
-      SELECT e.is_active, r.title
-      FROM employee e
-      JOIN role r ON r.role_id = e.role_id
-      WHERE e.employee_id = ${employeeId}
-    `;
-    const employee = employees[0];
-    if (!employee) {
-      return NextResponse.json({ message: 'A valid employee session is required.' }, { status: 401 });
-    }
-    // Confirm the requesting employee is active and has a Higher Management role.
-    const roleTitle = String(employee.title ?? '').trim().toLocaleLowerCase();
-    if (employee.is_active !== true || !['higher management', 'ceo'].includes(roleTitle)) {
-      return NextResponse.json({ message: 'Higher Management access is required.' }, { status: 403 });
-    }
+    await requireUser(request, ['higher_manager']);
 
     if (branchId !== 0) {
       const branches = await sql`
-        SELECT branch_id FROM branch WHERE branch_id = ${branchId}
+        SELECT id FROM branches WHERE id = ${branchId}
       `;
       if (branches.length === 0) {
         return NextResponse.json({ message: 'The selected branch does not exist.' }, { status: 400 });
@@ -92,9 +77,6 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error('Error generating Higher Management report:', error);
-    return NextResponse.json(
-      { message: 'Failed to generate the report from Neon.' },
-      { status: 500 },
-    );
+    return errorResponse(error);
   }
 }

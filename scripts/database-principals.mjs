@@ -19,7 +19,7 @@ export async function provisionPrincipals(admin,{database,host='localhost',migra
   // triggers reject even identity updates, so a grant never permits rewriting.
   const append=['ledger_entries','money_operations','audit_logs','authentication_audit','rate_history','interest_accruals','interest_credits'];
   for(const table of append) await admin.query(`GRANT INSERT,UPDATE (id) ON ${schema}.${identifier(table)} TO ${app}`);
-  const mutable=['branches','staff','staff_authentication','customers','savings_accounts','customer_accounts','fixed_deposits','approvals','rates','employee_sessions','otp_challenges','otp_resend_reservations','banking_approval_challenges','banking_approval_limits','interest_runs','job_runs','job_claims','http_rate_buckets','http_rate_events','employee_invitations','employee_notifications','action_receipts'];
+  const mutable=['branches','staff','staff_authentication','customers','customer_authentication','staff_otp_roles','savings_accounts','customer_accounts','fixed_deposits','approvals','rates','employee_sessions','otp_challenges','otp_resend_reservations','banking_approval_challenges','banking_approval_limits','interest_runs','job_runs','job_claims','http_rate_buckets','http_rate_events','employee_invitations','employee_notifications','action_receipts'];
   const [tables]=await admin.query('SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema=?',[database]);
   const present=new Set(tables.map(t=>t.TABLE_NAME));
   for(const table of mutable) if(present.has(table)) await admin.query(`GRANT INSERT,UPDATE,DELETE ON ${schema}.${identifier(table)} TO ${app}`);

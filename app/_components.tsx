@@ -72,6 +72,7 @@ export function getStoredSession(): PublicEmployee | null {
 export function saveSession(user: PublicEmployee): void {
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    window.dispatchEvent(new Event('btrust-session-change'));
   }
 }
 
@@ -81,6 +82,7 @@ export function clearSession(): void {
     try {
       window.sessionStorage.clear();
     } catch {}
+    window.dispatchEvent(new Event('btrust-session-change'));
   }
 }
 

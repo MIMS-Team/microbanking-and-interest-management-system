@@ -1,7 +1,9 @@
 import {provisionPrincipals,fictionalPrincipals} from './database-principals.mjs';
 import {writeFile,mkdir} from 'node:fs/promises';
+import {existsSync,readFileSync} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {parseEnv} from 'node:util';
 import {disposableDatabase} from './disposable-mysql.mjs';
 import {seedBankingFixture} from '../tests/fixtures/banking-seed';
 import {getDb} from '../lib/db';
@@ -9,6 +11,12 @@ import {closePoolForTest} from '../lib/server/db';
 
 // Always CREATE a random database. No target-name argument and no runtime
 // DB_* fallback: this command cannot seed an existing/shared database.
+if(existsSync('.env.local')) {
+  const localSettings=parseEnv(readFileSync('.env.local','utf8'));
+  for(const key of ['TEST_MYSQL_HOST','TEST_MYSQL_PORT','TEST_MYSQL_USER','TEST_MYSQL_PASSWORD']) {
+    if(process.env[key]===undefined && localSettings[key]!==undefined) process.env[key]=localSettings[key];
+  }
+}
 const output=path.resolve('.data','disposable-demo-'+randomUUID()+'.env');
 try {await import('node:fs/promises').then(fs=>fs.access(output));throw new Error('A demo settings file already exists; preserve it and choose a new explicit test session.');} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;}
 const owned=await disposableDatabase();

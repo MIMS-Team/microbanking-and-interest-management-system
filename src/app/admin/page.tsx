@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
+import RoleTabs, { NavItem } from '@/components/common/RoleTabs';
 import AdminDashboardView from '@/components/admin/AdminDashboardView';
 import UserManagementView from '@/components/admin/UserManagementView';
 import BranchesView from '@/components/common/BranchesView';
@@ -12,6 +12,7 @@ import {
   Building2,
   ShieldCheck,
 } from 'lucide-react';
+import { RavinduShell } from '@/app/_components';
 
 // Dedicated portal interface for System Administrators
 export default function AdminPage() {
@@ -25,22 +26,23 @@ export default function AdminPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* 1. Header adhering to photo template */}
-      <RoleHeader
-        roleBadgeText="ADMIN"
-        tabs={navTabs}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
-
-      {/* 2. Workspace Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'dashboard' && <AdminDashboardView onNavigateTab={setActiveTab} />}
-        {activeTab === 'users' && <UserManagementView />}
-        {activeTab === 'branches' && <BranchesView />}
-        {activeTab === 'audit' && <AuditLogsView />}
-      </main>
-    </div>
+    <RavinduShell
+      eyebrow="System administration"
+      title="Administration workspace"
+      showHeading={false}
+      navigation={
+        <RoleTabs
+          roleBadgeText="ADMIN"
+          tabs={navTabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
+      }
+    >
+      {activeTab === 'dashboard' && <AdminDashboardView onNavigateTab={setActiveTab} />}
+      {activeTab === 'users' && <UserManagementView />}
+      {activeTab === 'branches' && <BranchesView />}
+      {activeTab === 'audit' && <AuditLogsView />}
+    </RavinduShell>
   );
 }

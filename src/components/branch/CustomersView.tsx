@@ -30,7 +30,8 @@ const statusOptions = [
   { value: '', label: 'All statuses' },
   { value: 'Active', label: 'Active' },
   { value: 'Inactive', label: 'Inactive' },
-  { value: 'Blocked', label: 'Blocked' },
+  { value: 'Pending', label: 'Pending' },
+  { value: 'Rejected', label: 'Rejected' },
 ] as const;
 
 export default function CustomersView() {

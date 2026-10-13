@@ -15,6 +15,7 @@ export async function seedBankingFixture(tx: Queryable): Promise<void> {
     ('Dinithi Fernando','higher@btrust.local',$1,'higher_manager',NULL),
     ('Sahan Jayawardena','kandy.agent@btrust.local',$1,'agent',2),
     ('Amali Wickramasinghe','kandy.manager@btrust.local',$1,'manager',2)`,[passwordHash]);
+  await tx.query("INSERT INTO staff_otp_roles(staff_id,otp_role) VALUES(2,'BM'),(4,'HRM'),(6,'BM')");
   await tx.query(`INSERT INTO rates(product,name,term_months,annual_rate,minimum_balance) VALUES
     ('savings','Regular savings',0,4.5,500),
     ('fixed','Three month fixed deposit',3,8.0,10000),

@@ -24,52 +24,52 @@ export async function getBranchManagementDashboardData(
   const [branchRows, customerRows, accountRows, monthlyRows] = await Promise.all([
     sql`
       SELECT name
-      FROM branch
-      WHERE branch_id = ${branchId} AND is_active = true
+      FROM branches
+      WHERE id = ${branchId} AND status = 'active'
     `,
     sql`
-      SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE status = 'A')::int AS active
-      FROM customer
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+      FROM customers
       WHERE branch_id = ${branchId}
     `,
     sql`
       SELECT
-        (SELECT COUNT(*)::int FROM savings_account
-          WHERE branch_id = ${branchId} AND status = 'A') AS active_savings_accounts,
-        (SELECT COALESCE(SUM(balance), 0) FROM savings_account
-          WHERE branch_id = ${branchId} AND status = 'A') AS savings_balance,
-        (SELECT COUNT(*)::int
-          FROM fixed_deposit fd
-          JOIN savings_account sa ON sa.account_no = fd.account_no
-          WHERE sa.branch_id = ${branchId} AND fd.status = 'A') AS active_fixed_deposits,
-        (SELECT COALESCE(SUM(fd.principal_amount), 0)
-          FROM fixed_deposit fd
-          JOIN savings_account sa ON sa.account_no = fd.account_no
-          WHERE sa.branch_id = ${branchId} AND fd.status = 'A') AS fixed_deposit_balance
+        (SELECT COUNT(*) FROM savings_accounts
+          WHERE branch_id = ${branchId} AND status = 'active') AS active_savings_accounts,
+        (SELECT COALESCE(SUM(balance), 0) FROM savings_accounts
+          WHERE branch_id = ${branchId} AND status = 'active') AS savings_balance,
+        (SELECT COUNT(*)
+          FROM fixed_deposits fd
+          JOIN savings_accounts sa ON sa.id = fd.source_account_id
+          WHERE sa.branch_id = ${branchId} AND fd.status = 'active') AS active_fixed_deposits,
+        (SELECT COALESCE(SUM(fd.principal), 0)
+          FROM fixed_deposits fd
+          JOIN savings_accounts sa ON sa.id = fd.source_account_id
+          WHERE sa.branch_id = ${branchId} AND fd.status = 'active') AS fixed_deposit_balance
     `,
     // Generate all eight months so periods without transactions still appear as zeroes.
     sql`
-      WITH months AS (
-        SELECT generate_series(
-          date_trunc('month', CURRENT_DATE) - INTERVAL '7 months',
-          date_trunc('month', CURRENT_DATE),
-          INTERVAL '1 month'
-        )::date AS month
+      WITH RECURSIVE months AS (
+        SELECT CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE) AS month, 0 AS month_offset
+        UNION ALL
+        SELECT DATE_SUB(month, INTERVAL 1 MONTH), month_offset + 1
+        FROM months
+        WHERE month_offset < 7
       ),
       totals AS (
-        SELECT date_trunc('month', nt.transaction_timestamp)::date AS month,
-          SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'D') AS deposits,
-          SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'W') AS withdrawals,
-          SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'I') AS savings_interest,
-          SUM(nt.amount) FILTER (WHERE nt.transaction_type = 'F') AS fixed_deposit_interest
-        FROM normal_transaction nt
-        JOIN savings_account sa ON sa.account_no = nt.account_no
+        SELECT CAST(DATE_FORMAT(le.created_at, '%Y-%m-01') AS DATE) AS month,
+          SUM(CASE WHEN le.type = 'deposit' THEN le.amount ELSE 0 END) AS deposits,
+          SUM(CASE WHEN le.type = 'withdrawal' THEN ABS(le.amount) ELSE 0 END) AS withdrawals,
+          SUM(CASE WHEN le.type = 'savings_interest' THEN le.amount ELSE 0 END) AS savings_interest,
+          SUM(CASE WHEN le.type = 'fixed_deposit_interest' THEN le.amount ELSE 0 END) AS fixed_deposit_interest
+        FROM ledger_entries le
+        JOIN savings_accounts sa ON sa.id = le.account_id
         WHERE sa.branch_id = ${branchId}
-          AND nt.transaction_timestamp >= date_trunc('month', CURRENT_DATE) - INTERVAL '7 months'
-          AND nt.transaction_timestamp < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
-          AND nt.transaction_type IN ('D', 'W', 'I', 'F')
-        GROUP BY date_trunc('month', nt.transaction_timestamp)
+          AND le.created_at >= DATE_SUB(CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE), INTERVAL 7 MONTH)
+          AND le.created_at < DATE_ADD(CAST(DATE_FORMAT(CURRENT_DATE, '%Y-%m-01') AS DATE), INTERVAL 1 MONTH)
+          AND le.type IN ('deposit', 'withdrawal', 'savings_interest', 'fixed_deposit_interest')
+        GROUP BY month
       )
       SELECT months.month,
         COALESCE(totals.deposits, 0) AS deposits,

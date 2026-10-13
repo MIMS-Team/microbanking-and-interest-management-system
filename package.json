@@ -34,7 +34,6 @@
     "test:recovery": "node scripts/run-recovery-verification.mjs"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^0.10.4",
     "bcryptjs": "^2.4.3",
     "exceljs": "4.4.0",
     "lucide-react": "^1.49.0",

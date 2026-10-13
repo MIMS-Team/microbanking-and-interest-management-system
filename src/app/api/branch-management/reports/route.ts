@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/src/lib/db';
-import { getActiveBranchManagerBranchId } from '@/services/branchAccountDirectoryService';
+import { requireUser } from '@/lib/server/api';
+import { errorResponse } from '@/lib/http';
 import {
   getHigherManagementReport,
   getHigherManagementReportFilters,
@@ -27,14 +28,12 @@ function isValidDate(value: string): boolean {
 
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const employeeIdValue = params.get('employeeId') ?? '';
   const reportType = params.get('report');
   const filterOptionsRequested = params.get('filterOptions') === '1';
   const startDate = params.get('startDate') ?? '';
   const endDate = params.get('endDate') ?? '';
 
   if (
-    !/^[1-9]\d*$/.test(employeeIdValue) ||
     !isReportType(reportType) ||
     (!filterOptionsRequested &&
       (!isValidDate(startDate) || !isValidDate(endDate) || startDate > endDate))
@@ -42,20 +41,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Invalid report filters.' }, { status: 400 });
   }
 
-  const employeeId = Number(employeeIdValue);
-  if (!Number.isSafeInteger(employeeId)) {
-    return NextResponse.json({ message: 'Invalid report filters.' }, { status: 400 });
-  }
-
   try {
-    // Resolve the nonzero report scope from the manager's employee record, never from the request.
-    const branchId = await getActiveBranchManagerBranchId(employeeId);
+    const { user } = await requireUser(request, ['manager']);
+    const branchId = user.branch_id;
     if (branchId === null) {
       return NextResponse.json({ message: 'An active branch manager session is required.' }, { status: 403 });
     }
 
     const branchRows = await sql`
-      SELECT name FROM branch WHERE branch_id = ${branchId}
+      SELECT name FROM branches WHERE id = ${branchId}
     `;
     const branchName = branchRows[0]?.name;
     if (typeof branchName !== 'string') {
@@ -77,9 +71,6 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error('Error generating Branch Management report:', error);
-    return NextResponse.json(
-      { message: 'Failed to generate the report from the branch database records.' },
-      { status: 500 },
-    );
+    return errorResponse(error);
   }
 }

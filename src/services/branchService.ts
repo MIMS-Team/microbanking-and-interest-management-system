@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from 'node:crypto';
 import { Branch, BranchNetworkPage } from '@/types';
 import sql from '@/src/lib/db';
 import { validateOtp } from '@/services/otpService';
@@ -10,7 +11,7 @@ import { validateOtp } from '@/services/otpService';
 export async function getBranchName(){
 
 
-  const rows = await sql`SELECT branch_id, name FROM branch ORDER BY branch_id `;
+  const rows = await sql`SELECT id AS branch_id, name FROM branches ORDER BY id`;
 
   const branches = rows.map((row: Record<string, unknown>) => ({ id: String(row.branch_id), name: String(row.name), }));
 
@@ -31,26 +32,23 @@ export async function getBranchNetwork(
   const [branchStats, branchDetails] = await Promise.all([
     sql`
       SELECT
-        b.branch_id,
-        (SELECT COUNT(*) FROM employee e WHERE e.branch_id = b.branch_id) AS total_employees,
-        (SELECT COUNT(*) FROM employee e WHERE e.branch_id = b.branch_id AND e.is_active) AS active_employees,
-        (SELECT COUNT(*) FROM employee e JOIN role r ON r.role_id = e.role_id
-          WHERE e.branch_id = b.branch_id AND LOWER(r.title) LIKE '%agent%') AS total_agents,
-        (SELECT COUNT(*) FROM employee e JOIN role r ON r.role_id = e.role_id
-          WHERE e.branch_id = b.branch_id AND LOWER(r.title) LIKE '%agent%' AND e.is_active) AS active_agents,
-        (SELECT COUNT(*) FROM customer c WHERE c.branch_id = b.branch_id) AS total_customers,
-        (SELECT COUNT(*) FROM customer c WHERE c.branch_id = b.branch_id AND c.status = 'A') AS active_customers
-      FROM branch b
-      ORDER BY b.branch_id
+        b.id AS branch_id,
+        (SELECT COUNT(*) FROM staff e WHERE e.branch_id = b.id) AS total_employees,
+        (SELECT COUNT(*) FROM staff e WHERE e.branch_id = b.id AND e.status = 'active') AS active_employees,
+        (SELECT COUNT(*) FROM staff e WHERE e.branch_id = b.id AND e.role = 'agent') AS total_agents,
+        (SELECT COUNT(*) FROM staff e WHERE e.branch_id = b.id AND e.role = 'agent' AND e.status = 'active') AS active_agents,
+        (SELECT COUNT(*) FROM customers c WHERE c.branch_id = b.id) AS total_customers,
+        (SELECT COUNT(*) FROM customers c WHERE c.branch_id = b.id AND c.status = 'active') AS active_customers
+      FROM branches b
+      ORDER BY b.id
     `,
     sql`
-      SELECT b.branch_id, b.name, b.address, b.is_active,
-        e.name AS manager_name, e.email AS manager_email, r.title AS manager_role
-      FROM branch b
-      LEFT JOIN role r
-        ON LOWER(r.title) LIKE '%branch manager%' OR LOWER(r.title) = 'ceo'
-      LEFT JOIN employee e ON e.branch_id = b.branch_id AND e.role_id = r.role_id
-      ORDER BY b.branch_id, r.title, e.name
+      SELECT b.id AS branch_id, b.name, b.address, b.status,
+        e.full_name AS manager_name, e.email AS manager_email, r.display_name AS manager_role
+      FROM branches b
+      LEFT JOIN staff e ON e.branch_id = b.id AND e.role = 'manager'
+      LEFT JOIN role_catalog r ON r.code = e.permission_role AND r.active = true
+      ORDER BY b.id, r.display_name, e.full_name
     `,
   ]);
 
@@ -77,7 +75,7 @@ export async function getBranchNetwork(
         id,
         name: String(row.name ?? ''),
         address: String(row.address ?? ''),
-        status: row.is_active === true,
+        status: row.status === 'active',
         totalEmployees: numberValue(stats.total_employees),
         activeEmployees: numberValue(stats.active_employees),
         totalAgents: numberValue(stats.total_agents),
@@ -137,13 +135,13 @@ export async function getBranches(
 
   // Queries acording to searching criteria
   if (search === '') {
-    rows = await sql`SELECT branch_id, name, address, phone_no, is_active, email, opened_date
-      FROM branch ORDER BY branch_id LIMIT ${pageSize} OFFSET ${offset}`;
-    countResult = await sql`SELECT COUNT(*) AS total FROM branch`;
+    rows = await sql`    SELECT id AS branch_id, name, address, phone, status, email, created_at AS opened_date
+    FROM branches ORDER BY id LIMIT ${pageSize} OFFSET ${offset}`;
+    countResult = await sql`SELECT COUNT(*) AS total FROM branches`;
   } else {
-    rows = await sql`SELECT branch_id, name, address, phone_no, is_active, email, opened_date
-      FROM branch WHERE name ILIKE ${'%' + search + '%'} ORDER BY branch_id LIMIT ${pageSize} OFFSET ${offset}`;
-    countResult = await sql`SELECT COUNT(*) AS total FROM branch WHERE name ILIKE ${'%' + search + '%'}`;
+    rows = await sql`SELECT id AS branch_id, name, address, phone, status, email, created_at AS opened_date
+    FROM branches WHERE LOWER(name) LIKE LOWER(${'%' + search + '%'}) ORDER BY id LIMIT ${pageSize} OFFSET ${offset}`;
+    countResult = await sql`SELECT COUNT(*) AS total FROM branches WHERE LOWER(name) LIKE LOWER(${'%' + search + '%'})`;
   }
 
   // Map database column names to frontend Branch interface fields to loose the coupling between Table names and keys
@@ -159,9 +157,9 @@ export async function getBranches(
       id: String(row.branch_id ?? ''),
       name: typeof row.name === 'string' ? row.name : '',
       address: typeof row.address === 'string' ? row.address : '',
-      phone: typeof row.phone_no === 'string' ? row.phone_no : '',
+      phone: typeof row.phone === 'string' ? row.phone : '',
       email: typeof row.email === 'string' ? row.email : '',
-      status: Boolean(row.is_active),
+      status: row.status === 'active',
       openedDate,
     };
   });
@@ -197,22 +195,27 @@ export async function createBranch(
 
 
   try {
-    // Insert and return the newly created branch record
+    const code = `BR${randomBytes(5).toString('hex').toUpperCase()}`;
     const result = await sql`
-      INSERT INTO branch (name, address, phone_no, email, is_active, opened_date)
-      VALUES (${data.name}, ${data.address}, ${data.phone}, ${data.email}, true, CURRENT_DATE)
-      RETURNING branch_id, name, address, phone_no, email, is_active, opened_date
+      INSERT INTO branches (code, name, address, phone, email, status)
+      VALUES (${code}, ${data.name}, ${data.address}, ${data.phone}, ${data.email}, 'active')
     `;
 
-    const row = result[0];
+    const insertedRows = await sql`
+      SELECT id AS branch_id, name, address, phone, email, status, created_at AS opened_date
+      FROM branches
+      WHERE id = ${result[0]?.insertId}
+    `;
+    const row = insertedRows[0];
+    if (!row) throw new Error('The new branch could not be read after insertion.');
     const newBranch: Branch = {
       id: String(row.branch_id),
-      name: row.name,
-      address: row.address ?? '',
-      phone: row.phone_no ?? '',
-      email: row.email ?? '',
-      status: row.is_active,
-      openedDate: String(row.opened_date),
+      name: String(row.name ?? ''),
+      address: typeof row.address === 'string' ? row.address : '',
+      phone: typeof row.phone === 'string' ? row.phone : '',
+      email: typeof row.email === 'string' ? row.email : '',
+      status: row.status === 'active',
+      openedDate: String(row.opened_date ?? ''),
     };
 
     return {
@@ -249,9 +252,9 @@ export async function updateBranch(
 
   try {
     await sql`
-      UPDATE branch
-      SET name = ${data.name}, address = ${data.address}, phone_no = ${data.phone}, email = ${data.email}
-      WHERE branch_id = ${Number(branchId)}
+      UPDATE branches
+      SET name = ${data.name}, address = ${data.address}, phone = ${data.phone}, email = ${data.email}
+      WHERE id = ${Number(branchId)}
     `;
 
     return { success: true, message: `Branch "${data.name}" parameters updated successfully.` };
@@ -282,17 +285,22 @@ export async function toggleBranchStatus(
   }
 
   try {
-    // Flip the is_active boolean and return the updated branch name
     const result = await sql`
-      UPDATE branch SET is_active = NOT is_active
-      WHERE branch_id = ${Number(branchId)}
-      RETURNING name, is_active
+      UPDATE branches SET status = IF(status = 'active', 'inactive', 'active')
+      WHERE id = ${Number(branchId)}
     `;
 
-    const updated = result[0];
+    if (Number(result[0]?.affectedRows ?? 0) === 0) {
+      return { success: false, message: 'Branch was not found or its status was not changed.' };
+    }
+    const updatedRows = await sql`
+      SELECT name, status FROM branches WHERE id = ${Number(branchId)}
+    `;
+    const updated = updatedRows[0];
+    if (!updated) throw new Error('The updated branch could not be read.');
     return {
       success: true,
-      message: `Branch "${updated.name}" is now ${updated.is_active ? 'Active' : 'Inactive'}.`,
+      message: `Branch "${updated.name}" is now ${updated.status === 'active' ? 'Active' : 'Inactive'}.`,
     };
   } catch (error) {
     console.error('Error toggling branch status:', error);
