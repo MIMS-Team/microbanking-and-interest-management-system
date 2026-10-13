@@ -182,8 +182,10 @@ function buildSummaryMetrics(
     case 'agent-transactions':
       return [
         { label: 'Agents', value: formatCount(rows.length) },
-        { label: 'Deposits', value: `${formatCount(sum('deposit_count'))} · ${formatCurrency(sum('deposit_amount'))}` },
-        { label: 'Withdrawals', value: `${formatCount(sum('withdrawal_count'))} · ${formatCurrency(sum('withdrawal_amount'))}` },
+        { label: 'Deposit Transactions', value: formatCount(sum('deposit_count')) },
+        { label: 'Deposit Amount', value: formatCurrency(sum('deposit_amount')) },
+        { label: 'Withdrawal Transactions', value: formatCount(sum('withdrawal_count')) },
+        { label: 'Withdrawal Amount', value: formatCurrency(sum('withdrawal_amount')) },
       ];
     case 'account-summary':
       return [
@@ -696,7 +698,18 @@ export default function HigherManagementReportsView({
                 {paginatedRows.length === 0 ? (
                   <tr><td colSpan={activeReport.columns.length} className="px-4 py-10 text-center text-slate-400">No matching records.</td></tr>
                 ) : paginatedRows.map((row, index) => (
-                  <tr key={String(row.account_no ?? row.agent_name ?? row.customer_name ?? row.month ?? index)} className="hover:bg-slate-50/60">
+                  <tr
+                    key={[
+                      row.account_no,
+                      row.agent_name,
+                      row.customer_name,
+                      row.month,
+                      row.branch_name,
+                      row.account_type,
+                      index,
+                    ].map((value) => String(value ?? '')).join(':')}
+                    className="hover:bg-slate-50/60"
+                  >
                     {activeReport.columns.map((column) => {
                       const value = row[column.key];
                       const displayValue = column.isCurrency && typeof value === 'number'

@@ -1,298 +1,398 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ApprovalRequest } from '@/types';
-import { getApprovalRequests, approveRequest, rejectRequest } from '@/services/approvalService';
+import { useEffect, useMemo, useState } from 'react';
 import { useSession } from '@/context/SessionContext';
+import type {
+  BranchApprovalAction,
+  BranchApprovalKind,
+  BranchApprovalRequest,
+} from '@/services/branchApprovalService';
 import Pagination from '@/components/common/Pagination';
-import Modal from '@/components/common/Modal';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
-import {
-  CheckSquare,
-  Check,
-  X,
-} from 'lucide-react';
+import Modal from '@/components/common/Modal';
+import { CheckSquare, Check, X } from 'lucide-react';
 
-// Branch Manager 2-tier operational approvals hub
+const approvalSections: Array<{ id: Exclude<BranchApprovalKind, 'all'>; label: string }> = [
+  { id: 'customer', label: 'Customer Requests' },
+  { id: 'account', label: 'Account Requests' },
+  { id: 'fd', label: 'Fixed Deposit Requests' },
+];
+
+const statusLabels: Record<BranchApprovalRequest['status'], string> = {
+  P: 'Pending',
+  A: 'Approved',
+  R: 'Rejected',
+  E: 'Expired',
+};
+
+function requestTypeLabel(value: string): string {
+  if (value === 'C') return 'Create';
+  if (value === 'U') return 'Update';
+  if (value === 'D') return 'Delete';
+  return value;
+}
+
+function requestDataSummary(data: Record<string, unknown>): string {
+  return Object.entries(data)
+    .map(([key, value]) => {
+      const label = key.replaceAll('_', ' ');
+      const displayValue = typeof value === 'string' ? value : JSON.stringify(value);
+      return `${label}: ${displayValue ?? ''}`;
+    })
+    .join(' · ');
+}
+
 export default function ApprovalsView() {
-  const { currentBranchId } = useSession();
-  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const [filterCategory, setFilterCategory] = useState<string>('All');
-  const [filterStatus, setFilterStatus] = useState<string>('All');
+  const { currentUser } = useSession();
+  const [activeKind, setActiveKind] = useState<Exclude<BranchApprovalKind, 'all'>>('customer');
+  const [requests, setRequests] = useState<BranchApprovalRequest[]>([]);
+  const [statusFilter, setStatusFilter] = useState<'all' | BranchApprovalRequest['status']>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [detailsRequest, setDetailsRequest] = useState<BranchApprovalRequest | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    request: BranchApprovalRequest;
+    action: BranchApprovalAction;
+  } | null>(null);
 
-  // Reject modal state
-  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
-  const [selectedReqId, setSelectedReqId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-
-  // Confirmation dialog
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-  });
-
-  // Load approvals for active branch
   useEffect(() => {
-    setApprovals(getApprovalRequests(currentBranchId));
-    setCurrentPage(1);
-  }, [currentBranchId]);
+    const controller = new AbortController();
+    const loadRequests = async () => {
+      const employeeId = Number(currentUser.id);
+      if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
+        setRequests([]);
+        setErrorMessage('A valid branch manager session is required.');
+        setIsLoading(false);
+        return;
+      }
 
-  // Filter requests
-  const filteredApprovals = approvals.filter((a) => {
-    const matchesCategory = filterCategory === 'All' || a.category === filterCategory;
-    const matchesStatus = filterStatus === 'All' || a.status === filterStatus;
-    return matchesCategory && matchesStatus;
-  });
+      setIsLoading(true);
+      setErrorMessage('');
+      try {
+        const params = new URLSearchParams({
+          employeeId: String(employeeId),
+          kind: activeKind,
+        });
+        const response = await fetch(`/api/branch-management/approvals?${params}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const result: unknown = await response.json();
+        if (
+          !response.ok ||
+          typeof result !== 'object' ||
+          result === null ||
+          !('requests' in result) ||
+          !Array.isArray(result.requests)
+        ) {
+          const message =
+            typeof result === 'object' && result !== null && 'message' in result &&
+            typeof result.message === 'string'
+              ? result.message
+              : 'Approval requests could not be loaded.';
+          throw new Error(message);
+        }
+        setRequests(result.requests as BranchApprovalRequest[]);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        console.error('Failed to load branch approval requests:', error);
+        setRequests([]);
+        setErrorMessage(error instanceof Error ? error.message : 'Approval requests could not be loaded.');
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    };
 
-  const paginatedApprovals = filteredApprovals.slice(
+    void loadRequests();
+    return () => controller.abort();
+  }, [activeKind, currentUser.id]);
+
+  const filteredRequests = useMemo(
+    () => requests.filter((request) => statusFilter === 'all' || request.status === statusFilter),
+    [requests, statusFilter],
+  );
+  const paginatedRequests = filteredRequests.slice(
     (currentPage - 1) * pageSize,
-    currentPage * pageSize
+    currentPage * pageSize,
   );
 
-  const handleApprove = (req: ApprovalRequest) => {
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Authorize Operational Request',
-      message: `Approve ${req.category} request for "${req.customerName}" submitted by ${req.submittedBy}?`,
-      onConfirm: () => {
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        const res = approveRequest(req.id);
-        if (res.success) {
-          setApprovals(getApprovalRequests(currentBranchId));
-        }
-      },
-    });
-  };
+  const updateStatus = async () => {
+    if (!pendingAction) return;
+    const employeeId = Number(currentUser.id);
+    setIsUpdating(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+    try {
+      const response = await fetch('/api/branch-management/approvals', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeId,
+          requestId: pendingAction.request.id,
+          kind: pendingAction.request.kind,
+          action: pendingAction.action,
+        }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof result === 'object' && result !== null && 'message' in result &&
+          typeof result.message === 'string'
+            ? result.message
+            : 'The approval request could not be updated.';
+        throw new Error(message);
+      }
 
-  const openRejectModal = (id: string) => {
-    setSelectedReqId(id);
-    setRejectReason('');
-    setIsRejectModalOpen(true);
-  };
-
-  const handleRejectSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedReqId) return;
-
-    const res = rejectRequest(selectedReqId, rejectReason);
-    if (res.success) {
-      setApprovals(getApprovalRequests(currentBranchId));
-      setIsRejectModalOpen(false);
+      const updatedStatus = pendingAction.action === 'approve' ? 'A' : 'R';
+      setRequests((current) =>
+        current.map((request) =>
+          request.kind === pendingAction.request.kind && request.id === pendingAction.request.id
+            ? { ...request, status: updatedStatus }
+            : request,
+        ),
+      );
+      setSuccessMessage(
+        `Request ${pendingAction.action === 'approve' ? 'approved' : 'rejected'} successfully.`,
+      );
+      window.dispatchEvent(new Event('btrust-approvals-change'));
+      setPendingAction(null);
+    } catch (error) {
+      console.error('Failed to update branch approval request:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'The approval request could not be updated.');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
+  const sectionLabel = approvalSections.find((section) => section.id === activeKind)?.label;
+
   return (
     <div className="space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <CheckSquare className="w-5 h-5 text-blue-600" />
-            Operational Approvals Hub
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Two-tier sign-off for customer registrations, account openings, and fixed deposits
-          </p>
-        </div>
+      <header>
+        <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight text-slate-900">
+          <CheckSquare className="h-5 w-5 text-blue-600" />
+          Operational Approvals
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Review requests assigned to your branch and update their approval status.
+        </p>
+      </header>
+
+      <div className="flex gap-2 overflow-x-auto border-b border-slate-200">
+        {approvalSections.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            onClick={() => {
+              setActiveKind(section.id);
+              setStatusFilter('all');
+              setCurrentPage(1);
+              setSuccessMessage('');
+            }}
+            aria-pressed={activeKind === section.id}
+            className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-semibold ${
+              activeKind === section.id
+                ? 'rounded-t-lg border-blue-800 bg-slate-900 text-white shadow-sm'
+                : 'border-transparent text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {section.label}
+          </button>
+        ))}
       </div>
 
-      {/* Filter Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Filter by Category</label>
-            <select
-              value={filterCategory}
-              onChange={(e) => {
-                setFilterCategory(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-800"
-            >
-              <option value="All">All Categories</option>
-              <option value="Customer Registration">Customer Registration</option>
-              <option value="Account Opening">Account Opening</option>
-              <option value="Fixed Deposit">Fixed Deposit</option>
-              <option value="Ownership Transfer">Ownership Transfer</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Filter by Status</label>
-            <select
-              value={filterStatus}
-              onChange={(e) => {
-                setFilterStatus(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-slate-800"
-            >
-              <option value="All">All Statuses</option>
-              <option value="Pending">Pending Review</option>
-              <option value="Approved">Approved</option>
-              <option value="Rejected">Rejected</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="text-xs text-slate-500">
-          Showing: <span className="font-bold text-slate-800">{filteredApprovals.length}</span> requests
-        </div>
+      <div className="flex flex-wrap items-end justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-2xs">
+        <label className="text-xs font-semibold text-slate-700">
+          Request status
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value as typeof statusFilter);
+              setCurrentPage(1);
+            }}
+            className="mt-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800"
+          >
+            <option value="all">Pending and previous</option>
+            <option value="P">Pending</option>
+            <option value="A">Approved</option>
+            <option value="R">Rejected</option>
+            <option value="E">Expired</option>
+          </select>
+        </label>
+        <p className="text-xs text-slate-500">
+          {sectionLabel}: <span className="font-bold text-slate-800">{filteredRequests.length}</span> requests
+        </p>
       </div>
 
-      {/* Approvals Table */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
+      {errorMessage && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {errorMessage}
+        </div>
+      )}
+      {successMessage && (
+        <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+          {successMessage}
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase">
+          <table className="w-full min-w-[980px] text-left text-xs text-slate-600">
+            <thead className="border-b border-slate-200/80 bg-slate-50/75 text-[11px] font-semibold uppercase text-slate-500">
               <tr>
-                <th className="py-3 px-4">Request ID</th>
-                <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4">Customer Name</th>
-                <th className="py-3 px-4">Details & Notes</th>
-                <th className="py-3 px-4">Submitted By</th>
-                <th className="py-3 px-4">Timestamp</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="px-4 py-3">Request ID</th>
+                <th className="px-4 py-3">Reference</th>
+                <th className="px-4 py-3">Operation</th>
+                <th className="px-4 py-3">Request details</th>
+                <th className="px-4 py-3">Submitted by</th>
+                <th className="px-4 py-3">Submitted at</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginatedApprovals.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-8 text-slate-400">
-                    No approval requests found matching the current criteria
+              {isLoading ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Loading requests…</td></tr>
+              ) : paginatedRequests.length === 0 ? (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No requests match this section and status.</td></tr>
+              ) : paginatedRequests.map((request) => (
+                <tr key={`${request.kind}-${request.id}`} className="align-top hover:bg-slate-50/60">
+                  <td className="whitespace-nowrap px-4 py-3 font-mono font-bold text-slate-900">{request.id}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-800">
+                    {request.referenceId ?? 'New request'}
+                  </td>
+                  <td className="px-4 py-3">{requestTypeLabel(request.requestType)}</td>
+                  <td className="max-w-md px-4 py-3 text-slate-600">
+                    <div className="line-clamp-3 break-words">{requestDataSummary(request.data) || 'No request details provided.'}</div>
+                    <button
+                      type="button"
+                      onClick={() => setDetailsRequest(request)}
+                      className="mt-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+                    >
+                      View full details
+                    </button>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">{request.submittedBy}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-[11px] text-slate-500">
+                    {new Date(request.submittedAt).toLocaleString()}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
+                      request.status === 'A'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : request.status === 'P'
+                          ? 'border-amber-200 bg-amber-50 text-amber-700'
+                          : request.status === 'R'
+                            ? 'border-rose-200 bg-rose-50 text-rose-700'
+                            : 'border-slate-200 bg-slate-100 text-slate-600'
+                    }`}>
+                      {statusLabels[request.status]}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    {request.status === 'P' ? (
+                      <div className="flex justify-end gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isUpdating}
+                          onClick={() => setPendingAction({ request, action: 'approve' })}
+                          className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          <Check className="h-3 w-3" /> Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isUpdating}
+                          onClick={() => setPendingAction({ request, action: 'reject' })}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
+                        >
+                          <X className="h-3 w-3" /> Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] italic text-slate-400">Completed</span>
+                    )}
                   </td>
                 </tr>
-              ) : (
-                paginatedApprovals.map((req) => (
-                  <tr key={req.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">{req.id}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md font-semibold text-[10px] border border-blue-100">
-                        {req.category}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-900">{req.customerName}</td>
-                    <td className="py-3 px-4 max-w-xs">
-                      <div className="line-clamp-2 text-slate-600">{req.details}</div>
-                      {req.rejectionReason && (
-                        <div className="text-[10px] text-rose-600 mt-0.5">
-                          Declined: {req.rejectionReason}
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-slate-700">{req.submittedBy}</td>
-                    <td className="py-3 px-4 font-mono text-slate-400 text-[11px]">{req.submittedAt}</td>
-                    <td className="py-3 px-4">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                          req.status === 'Approved'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : req.status === 'Pending'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : 'bg-rose-50 text-rose-700 border border-rose-200'
-                        }`}
-                      >
-                        {req.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {req.status === 'Pending' ? (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleApprove(req)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-[11px] transition-colors cursor-pointer shadow-2xs"
-                          >
-                            <Check className="w-3 h-3" />
-                            <span>Approve</span>
-                          </button>
-                          <button
-                            onClick={() => openRejectModal(req.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-200 hover:bg-rose-50 hover:text-rose-700 text-slate-600 rounded-lg font-semibold text-[11px] transition-colors cursor-pointer"
-                          >
-                            <X className="w-3 h-3" />
-                            <span>Reject</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-[11px] text-slate-400 italic">Completed</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
+              ))}
             </tbody>
           </table>
         </div>
-
-        {/* Pagination */}
         <Pagination
           currentPage={currentPage}
-          totalItems={filteredApprovals.length}
+          totalItems={filteredRequests.length}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
-          onPageSizeChange={setPageSize}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setCurrentPage(1);
+          }}
         />
       </div>
 
-      {/* Modal: Rejection Reason */}
       <Modal
-        isOpen={isRejectModalOpen}
-        onClose={() => setIsRejectModalOpen(false)}
-        title="Specify Reason for Rejection"
-        maxWidth="max-w-md"
+        isOpen={detailsRequest !== null}
+        onClose={() => setDetailsRequest(null)}
+        title="Approval Request Details"
+        maxWidth="max-w-2xl"
       >
-        <form onSubmit={handleRejectSubmit} className="space-y-4">
-          <p className="text-xs text-slate-500">
-            Please provide remarks explaining why this operational submission was declined:
-          </p>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Rejection Remarks</label>
-            <textarea
-              required
-              rows={3}
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="e.g. Signature specimen mismatch or missing residential proof document..."
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-            />
+        {detailsRequest && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
+              <div>
+                <div className="text-[11px] font-semibold uppercase text-slate-500">Request</div>
+                <div className="mt-1 font-mono text-sm font-bold text-slate-900">{detailsRequest.id}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold uppercase text-slate-500">Operation</div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">{requestTypeLabel(detailsRequest.requestType)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold uppercase text-slate-500">Reference</div>
+                <div className="mt-1 text-sm text-slate-800">{detailsRequest.referenceId ?? 'New request'}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold uppercase text-slate-500">Submitted by</div>
+                <div className="mt-1 text-sm text-slate-800">{detailsRequest.submittedBy}</div>
+              </div>
+            </div>
+            {/* Keep stored request values fully readable instead of limiting them to the table preview. */}
+            <dl className="divide-y divide-slate-200 rounded-xl border border-slate-200">
+              {Object.entries(detailsRequest.data).length > 0 ? (
+                Object.entries(detailsRequest.data).map(([key, value]) => (
+                  <div key={key} className="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-[minmax(140px,0.35fr)_1fr] sm:gap-4">
+                    <dt className="text-xs font-semibold capitalize text-slate-600">{key.replaceAll('_', ' ')}</dt>
+                    <dd className="break-words whitespace-pre-wrap text-sm text-slate-900">
+                      {typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''}
+                    </dd>
+                  </div>
+                ))
+              ) : (
+                <div className="px-4 py-5 text-sm text-slate-500">No additional request details were supplied.</div>
+              )}
+            </dl>
           </div>
-
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setIsRejectModalOpen(false)}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs cursor-pointer"
-            >
-              <span>Reject Request</span>
-            </button>
-          </div>
-        </form>
+        )}
       </Modal>
 
-      {/* Explicit Confirmation Dialog */}
       <ConfirmDialog
-        isOpen={confirmDialog.isOpen}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        onConfirm={confirmDialog.onConfirm}
-        onCancel={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+        isOpen={pendingAction !== null}
+        title={pendingAction?.action === 'approve' ? 'Approve Request' : 'Reject Request'}
+        message={
+          pendingAction
+            ? `${pendingAction.action === 'approve' ? 'Approve' : 'Reject'} request ${pendingAction.request.id}? Only its request status will be updated.`
+            : ''
+        }
+        confirmLabel={isUpdating ? 'Updating…' : pendingAction?.action === 'approve' ? 'Approve' : 'Reject'}
+        isDestructive={pendingAction?.action === 'reject'}
+        onConfirm={() => void updateStatus()}
+        onCancel={() => {
+          if (!isUpdating) setPendingAction(null);
+        }}
       />
     </div>
   );

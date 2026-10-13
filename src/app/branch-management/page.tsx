@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
 import BranchDashboardView from '@/components/branch/BranchDashboardView';
 import CustomersView from '@/components/branch/CustomersView';
@@ -11,7 +11,6 @@ import ApprovalsView from '@/components/branch/ApprovalsView';
 import HigherManagementReportsView from '@/components/higher-mgmt/HigherManagementReportsView';
 import BranchNetworkView from '@/components/higher-mgmt/BranchNetworkView';
 import { useSession } from '@/context/SessionContext';
-import { getApprovalRequests } from '@/services/approvalService';
 import {
   LayoutDashboard,
   Users,
@@ -25,12 +24,53 @@ import {
 
 // Dedicated portal interface for Branch Managers
 export default function BranchManagementPage() {
-  const { currentBranchId } = useSession();
+  const { currentUser } = useSession();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
 
-  const pendingApprovalsCount = getApprovalRequests(currentBranchId).filter(
-    (a) => a.status === 'Pending'
-  ).length;
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadPendingApprovalCount = async () => {
+      const employeeId = Number(currentUser.id);
+      if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
+        setPendingApprovalsCount(0);
+        return;
+      }
+      try {
+        const params = new URLSearchParams({
+          employeeId: String(employeeId),
+          kind: 'count',
+        });
+        const response = await fetch(`/api/branch-management/approvals?${params}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const result: unknown = await response.json();
+        if (
+          !response.ok ||
+          typeof result !== 'object' ||
+          result === null ||
+          !('pendingCount' in result) ||
+          typeof result.pendingCount !== 'number'
+        ) {
+          throw new Error('Branch approval count could not be loaded.');
+        }
+        setPendingApprovalsCount(result.pendingCount);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        console.error('Failed to load branch approval count:', error);
+        setPendingApprovalsCount(0);
+      }
+    };
+
+    const refreshCount = () => void loadPendingApprovalCount();
+    void loadPendingApprovalCount();
+    window.addEventListener('btrust-approvals-change', refreshCount);
+    return () => {
+      controller.abort();
+      window.removeEventListener('btrust-approvals-change', refreshCount);
+    };
+  }, [currentUser.id]);
 
   // Navigation tabs matching the reference screenshot exactly
   const navTabs: NavItem[] = [
