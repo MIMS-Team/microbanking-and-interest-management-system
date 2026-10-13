@@ -1,5 +1,10 @@
 # Review and five-person split
 
+Historical review of the September 2026 demo. Its database setup and test results
+describe that revision. Use [the root README](../README.md) for current MySQL
+setup and [whole-project verification](whole-project-verification.md) for later
+results.
+
 ## Corrections
 
 - Savings statements now display signed ledger amounts: a withdrawal or outgoing

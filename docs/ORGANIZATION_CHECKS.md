@@ -1,5 +1,9 @@
 # Organization verification
 
+Historical results from October 10, 2026. Authentication and banking now share
+MySQL; see [whole-project verification](whole-project-verification.md) for later
+results. The obsolete database reference files were removed on October 13, 2026.
+
 Base: GitHub main `8c2dec0f5f38b81fed6f975d6c751507da668aae`. The remote head was rechecked after cleanup and remained at this commit.
 
 | Check | Result |
@@ -24,6 +28,6 @@ The pre-cleanup nested authentication application passed its scoped TypeScript c
 
 Page/API moves preserve their URLs. The MySQL pool has a new explicit filename to avoid its collision with the PostgreSQL adapter. Domain service code was not rewritten; the savings/FD routes only change the database import path. Both stylesheets remain available, and the original authentication layout continues using its original stylesheet.
 
-Only byte-identical duplicate agent files, consolidated ignore/environment templates, the generated Next.js README and unused starter SVGs are removed. Historical PostgreSQL package/lock files and README remain under `docs/reference/`. The disabled debugging endpoint remains preserved as text outside active routing.
+Only byte-identical duplicate agent files, consolidated ignore/environment templates, the generated Next.js README and unused starter SVGs were removed during that organization work. The disabled debugging endpoint remains preserved as text outside active routing.
 
 This cleanup is prepared on the local `chore/file-organization-2026-10-10` branch. No cleanup commit or remote push was performed.

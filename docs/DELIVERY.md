@@ -1,5 +1,10 @@
 # Delivery and demonstration checklist
 
+Historical delivery record for the September 2026 demo. Its database setup and
+test results describe that revision. Use [the root README](../README.md) for
+current MySQL setup and [whole-project verification](whole-project-verification.md)
+for later results.
+
 ## Verified delivery — 16 September 2026
 
 - 43 automated SQL, authentication, report, HTTP-validation and maintenance tests pass.
