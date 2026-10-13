@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { BankMark } from '@/components/bank-mark';
+import { NotificationButton } from '@/components/notification-button';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -55,6 +56,13 @@ export const roleDetails: Record<Role, { short: string; tone: string; descriptio
   higher_manager: { short: 'HM', tone: 'bg-amber-50 text-amber-700 border-amber-200', description: 'Executive approvals and governance oversight' },
   manager: { short: 'BM', tone: 'bg-blue-50 text-blue-700 border-blue-200', description: 'Branch banking operations and supervisory controls' },
   agent: { short: 'AG', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200', description: 'Customer service and operational features' },
+};
+
+export const roleIcons: Record<Role, typeof ShieldCheck> = {
+  admin: ShieldAlert,
+  higher_manager: ShieldCheck,
+  manager: Building2,
+  agent: BadgeCheck,
 };
 
 
@@ -150,7 +158,7 @@ export async function performClientLogout(): Promise<LogoutResult> {
 
 export interface LogoutButtonProps {
   className?: string;
-  variant?: 'nav' | 'mobile' | 'button';
+  variant?: 'nav' | 'mobile' | 'button' | 'menu';
   onLogoutSuccess?: () => void;
   onLogoutError?: (error: string) => void;
   redirectUrl?: string;
@@ -192,14 +200,16 @@ export function LogoutButton({
   };
 
   const baseStyles =
-    variant === 'mobile'
+    variant === 'menu'
+      ? 'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-left'
+      : variant === 'mobile'
       ? 'flex w-full items-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed'
       : variant === 'button'
       ? 'inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:from-rose-700 hover:to-rose-800 disabled:opacity-50 disabled:cursor-not-allowed'
       : 'ml-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs';
 
   return (
-    <div className="inline-flex flex-col items-start">
+    <div className={`inline-flex flex-col items-start ${variant === 'menu' ? 'w-full' : ''}`}>
       <button
         type="button"
         onClick={handleLogout}
@@ -417,20 +427,9 @@ export function RavinduShell({
 
   useEffect(() => {
     const nav = navigationRef.current?.querySelector<HTMLElement>('.workspace-nav');
-    const selected = nav?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!nav || !selected) return;
-    function keepSelectedVisible() {
-      if (!nav || !selected) return;
-      const bounds = nav.getBoundingClientRect();
-      const item = selected.getBoundingClientRect();
-      if (item.left < bounds.left || item.right > bounds.right) {
-        nav.scrollLeft += item.left - bounds.left - (bounds.width - item.width) / 2;
-      }
+    if (nav) {
+      nav.scrollLeft = 0;
     }
-    keepSelectedVisible();
-    const observer = new ResizeObserver(keepSelectedVisible);
-    observer.observe(nav);
-    return () => observer.disconnect();
   }, [pathname, searchParams, navigation]);
 
   useEffect(() => {
@@ -471,7 +470,6 @@ export function RavinduShell({
 
   const userRole = session?.role ?? 'agent';
   const roleName = roleLabels[userRole];
-  const initials = getInitials(session?.full_name ?? 'Employee User');
 
   // Role-based navigation items
   const navItems = [
@@ -498,11 +496,8 @@ export function RavinduShell({
             </nav>}
           </div>
           <div className="bank-account">
-            <Link className="bank-account-link" href="/profile" aria-label="My profile">
-              <span className="avatar">{initials}</span>
-              <span className="bank-account-name"><strong>{session?.full_name || 'Your workspace'}</strong><small>{roleName}</small></span>
-            </Link>
-            <LogoutButton variant="nav" className="bank-logout" onLogoutSuccess={() => setSession(null)} />
+            <NotificationButton user={session} />
+            <UserProfileButton session={session} onLogoutSuccess={() => setSession(null)} />
           </div>
         </div>
       </header>
@@ -511,6 +506,124 @@ export function RavinduShell({
         {children}
       </main>
       <footer className="bank-footer"><span>B-Trust Bank · MIMS</span><span>{roleName} workspace</span></footer>
+    </div>
+  );
+}
+
+export function UserProfileButton({
+  session,
+  onLogoutSuccess,
+}: {
+  session: PublicEmployee | null;
+  onLogoutSuccess: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  if (!session) return null;
+
+  const userRole = session.role ?? 'agent';
+  const roleName = roleLabels[userRole];
+  const initials = getInitials(session.full_name ?? 'Employee User');
+  const RoleIcon = roleIcons[userRole] || UserRound;
+  const displayName = (session.full_name || 'Your workspace').replace(/_/g, ' ');
+
+  return (
+    <div className="relative inline-block text-left">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="role-trigger relative flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-1 cursor-pointer"
+        aria-label={`User menu (${displayName}, ${roleName})`}
+        aria-expanded={open}
+        aria-haspopup="true"
+        title={`${displayName} (${roleName})`}
+      >
+        <span className={`role-icon-badge role-icon-${userRole}`}>
+          <RoleIcon size={14} />
+        </span>
+      </button>
+
+      {open && (
+        <div
+          ref={dropdownRef}
+          className="user-menu-dropdown absolute right-0 mt-2.5 w-64 rounded-2xl border border-slate-200/90 bg-white p-2 shadow-2xl z-50 animate-in fade-in-50 zoom-in-95 duration-150"
+          role="menu"
+          aria-label="User account menu"
+        >
+          {/* User Details ("privius logic") */}
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-50/80 border border-slate-100">
+            <span className="avatar shrink-0">{initials}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-slate-900 truncate leading-snug">
+                {displayName}
+              </p>
+              <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                {session.email}
+              </p>
+              <div className="mt-2">
+                <span className={`role-shower role-shower-${userRole}`}>
+                  {roleName}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="my-1.5 border-t border-slate-100" />
+
+          {/* Profile Link ("privius logic") */}
+          <Link
+            href="/profile"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+            role="menuitem"
+          >
+            <UserRound className="h-4 w-4 text-slate-500 shrink-0" />
+            <span>My Profile</span>
+          </Link>
+
+          <div className="my-1 border-t border-slate-100" />
+
+          {/* Logout Button */}
+          <div className="p-0.5">
+            <LogoutButton
+              variant="menu"
+              onLogoutSuccess={() => {
+                setOpen(false);
+                onLogoutSuccess();
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
