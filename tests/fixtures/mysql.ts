@@ -2,8 +2,13 @@ import { disposableDatabase } from '../../scripts/disposable-mysql.mjs';
 import { getDb } from '../../lib/db';
 import { closePoolForTest } from '../../lib/server/db';
 import { seedBankingFixture, fixturePolicies } from './banking-seed';
+import {postgresFixture} from './postgres';
 
 export async function bankingFixture(seed=true) {
+  if(process.env.TEST_DATABASE_URL)return postgresFixture(seed) as unknown as Awaited<ReturnType<typeof mysqlBankingFixture>>;
+  return mysqlBankingFixture(seed);
+}
+async function mysqlBankingFixture(seed=true) {
   const owned=await disposableDatabase();
   Object.assign(process.env,owned.environment,fixturePolicies);
   const database=await getDb();

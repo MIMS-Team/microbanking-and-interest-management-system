@@ -17,6 +17,7 @@
     "test:e2e:production": "node scripts/run-auth-production-e2e.mjs",
     "test:banking": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:reports": "tsx --test tests/reports.test.ts",
+    "test:postgres": "node scripts/run-postgres-tests.mjs",
     "test:smoke": "node scripts/smoke.mjs",
     "db:setup": "tsx scripts/db-setup.ts",
     "lint": "eslint",

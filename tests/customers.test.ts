@@ -36,7 +36,7 @@ async function counts() {
   return (await fixture.database.query('SELECT (SELECT COUNT(*) FROM customers) customers, (SELECT COUNT(*) FROM approvals) approvals, (SELECT COUNT(*) FROM audit_logs) audit')).rows[0];
 }
 
-test('registration, approval, edit, deactivation and reactivation use MySQL transactions', async () => {
+test('registration, approval, edit, deactivation and reactivation use database transactions', async () => {
   const customer = await register();
   assert.equal(customer.status,'pending');
   await decide(customer.id);
