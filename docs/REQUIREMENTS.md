@@ -3,8 +3,9 @@
 This document records source requirements for the B-Trust Bank Microbanking and
 Interest Management System. It is a requirements baseline, **not a statement that
 every requirement has been implemented or verified**. See
-[the delivery checklist](DELIVERY.md) for implementation, checks and deliberate
-adaptations to the sources.
+[the SRS implementation matrix](srs-requirement-matrix.md) and
+[the verification report](whole-project-verification.md) for implementation,
+checks and deliberate adaptations to the sources.
 
 The current project instruction is to build the whole application using Next.js
 for the frontend and backend and an SQL database, with understandable code,
@@ -14,31 +15,20 @@ application.
 
 ## Evidence and limits
 
-The source images are in `../../../tmp/pdfs/review/`, relative to this file:
+The reviewed source images and earlier UI description were temporary external
+files and are not included in this repository. The source references are retained
+by subject and PDF page:
 
-- [Overall use cases](../../../tmp/pdfs/review/srs-p13.png): PDF page 13, printed page 9.
-- [Authentication](../../../tmp/pdfs/review/srs-p18.png): PDF page 18, printed page 14.
-- [Customer registration](../../../tmp/pdfs/review/srs-p20.png),
-  [customer edits](../../../tmp/pdfs/review/srs-p21.png), and
-  [customer status requests](../../../tmp/pdfs/review/srs-p22.png).
-- [Savings creation](../../../tmp/pdfs/review/srs-p24.png),
-  [savings edits](../../../tmp/pdfs/review/srs-p25.png),
-  [savings edit/status flow](../../../tmp/pdfs/review/srs-p26.png), and
-  [savings status/inactivity](../../../tmp/pdfs/review/srs-p27.png).
-- [FD creation](../../../tmp/pdfs/review/srs-p29.png),
-  [FD funding/closure](../../../tmp/pdfs/review/srs-p30.png), and
-  [FD closure/maturity](../../../tmp/pdfs/review/srs-p31.png).
-- [Withdrawals](../../../tmp/pdfs/review/srs-p33.png) and
-  [withdrawal checks/deposits](../../../tmp/pdfs/review/srs-p34.png).
-- [Savings interest](../../../tmp/pdfs/review/srs-p36.png) and
-  [FD interest/functional requirements](../../../tmp/pdfs/review/srs-p37.png).
-- [Staff creation](../../../tmp/pdfs/review/srs-p38.png),
-  [staff creation/update](../../../tmp/pdfs/review/srs-p39.png),
-  [staff update/deactivation](../../../tmp/pdfs/review/srs-p40.png), and
-  [staff deactivation/password reset](../../../tmp/pdfs/review/srs-p41.png).
-- [Reports and branches](../../../tmp/pdfs/review/srs-p43.png): PDF page 43, printed page 39.
-- [Group 29 ER diagram](../../../tmp/pdfs/review/erd.png).
-- [Earlier UI description](../../customer-management-ui/README.md).
+- Overall use cases: page 13 (printed page 9).
+- Authentication: page 18 (printed page 14).
+- Customer registration, edits and status requests: pages 20-22.
+- Savings creation, edits, status and inactivity: pages 24-27.
+- FD creation, funding, closure and maturity: pages 29-31.
+- Withdrawals, checks and deposits: pages 33-34.
+- Savings/FD interest and functional requirements: pages 36-37.
+- Staff creation, updates, deactivation and password reset: pages 38-41.
+- Reports and branches: page 43 (printed page 39).
+- Group 29 ER diagram and the earlier customer-management UI description.
 
 The images listed above were inspected visually. Not every page of the original
 SRS was available in this extracted set. The latest 50 accessible tasks were
