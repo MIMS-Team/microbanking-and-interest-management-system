@@ -1,5 +1,10 @@
 # Authentication and employee-management completion report
 
+Historical authentication results from October 10, 2026. The banking database
+mismatch recorded here was subsequently resolved by the shared MySQL
+implementation. See [whole-project verification](whole-project-verification.md)
+for later results and [the root README](../README.md) for current setup.
+
 Validated locally on 10 October 2026. The starting checkout and remote `main` both matched `c1611350c4b5ce67bf4fad497a55fe288399c211`; the working tree was initially clean. All implementation is in the root application. No nested application or second authentication system was introduced. The changes were initially validated locally, and a subsequent user request authorized grouping them into local commits. No push, merge or deployment was performed.
 
 ## Already fixed before this work

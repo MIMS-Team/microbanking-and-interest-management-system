@@ -1,5 +1,10 @@
 # Authentication verification follow-up — 2026-10-10
 
+These are historical authentication results. The banking database mismatch
+recorded here was subsequently resolved by the shared MySQL implementation.
+See [whole-project verification](whole-project-verification.md) for later results
+and [the root README](../README.md) for current setup.
+
 Reviewed and worked locally on `Ravindu-feature/auth-imp`, starting at
 `3f9a67b5d434d3334d6893c71a3dd1f0a3ec4f60`. Remote `main` matched that commit
 when checked before implementation. The working tree was initially clean.
