@@ -11,7 +11,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## Run the complete local project
 
 When asked to run the whole project, use `npm run dev:full`. This tracked launcher
-selects a reachable seeded MySQL demo, starts the Next.js app and local OTP inbox,
-and prints both URLs. Use `npm run dev:verify` to check login, OTP, session,
+selects a reachable seeded MySQL demo or automatically provisions one using
+Docker Compose on a fresh clone, starts the Next.js app and local OTP inbox,
+and prints both URLs. Fresh clones need Node.js 22.13+ and running Docker with
+Compose; run `npm ci` first. No `.env.local` is required for the automatic demo.
+Use `npm run dev:verify` to check login, OTP, session,
 dashboard, and banking data. Do not substitute plain `npm run dev`, which does not
 configure the database or local email delivery.

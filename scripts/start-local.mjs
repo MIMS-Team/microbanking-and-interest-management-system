@@ -6,8 +6,11 @@ import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import mysql from 'mysql2/promise';
 import { createLocalMailbox } from './local-mailbox.mjs';
+import { ensureLocalDemo, localDemoPath, localMysqlSettingsPath } from './local-database.mjs';
 
 if (process.env.NODE_ENV === 'production') throw new Error('The local launcher cannot run in production.');
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) throw new Error('The local project requires Node.js 22.13 or later. Install Node.js, run npm ci, and retry.');
 
 const dataDirectory = resolve('.data');
 const runtimePath = resolve(dataDirectory, 'local-project-runtime.json');
@@ -32,6 +35,7 @@ async function responds(url, timeout = 3000) {
 function candidates() {
   if (requestedEnvFile) return [resolve(requestedEnvFile)];
   const paths = [];
+  if (existsSync(localDemoPath)) paths.push(localDemoPath);
   if (existsSync(resolve('.env.local'))) paths.push(resolve('.env.local'));
   if (existsSync(dataDirectory)) {
     paths.push(...readdirSync(dataDirectory)
@@ -42,9 +46,9 @@ function candidates() {
   return [...new Set(paths)];
 }
 
-async function selectDatabase() {
+async function selectDatabase(files = candidates(), provision = !requestedEnvFile) {
   const failures = [];
-  for (const file of candidates()) {
+  for (const file of files) {
     if (!existsSync(file)) { failures.push(`${file}: file not found`); continue; }
     let environment;
     try { environment = parseEnv(readFileSync(file, 'utf8')); }
@@ -76,6 +80,10 @@ async function selectDatabase() {
     } finally { await connection?.end(); }
   }
   const detail = failures.length ? `\nChecked:\n- ${failures.join('\n- ')}` : '';
+  if (provision) {
+    const file = await ensureLocalDemo();
+    return selectDatabase([file], false);
+  }
   throw new Error(`No reachable seeded local MySQL database was found.${detail}\nRun npm run seed:dev with TEST_MYSQL_* configured, then retry npm run dev:full.`);
 }
 
@@ -95,7 +103,9 @@ async function portAvailable(port) {
   }
 }
 
-const selected = await selectDatabase();
+// Restart the managed database before probing it after a laptop/Docker restart.
+if (!requestedEnvFile && existsSync(localMysqlSettingsPath)) await ensureLocalDemo();
+const selected = await selectDatabase(undefined, !existsSync(localMysqlSettingsPath) && !requestedEnvFile);
 let existingStack = false;
 if (existsSync(runtimePath)) {
   try {

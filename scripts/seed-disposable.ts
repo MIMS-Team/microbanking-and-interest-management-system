@@ -9,7 +9,12 @@ import {closePoolForTest} from '../lib/server/db';
 
 // Always CREATE a random database. No target-name argument and no runtime
 // DB_* fallback: this command cannot seed an existing/shared database.
-const output=path.resolve('.data','disposable-demo-'+randomUUID()+'.env');
+const output=process.env.MIMS_LOCAL_SEED_ENV_FILE
+  ? path.resolve(process.env.MIMS_LOCAL_SEED_ENV_FILE)
+  : path.resolve('.data','disposable-demo-'+randomUUID()+'.env');
+if (process.env.MIMS_LOCAL_SEED_ENV_FILE && output !== path.resolve('.data','local-demo.env')) {
+  throw new Error('Automatic local demo settings must be written to .data/local-demo.env.');
+}
 try {await import('node:fs/promises').then(fs=>fs.access(output));throw new Error('A demo settings file already exists; preserve it and choose a new explicit test session.');} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;}
 const owned=await disposableDatabase();
 Object.assign(process.env,owned.environment);
@@ -33,7 +38,7 @@ try {
   console.log('Fictional database seeded:',owned.name);
   console.log('Local connection settings:',file);
   console.log('Logins: admin@btrust.local, higher@btrust.local, manager@btrust.local, agent@btrust.local');
-  console.log('Dummy password: Demo@12345. OTP delivery must use your existing approved local email setup.');
+  console.log('Dummy password: Demo@12345. npm run dev:full starts the local OTP inbox.');
   console.log('Financial policy and production email configuration were not changed.');
   console.log('Delete this disposable database explicitly when finished testing.');
   await closePoolForTest();await owned.retainForDemo();

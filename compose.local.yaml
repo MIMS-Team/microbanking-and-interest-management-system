@@ -1,0 +1,21 @@
+# Used by npm run dev:full. Credentials are generated into ignored .data/ files.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MIMS_LOCAL_MYSQL_ROOT_PASSWORD:?Start with npm run dev:full}
+      MYSQL_ROOT_HOST: "%"
+    ports:
+      # Docker assigns a free port, so an installed MySQL server can coexist.
+      - "127.0.0.1::3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+volumes:
+  mysql-data:

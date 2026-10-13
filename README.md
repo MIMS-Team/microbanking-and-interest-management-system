@@ -2,8 +2,9 @@
 
 The active Next.js application is at the repository root. Authentication,
 customers, savings, fixed deposits, transactions, approvals and reports now
-share MySQL 8.0 through `lib/server/db.ts` and `lib/db.ts`. Runtime never seeds
-banking data automatically.
+share MySQL through `lib/server/db.ts` and `lib/db.ts`. The local demo launcher
+can provision its own fictional database; the application runtime never seeds
+an existing database.
 
 Read [the database integration report](docs/database-compliance.md) for the SRS
 mapping, migration safeguards, verification evidence and remaining limitations.
@@ -21,20 +22,45 @@ write a unique ignored connection file and preserve earlier demo/configuration f
 
 ## Install and configure
 
-Use Node.js 22 or later and npm. The root `package-lock.json` is authoritative.
+For a fresh clone on Windows, macOS or Linux, install **Node.js 22.13 or later**
+and **Docker with Compose**. Start Docker Desktop (use Linux containers on
+Windows), or start Docker Engine on Linux. The root `package-lock.json` is
+authoritative. From the repository directory, run:
 
-For the complete local demo after a seeded MySQL database exists, use the tracked
-launcher rather than starting Next.js directly:
-
-```powershell
+```sh
+npm ci
 npm run dev:full
 ```
 
-It discovers the newest reachable `.data/disposable-demo*.env`, verifies all 11
-migrations and seeded staff, and starts the Next.js app, a loopback-only OTP inbox,
-and the employee-notification worker. It prints the application and inbox URLs and
-writes `.data/local-project-runtime.json`. Verify the running stack with
-`npm run dev:verify`. On Windows, `Start-MIMS.cmd` runs the same launcher.
+No `.env.local`, database credentials, separate MySQL installation or SMTP
+account is required. The first launch downloads MySQL 8.4, creates a Docker
+volume for this checkout, applies all migrations, and seeds fictional employees
+and banking data. It starts the Next.js app, the local OTP inbox and the employee
+notification worker, and prints:
+
+- Application: http://127.0.0.1:3000
+- OTP inbox: http://127.0.0.1:8025
+
+Sign in with `agent@btrust.local` and password `Demo@12345`, then open the inbox
+to copy the OTP. Other demo accounts are `admin@btrust.local`,
+`higher@btrust.local` and `manager@btrust.local`, with the same password.
+Emails stay on your computer. Keep the terminal open while using the app.
+Press Ctrl+C to stop the app and inbox. Database data persists in the Docker
+volume and is reused on the next launch; the database container stays running.
+Generated credentials and runtime files stay in ignored `.data/` files.
+
+In another terminal, run `npm run dev:verify` to check login, OTP, session,
+dashboard and banking data. On Windows, `Start-MIMS.cmd` installs dependencies
+if missing and runs the same launcher. If PowerShell blocks `npm.ps1`, use
+`npm.cmd ci`, `npm.cmd run dev:full` and `npm.cmd run dev:verify`.
+
+If the launcher finds an existing reachable seeded `.env.local` or
+`.data/disposable-demo*.env`, it can reuse that setup without Docker. After an
+automatic demo has been created, its `.data/local-demo.env` takes precedence
+and its Docker database is restarted as needed. Each clone has a separate
+container and volume; do not copy another computer's `.data/` directory.
+Preserve `.data/local-mysql.env` along with its volume, since it contains that
+volume's generated credentials.
 
 To select a connection file explicitly, use `npm run dev:full -- --env-file=PATH`
 or set `MIMS_LOCAL_ENV_FILE`. An explicit file must be valid and reachable; the
@@ -48,6 +74,8 @@ After upgrading the launcher, restart any existing stack once to update its runt
 Another coding agent should use `npm run dev:full` when asked to run the whole
 project. `npm run dev` starts only Next.js and still requires DB and email settings
 to be supplied separately.
+
+For a manually managed database or deployment, use the separate setup below:
 
 ```powershell
 npm ci

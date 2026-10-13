@@ -1,3 +1,0 @@
--- Historical authentication schema reference only.
--- Use npm run db:setup for the canonical versioned MySQL installation and upgrades.
--- Authentication tables are defined in ../migrations/001-auth.sql.
