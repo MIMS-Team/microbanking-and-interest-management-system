@@ -198,7 +198,7 @@ must overwrite forwarding headers and prevent direct backend access before
 
 | Group | Files and purpose |
 | --- | --- |
-| Schema/migrations | `database/migrations/004-security.sql`, `005-rate-corrections.sql`, `006-durable-jobs.sql`; `scripts/migrate-database.mjs`, `database-preflight.mjs`, `check-database.ts`. Additive schema and safe diagnostics. |
+| Schema/migrations | `database/migrations/004-security.sql`, `005-rate-corrections.sql`, `006-durable-jobs.sql`; `scripts/migrate-database.mjs`, `database-preflight.mjs` (`npm run db:preflight`). Additive schema and safe diagnostics. |
 | Authentication/employees | `lib/server/employee-confirmation.ts`, `employee-approvals.ts`, `otp-verifier.ts`, `auth.ts`, `db.ts`; user API routes; `lib/auth/approvals.ts`. Current authority, atomic verification and stable administrator protection. |
 | Banking/rates/permissions | `lib/permissions.ts`, `lib/banking.ts`, `lib/banking/effective-rate.ts`, `corrections.ts`, `interest.ts`, `accounts.ts`, `account-lifecycle.ts`, `approvals.ts`, `ledger.ts`, `transactions.ts`, `bootstrap.ts`, `lib/reports.ts`. Effective pricing, append-only corrections and scoped explicit grants. |
 | Jobs/operations | `lib/maintenance.ts`, `scripts/job-claims.mjs`, `scheduler.mjs`, `database-backup.mjs`, `backup-retention.mjs`, `database-principals.mjs`, `recovery-drill.ts`, `disposable-mysql.mjs`, `seed-disposable.ts`. Durable ownership and isolated operational tools. |

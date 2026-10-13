@@ -55,8 +55,8 @@ without its owner's reviewed migration procedure and backup. No shared database
 was modified during the database integration task.
 
 `database/migrations/` is the canonical schema. `database/schema.sql` points to
-that installation path. `database/history/` and `tests/fixtures/legacy-banking.sql`
-are historical references and must not be executed as installation scripts.
+that installation path. `database/history/` contains the historical MySQL schema
+used by upgrade-preservation tests and must not be executed as an installation script.
 `npm run seed:dev` creates and seeds a **new disposable MySQL database**.
 It requires explicit `TEST_MYSQL_*` settings, never reads an existing target from
 `DB_*`, and writes restricted application connection settings into the ignored

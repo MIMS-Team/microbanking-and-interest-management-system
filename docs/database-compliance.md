@@ -23,16 +23,16 @@ customer authentication/password entities conflict with SRS section 2.3.5
 | Path | Existing behavior / confirmed gap |
 | --- | --- |
 | `database/schema.sql` | Historical MySQL dump; hardcoded database, destructive drops, root trigger definer; missing banking ledger/approval/interest tables. |
-| `database/auth/` | Separate SQL examples/definitions; not a versioned upgrade path. |
+| Former `database/auth/` | Separate SQL examples/definitions; subsequently removed in favor of canonical migrations and automated tests. |
 | `scripts/migrate-auth-mysql.mjs` | Additive authentication schema plus implicit developer SQLite import; one ALTER failure swallowed; no checksum/version ledger. |
 | `lib/db.ts` | PostgreSQL/PGlite banking pool; automatically executes the MySQL dump and seeds on startup. Confirmed dialect mismatch. |
-| `lib/mysql.ts` | Separate MySQL pool with implicit root/development database fallback. |
+| Former `lib/mysql.ts` | Separate MySQL pool with implicit root/development database fallback; its unused compatibility export was subsequently removed. |
 | `lib/server/db.ts`, `auth.ts` | MySQL/SQLite adapters; database sessions, lockout, reset and atomic resend. Duplicate credential hashes; fixed public OTP salt. |
 | `lib/banking/` | Useful transactional approvals, ledger, daily accrual and monthly posting, all PostgreSQL SQL. Generic unvalidated approval targets; owner_verified boolean; immediate reassignment; no business-hours policy. |
 | `lib/reports.ts`, `maintenance.ts` | Real PostgreSQL aggregates and catch-up jobs; administrators have financial access; inactivity includes deposits/transfers; no durable job outcomes. |
 | `app/api/` | Authenticated root action API, but savings/FD/cron alternative paths bypass authorization and ledger. FD principal debited while pending. |
 | `src/lib/db.ts`, `src/services/`, `src/app/api/` | Absent locally. Read at reviewed main: Neon employee/branch/OTP model, in-memory customer/account services and hardcoded reports. Not active in this checkout. |
-| `tests/fixtures/legacy-banking.sql` | PostgreSQL fixture for compatibility tests only; useful design reference, not a MySQL migration. |
+| Former `tests/fixtures/legacy-banking.sql` | PostgreSQL fixture, subsequently removed after compatibility tests moved to MySQL. |
 | Setup / seed / scheduler / CI | PGlite setup and demo seed mixed with runtime; scheduler has no persisted outcomes; smoke test targets removed auth API; CI separates MySQL auth from banking. |
 
 ## Requirement-to-implementation checklist
@@ -78,7 +78,7 @@ unconditional claim of SRS compliance.
 
 ## Implemented changes and file groups
 
-- `lib/db.ts`, `lib/mysql.ts`, `lib/server/db.ts`: one MySQL pool and transaction
+- `lib/db.ts`, `lib/server/db.ts`: one MySQL pool and transaction
   connection for root banking/authentication. Parameter binding supports the
   existing numbered application placeholders; SQL itself is native MySQL.
   Transactions use READ COMMITTED and UTC. No runtime migration or financial seed.
