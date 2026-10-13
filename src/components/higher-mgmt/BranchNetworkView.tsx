@@ -116,12 +116,9 @@ export default function BranchNetworkView() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Branch Network</h1>
           <p className="mt-1 text-xs text-slate-500">
-            Read-only overview of branch operations, staffing, and customer activity.
+            Overview of branch operations, staffing, and customer activity.
           </p>
         </div>
-        <span className="inline-flex w-fit items-center rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-semibold text-blue-800">
-          View only
-        </span>
       </header>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

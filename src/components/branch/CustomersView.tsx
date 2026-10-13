@@ -1,631 +1,455 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Customer } from '@/types';
-import {
-  getCustomers,
-  createCustomer,
-  updateCustomer,
-  toggleCustomerStatus,
-  renewCustomerPassword,
-} from '@/services/customerService';
-import { getEmployees } from '@/services/staffService';
+import { FormEvent, useEffect, useState } from 'react';
+import { Mail, MapPin, Phone, Power, Search, Users, UserRoundCog } from 'lucide-react';
 import { useSession } from '@/context/SessionContext';
-import Pagination from '@/components/common/Pagination';
-import Modal from '@/components/common/Modal';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
+import Modal from '@/components/common/Modal';
+import Pagination from '@/components/common/Pagination';
 import SearchableSelect from '@/components/common/SearchableSelect';
-import {
-  Users,
-  UserPlus,
-  Search,
-  KeyRound,
-  Edit2,
-  Power,
-  Phone,
-  Mail,
-  MapPin,
-  CheckCircle,
-} from 'lucide-react';
+import type { AdminCustomerPage, Customer } from '@/types';
 
-// Customer management portal scoped to branch operations
+interface BranchAgentOption {
+  id: string;
+  name: string;
+}
+
+interface BranchCustomerDirectory extends AdminCustomerPage {
+  agents: BranchAgentOption[];
+}
+
+const searchFields = [
+  { value: 'name', label: 'Customer name' },
+  { value: 'customer_id', label: 'Customer ID' },
+  { value: 'nic', label: 'NIC' },
+  { value: 'agent_name', label: 'Agent name' },
+  { value: 'agent_id', label: 'Agent ID' },
+] as const;
+
+const statusOptions = [
+  { value: '', label: 'All statuses' },
+  { value: 'Active', label: 'Active' },
+  { value: 'Inactive', label: 'Inactive' },
+  { value: 'Blocked', label: 'Blocked' },
+] as const;
+
 export default function CustomersView() {
-  const { currentBranchId } = useSession();
+  const { currentUser } = useSession();
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
+  const [agents, setAgents] = useState<BranchAgentOption[]>([]);
+  const [total, setTotal] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [searchTypeInput, setSearchTypeInput] = useState<(typeof searchFields)[number]['value']>('name');
+  const [searchType, setSearchType] = useState<(typeof searchFields)[number]['value']>('name');
+  const [status, setStatus] = useState<(typeof statusOptions)[number]['value']>('');
+  const [selectedAgents, setSelectedAgents] = useState<Record<string, string>>({});
+  const [assignmentCustomer, setAssignmentCustomer] = useState<Customer | null>(null);
+  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [savingCustomerId, setSavingCustomerId] = useState<string | null>(null);
+  const [pendingStatusCustomer, setPendingStatusCustomer] = useState<Customer | null>(null);
+  const [agentAssignmentConfirmationOpen, setAgentAssignmentConfirmationOpen] = useState(false);
+  const [error, setError] = useState('');
 
-  // Field agents assigned to this branch
-  const agents = getEmployees('Field Agent');
-  const agentOptions = agents.map((a) => ({
-    value: a.id,
-    label: a.name,
-    sublabel: `${a.phone} • ${a.branchName}`,
-  }));
-
-  // Fetch branch customers on load and branch change
   useEffect(() => {
-    setCustomers(getCustomers(currentBranchId));
-    setCurrentPage(1);
-  }, [currentBranchId]);
+    const controller = new AbortController();
+    // Fetch the requested customer page and its allowed branch agents from the server.
+    const loadCustomers = async () => {
+      const employeeId = Number(currentUser.id);
+      if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
+        setCustomers([]);
+        setAgents([]);
+        setTotal(0);
+        setError('A valid branch manager session is required.');
+        setLoading(false);
+        return;
+      }
 
-  // Modal states
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-
-  // Form states
-  const [formName, setFormName] = useState('');
-  const [formNic, setFormNic] = useState('');
-  const [formEmail, setFormEmail] = useState('');
-  const [formPhone, setFormPhone] = useState('');
-  const [formAddress, setFormAddress] = useState('');
-  const [formDob, setFormDob] = useState('1990-01-01');
-  const [formAgentId, setFormAgentId] = useState('');
-
-  // Password renewal modal
-  const [passwordRenewInfo, setPasswordRenewInfo] = useState<{
-    isOpen: boolean;
-    customerName: string;
-    tempPass: string;
-    message: string;
-  }>({
-    isOpen: false,
-    customerName: '',
-    tempPass: '',
-    message: '',
-  });
-
-  // Confirmation dialog state
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-  });
-
-  // Search filter
-  const filteredCustomers = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.nationalId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.phone.includes(searchQuery)
-  );
-
-  const paginatedCustomers = filteredCustomers.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  const resetForm = () => {
-    setFormName('');
-    setFormNic('');
-    setFormEmail('');
-    setFormPhone('');
-    setFormAddress('');
-    setFormDob('1990-01-01');
-    setFormAgentId(agentOptions[0]?.value || '');
-  };
-
-  const openAddModal = () => {
-    resetForm();
-    setIsAddModalOpen(true);
-  };
-
-  const openEditModal = (c: Customer) => {
-    setSelectedCustomer(c);
-    setFormName(c.name);
-    setFormNic(c.nationalId);
-    setFormEmail(c.email);
-    setFormPhone(c.phone);
-    setFormAddress(c.address);
-    setFormDob(c.dateOfBirth);
-    setFormAgentId(c.assignedAgentId);
-    setIsEditModalOpen(true);
-  };
-
-  // Register new customer with confirmation
-  const handleAddSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Confirm Customer Registration',
-      message: `Are you sure you want to register new customer "${formName}" with National ID ${formNic}?`,
-      onConfirm: () => {
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        const assignedAgent = agents.find((a) => a.id === formAgentId);
-        const result = createCustomer({
-          name: formName,
-          nationalId: formNic,
-          email: formEmail,
-          phone: formPhone,
-          address: formAddress,
-          dateOfBirth: formDob,
-          assignedBranchId: currentBranchId,
-          assignedAgentId: formAgentId,
-          assignedAgentName: assignedAgent ? assignedAgent.name : 'Branch Officer',
-          status: 'Active',
-        });
-
-        if (result.success) {
-          setCustomers(getCustomers(currentBranchId));
-          setIsAddModalOpen(false);
-        }
-      },
-    });
-  };
-
-  // Update existing customer profile with confirmation
-  const handleEditSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCustomer) return;
-
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Confirm Profile Update',
-      message: `Confirm changes to customer profile for "${formName}"?`,
-      onConfirm: () => {
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        const assignedAgent = agents.find((a) => a.id === formAgentId);
-        const result = updateCustomer({
-          ...selectedCustomer,
-          name: formName,
-          nationalId: formNic,
-          email: formEmail,
-          phone: formPhone,
-          address: formAddress,
-          dateOfBirth: formDob,
-          assignedAgentId: formAgentId,
-          assignedAgentName: assignedAgent ? assignedAgent.name : selectedCustomer.assignedAgentName,
-        });
-
-        if (result.success) {
-          setCustomers(getCustomers(currentBranchId));
-          setIsEditModalOpen(false);
-        }
-      },
-    });
-  };
-
-  // Toggle customer status with confirmation
-  const handleToggleStatus = (c: Customer) => {
-    setConfirmDialog({
-      isOpen: true,
-      title: `${c.status === 'Active' ? 'Deactivate' : 'Activate'} Customer`,
-      message: `Do you want to ${c.status === 'Active' ? 'deactivate' : 'activate'} the profile of ${c.name}?`,
-      onConfirm: () => {
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        const result = toggleCustomerStatus(c.id);
-        if (result.success) {
-          setCustomers(getCustomers(currentBranchId));
-        }
-      },
-    });
-  };
-
-  // Renew customer portal password
-  const handleRenewPassword = (c: Customer) => {
-    const res = renewCustomerPassword(c.id);
-    if (res.success) {
-      setPasswordRenewInfo({
-        isOpen: true,
-        customerName: c.name,
-        tempPass: res.temporaryPassword,
-        message: res.message,
+      setLoading(true);
+      setError('');
+      const params = new URLSearchParams({
+        employeeId: String(employeeId),
+        page: String(page),
+        pageSize: String(pageSize),
+        search,
+        searchType,
+        status,
       });
+
+      try {
+        const response = await fetch(`/api/branch-management/customers?${params}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const result: unknown = await response.json();
+        if (
+          !response.ok ||
+          typeof result !== 'object' ||
+          result === null ||
+          !('customers' in result) ||
+          !Array.isArray(result.customers) ||
+          !('agents' in result) ||
+          !Array.isArray(result.agents) ||
+          !('total' in result) ||
+          typeof result.total !== 'number'
+        ) {
+          const message =
+            typeof result === 'object' && result !== null && 'message' in result &&
+            typeof result.message === 'string'
+              ? result.message
+              : 'Unable to load branch customers.';
+          throw new Error(message);
+        }
+
+        const directory = result as BranchCustomerDirectory;
+        setCustomers(directory.customers);
+        setAgents(directory.agents);
+        setTotal(directory.total);
+        setSelectedAgents((current) => {
+          const selected = { ...current };
+          for (const customer of directory.customers) {
+            selected[customer.id] = customer.assignedAgentId;
+          }
+          return selected;
+        });
+      } catch (loadError) {
+        if (loadError instanceof Error && loadError.name === 'AbortError') return;
+        console.error('Failed to load branch customers:', loadError);
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load branch customers.');
+        setCustomers([]);
+        setAgents([]);
+        setTotal(0);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+
+    void loadCustomers();
+    return () => controller.abort();
+  }, [currentUser.id, page, pageSize, refreshKey, search, searchType, status]);
+
+  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPage(1);
+    setSearch(searchInput.trim());
+    setSearchType(searchTypeInput);
+  };
+
+  const toggleStatus = async () => {
+    if (!pendingStatusCustomer) return;
+    const customer = pendingStatusCustomer;
+    setError('');
+    try {
+      const response = await fetch('/api/branch-management/customers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeId: Number(currentUser.id),
+          customerId: Number(customer.id),
+          action: 'toggle-status',
+        }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof result === 'object' && result !== null && 'message' in result &&
+          typeof result.message === 'string'
+            ? result.message
+            : 'Unable to update customer status.';
+        throw new Error(message);
+      }
+      setPendingStatusCustomer(null);
+      setRefreshKey((key) => key + 1);
+    } catch (updateError) {
+      console.error('Failed to update branch customer status:', updateError);
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update customer status.');
+    }
+  };
+
+  const assignAgent = async () => {
+    if (!assignmentCustomer) return;
+    const customer = assignmentCustomer;
+    const agentId = selectedAgents[customer.id];
+    if (!agentId || agentId === customer.assignedAgentId) return;
+    setSavingCustomerId(customer.id);
+    setError('');
+    try {
+      const response = await fetch('/api/branch-management/customers', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeId: Number(currentUser.id),
+          customerId: Number(customer.id),
+          action: 'assign-agent',
+          agentId: Number(agentId),
+        }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          typeof result === 'object' && result !== null && 'message' in result &&
+          typeof result.message === 'string'
+            ? result.message
+            : 'Unable to assign the branch agent.';
+        throw new Error(message);
+      }
+      setAgentAssignmentConfirmationOpen(false);
+      setAssignmentCustomer(null);
+      setRefreshKey((key) => key + 1);
+    } catch (updateError) {
+      console.error('Failed to assign branch customer agent:', updateError);
+      setError(updateError instanceof Error ? updateError.message : 'Unable to assign the branch agent.');
+    } finally {
+      setSavingCustomerId(null);
     }
   };
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <Users className="w-5 h-5 text-blue-600" />
-            Branch Customer Registry
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Manage KYC profiles, contact details, and field agent assignments
-          </p>
-        </div>
+      <header>
+        <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight text-slate-900">
+          <Users className="h-5 w-5 text-blue-600" />
+          Branch Customer Registry
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Customer records, status, and field agent assignments for this branch.
+        </p>
+      </header>
 
-        <button
-          onClick={openAddModal}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
-        >
-          <UserPlus className="w-4 h-4 text-emerald-400" />
-          <span>Register Customer</span>
-        </button>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs flex items-center justify-between gap-4">
-        <div className="relative w-full max-w-sm">
+      <form
+        onSubmit={submitSearch}
+        className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-2xs sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_190px_170px_auto] sm:items-end"
+      >
+        <label className="text-xs font-semibold text-slate-700">
+          Search customers
           <input
-            type="text"
-            placeholder="Search by customer name, NIC, or phone..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-blue-500 text-slate-800"
+            type="search"
+            maxLength={200}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Enter search text..."
+            className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-normal text-slate-800"
           />
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-        </div>
+        </label>
+        <label className="text-xs font-semibold text-slate-700">
+          Search category
+          <select
+            value={searchTypeInput}
+            onChange={(event) => setSearchTypeInput(event.target.value as typeof searchTypeInput)}
+            className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
+          >
+            {searchFields.map((field) => (
+              <option key={field.value} value={field.value}>{field.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-slate-700">
+          Status
+          <select
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value as typeof status);
+              setPage(1);
+            }}
+            className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
+          >
+            {statusOptions.map((option) => (
+              <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="submit"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-xs font-semibold text-white transition-colors hover:bg-slate-800"
+        >
+          <Search className="h-4 w-4" />
+          Search
+        </button>
+        <p className="text-xs text-slate-500 sm:col-span-2 xl:col-span-4">
+          Matching customers: <span className="font-bold text-slate-800">{total.toLocaleString()}</span>
+        </p>
+      </form>
 
-        <div className="text-xs text-slate-500">
-          Showing Branch Customers: <span className="font-bold text-slate-800">{customers.length}</span>
-        </div>
-      </div>
+      {error && (
+        <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {error}
+        </p>
+      )}
 
-      {/* Customer Data Table */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase">
+          <table className="w-full min-w-[1000px] text-left text-xs text-slate-600">
+            <thead className="border-b border-slate-200/80 bg-slate-50/75 text-[11px] font-semibold uppercase text-slate-500">
               <tr>
-                <th className="py-3 px-4">Customer Details</th>
-                <th className="py-3 px-4">NIC Number</th>
-                <th className="py-3 px-4">Contact Details</th>
-                <th className="py-3 px-4">Assigned Agent</th>
-                <th className="py-3 px-4">Registered Date</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="px-4 py-3">Customer</th>
+                <th className="px-4 py-3">NIC</th>
+                <th className="px-4 py-3">Contact</th>
+                <th className="px-4 py-3">Assigned agent</th>
+                <th className="px-4 py-3">Registered</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginatedCustomers.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-8 text-slate-400">
-                    No customers found for this branch query
+              {loading ? (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Loading customers…</td></tr>
+              ) : customers.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">No customers match this search.</td></tr>
+              ) : customers.map((customer) => (
+                <tr key={customer.id} className="hover:bg-slate-50/60">
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-slate-900">{customer.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400">
+                      <MapPin className="h-3 w-3" />
+                      {customer.address}
+                    </div>
                   </td>
-                </tr>
-              ) : (
-                paginatedCustomers.map((cust) => (
-                  <tr key={cust.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="font-semibold text-slate-900">{cust.name}</div>
-                      <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-3 h-3 text-slate-400" />
-                        <span>{cust.address}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-mono font-bold text-slate-800">{cust.nationalId}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-1.5 text-slate-700">
-                        <Phone className="w-3 h-3 text-slate-400" />
-                        <span>{cust.phone}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
-                        <Mail className="w-3 h-3 text-slate-400" />
-                        <span>{cust.email}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-slate-800">{cust.assignedAgentName}</div>
-                      <div className="text-[10px] text-slate-400">ID: {cust.assignedAgentId}</div>
-                    </td>
-                    <td className="py-3 px-4 text-slate-500">{cust.registeredDate}</td>
-                    <td className="py-3 px-4">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
-                          cust.status === 'Active'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                  <td className="px-4 py-3 font-mono font-bold text-slate-800">{customer.nationalId}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5 text-slate-700">
+                      <Phone className="h-3 w-3 text-slate-400" />
+                      {customer.phone}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-400">
+                      <Mail className="h-3 w-3" />
+                      {customer.email || 'No email'}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-800">{customer.assignedAgentName || 'Unassigned'}</div>
+                    <div className="text-[10px] text-slate-400">ID: {customer.assignedAgentId || '—'}</div>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{customer.registeredDate}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${
+                      customer.status === 'Active'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : customer.status === 'Blocked'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : 'border-slate-200 bg-slate-100 text-slate-600'
+                    }`}>
+                      {customer.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedAgents((current) => ({
+                            ...current,
+                            [customer.id]: customer.assignedAgentId,
+                          }));
+                          setAssignmentCustomer(customer);
+                        }}
+                        disabled={agents.length === 0 || savingCustomerId === customer.id}
+                        aria-label={`Reassign ${customer.name}`}
+                        title="Reassign agent"
+                        className="rounded-lg p-1.5 text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-slate-300"
+                      >
+                        <UserRoundCog className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingStatusCustomer(customer)}
+                        aria-label={`${customer.status === 'Active' ? 'Deactivate' : 'Activate'} ${customer.name}`}
+                        title={customer.status === 'Active' ? 'Deactivate customer' : 'Activate customer'}
+                        className={`rounded-lg p-1.5 ${
+                          customer.status === 'Active'
+                            ? 'text-slate-400 hover:bg-rose-50 hover:text-rose-600'
+                            : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'
                         }`}
                       >
-                        {cust.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => handleRenewPassword(cust)}
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                          title="Reset Password & Send SMS"
-                        >
-                          <KeyRound className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => openEditModal(cust)}
-                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                          title="Edit Customer Profile"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleStatus(cust)}
-                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                            cust.status === 'Active'
-                              ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                          }`}
-                          title={cust.status === 'Active' ? 'Deactivate Customer' : 'Activate Customer'}
-                        >
-                          <Power className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
+                        <Power className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-
-        {/* Pagination */}
         <Pagination
-          currentPage={currentPage}
-          totalItems={filteredCustomers.length}
+          currentPage={page}
+          totalItems={total}
           pageSize={pageSize}
-          onPageChange={setCurrentPage}
-          onPageSizeChange={setPageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
         />
       </div>
 
-      {/* Modal: Register Customer */}
       <Modal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        title="Register New Customer"
-        maxWidth="max-w-lg"
-      >
-        <form onSubmit={handleAddSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Full Legal Name</label>
-              <input
-                type="text"
-                required
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. Sunil Perera"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">National ID / Passport</label>
-              <input
-                type="text"
-                required
-                value={formNic}
-                onChange={(e) => setFormNic(e.target.value)}
-                placeholder="e.g. 199123405678"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number</label>
-              <input
-                type="text"
-                required
-                value={formPhone}
-                onChange={(e) => setFormPhone(e.target.value)}
-                placeholder="+94 77 123 4567"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
-              <input
-                type="email"
-                required
-                value={formEmail}
-                onChange={(e) => setFormEmail(e.target.value)}
-                placeholder="customer@email.com"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Residential Address</label>
-            <input
-              type="text"
-              required
-              value={formAddress}
-              onChange={(e) => setFormAddress(e.target.value)}
-              placeholder="House No, Street, Town"
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Date of Birth</label>
-              <input
-                type="date"
-                required
-                value={formDob}
-                onChange={(e) => setFormDob(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <SearchableSelect
-                label="Assign Field Agent"
-                options={agentOptions}
-                value={formAgentId}
-                onChange={setFormAgentId}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setIsAddModalOpen(false)}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-xs cursor-pointer"
-            >
-              <span>Continue & Confirm</span>
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Modal: Edit Customer */}
-      <Modal
-        isOpen={isEditModalOpen}
-        onClose={() => setIsEditModalOpen(false)}
-        title="Edit Customer Profile"
-        maxWidth="max-w-lg"
-      >
-        <form onSubmit={handleEditSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Full Legal Name</label>
-              <input
-                type="text"
-                required
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">NIC Number</label>
-              <input
-                type="text"
-                required
-                value={formNic}
-                onChange={(e) => setFormNic(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number</label>
-              <input
-                type="text"
-                required
-                value={formPhone}
-                onChange={(e) => setFormPhone(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
-              <input
-                type="email"
-                required
-                value={formEmail}
-                onChange={(e) => setFormEmail(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Residential Address</label>
-            <input
-              type="text"
-              required
-              value={formAddress}
-              onChange={(e) => setFormAddress(e.target.value)}
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Date of Birth</label>
-              <input
-                type="date"
-                required
-                value={formDob}
-                onChange={(e) => setFormDob(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <SearchableSelect
-                label="Assigned Field Agent"
-                options={agentOptions}
-                value={formAgentId}
-                onChange={setFormAgentId}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setIsEditModalOpen(false)}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-xs cursor-pointer"
-            >
-              <span>Save Changes</span>
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Password reset details modal */}
-      <Modal
-        isOpen={passwordRenewInfo.isOpen}
-        onClose={() => setPasswordRenewInfo((prev) => ({ ...prev, isOpen: false }))}
-        title="Customer Password Reset"
+        isOpen={assignmentCustomer !== null}
+        onClose={() => setAssignmentCustomer(null)}
+        title="Reassign customer agent"
         maxWidth="max-w-md"
       >
-        <div className="space-y-4">
-          <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
-            <div className="flex items-center gap-2 text-xs font-bold text-blue-900">
-              <CheckCircle className="w-4 h-4 text-blue-600" />
-              <span>Password Renewed for {passwordRenewInfo.customerName}</span>
+        {assignmentCustomer && (
+          <div className="space-y-5">
+            <p className="text-sm text-slate-600">
+              Select an active agent from this branch for <span className="font-semibold text-slate-900">{assignmentCustomer.name}</span>.
+            </p>
+            <SearchableSelect
+              label="Branch agent"
+              options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
+              value={selectedAgents[assignmentCustomer.id] ?? ''}
+              onChange={(agentId) => setSelectedAgents((current) => ({
+                ...current,
+                [assignmentCustomer.id]: agentId,
+              }))}
+              placeholder="Search and select an agent..."
+              disabled={agents.length === 0 || savingCustomerId === assignmentCustomer.id}
+            />
+            {agents.length === 0 && (
+              <p className="text-xs text-amber-700">No active agents are assigned to this branch.</p>
+            )}
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setAssignmentCustomer(null)}
+                className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => setAgentAssignmentConfirmationOpen(true)}
+                disabled={
+                  !selectedAgents[assignmentCustomer.id] ||
+                  selectedAgents[assignmentCustomer.id] === assignmentCustomer.assignedAgentId
+                }
+                className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                Continue
+              </button>
             </div>
-            <p className="text-xs text-blue-700 mt-1">{passwordRenewInfo.message}</p>
           </div>
-
-          <div className="p-3 bg-slate-100 rounded-xl text-center">
-            <span className="text-[11px] text-slate-500 block">Temporary Password Generated:</span>
-            <span className="font-mono font-bold text-lg text-slate-900 tracking-wider">
-              {passwordRenewInfo.tempPass}
-            </span>
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              onClick={() => setPasswordRenewInfo((prev) => ({ ...prev, isOpen: false }))}
-              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl cursor-pointer"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+        )}
       </Modal>
 
-      {/* Explicit Confirmation Dialog */}
       <ConfirmDialog
-        isOpen={confirmDialog.isOpen}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        onConfirm={confirmDialog.onConfirm}
-        onCancel={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+        isOpen={agentAssignmentConfirmationOpen}
+        title="Confirm agent reassignment"
+        message={`Assign ${agents.find((agent) => agent.id === (assignmentCustomer ? selectedAgents[assignmentCustomer.id] : ''))?.name ?? 'the selected agent'} to ${assignmentCustomer?.name ?? 'this customer'}?`}
+        onConfirm={() => void assignAgent()}
+        onCancel={() => setAgentAssignmentConfirmationOpen(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingStatusCustomer !== null}
+        title={pendingStatusCustomer?.status === 'Active' ? 'Deactivate customer' : 'Activate customer'}
+        message={`Change ${pendingStatusCustomer?.name ?? 'customer'} status to ${
+          pendingStatusCustomer?.status === 'Active' ? 'Inactive' : 'Active'
+        }?`}
+        isDestructive={pendingStatusCustomer?.status === 'Active'}
+        onConfirm={() => void toggleStatus()}
+        onCancel={() => setPendingStatusCustomer(null)}
       />
     </div>
   );

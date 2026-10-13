@@ -1,8 +1,9 @@
 'use client';
 
-import React, { createContext, useContext, useMemo, useState, useSyncExternalStore } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Employee, UserRole } from '@/types';
 import { mockEmployees } from '@/data/mockData';
+import { portalEmployees } from '@/data/portalEmployees';
 import { usePathname, useRouter } from 'next/navigation';
 
 // Session state interface for logged-in user and active branch context
@@ -24,7 +25,11 @@ interface StoredEmployeeSession {
 
 function subscribeToSession(onSessionChange: () => void): () => void {
   window.addEventListener('storage', onSessionChange);
-  return () => window.removeEventListener('storage', onSessionChange);
+  window.addEventListener('btrust-session-change', onSessionChange);
+  return () => {
+    window.removeEventListener('storage', onSessionChange);
+    window.removeEventListener('btrust-session-change', onSessionChange);
+  };
 }
 
 function getSerializedSession(): string | null {
@@ -87,16 +92,41 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       : 'Branch Manager';
   const fallbackUser =
     mockEmployees.find((employee) => employee.role === currentRole) ?? mockEmployees[0];
-  const currentUser: Employee = storedSession
+  const expectedPortalEmployee =
+    currentRole === 'Admin'
+      ? portalEmployees.admin
+      : currentRole === 'Higher Management'
+        ? portalEmployees.higherManagement
+        : portalEmployees.branchManagement;
+  const activeSession = storedSession
+    ? storedSession.employeeId === expectedPortalEmployee.employeeId &&
+      storedSession.roleId === expectedPortalEmployee.roleId
+      ? storedSession
+      : expectedPortalEmployee
+    : null;
+  const currentUser: Employee = activeSession
     ? {
         ...fallbackUser,
-        id: String(storedSession.employeeId),
-        name: storedSession.name,
-        email: storedSession.email,
+        id: String(activeSession.employeeId),
+        name: activeSession.name,
+        email: activeSession.email,
         role: currentRole,
-        branchId: String(storedSession.branchId),
+        branchId: String(activeSession.branchId),
       }
     : fallbackUser;
+
+  useEffect(() => {
+    if (
+      !storedSession ||
+      (storedSession.employeeId === expectedPortalEmployee.employeeId &&
+      storedSession.roleId === expectedPortalEmployee.roleId
+      )
+    ) {
+      return;
+    }
+    sessionStorage.setItem('btrust_session', JSON.stringify(expectedPortalEmployee));
+    window.dispatchEvent(new Event('btrust-session-change'));
+  }, [expectedPortalEmployee, storedSession]);
 
   const logout = () => {
     setCurrentBranchId('BR001');

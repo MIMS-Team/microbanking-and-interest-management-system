@@ -9,14 +9,9 @@ import {
   Shield,
   ArrowRight,
 } from 'lucide-react';
+import { PortalEmployee, portalEmployees } from '@/data/portalEmployees';
 
-type Employee = {
-  employeeId: number;
-  branchId: number;
-  name: string;
-  email: string;
-  roleId: string;
-};
+type Employee = PortalEmployee;
 
 type Portal = {
   title: string;
@@ -29,44 +24,6 @@ type Portal = {
   highlights: string[];
   employee: Employee;
 };
-
-/*
- * Employees assigned to the three portal options.
- *
- * These are temporary hardcoded values.
- *
- * Admin
- * -> Asela Bandara
- *
- * Higher Management
- * -> Duminda Ratnayake
- *
- * Branch Management
- * -> Kelum Pushpakumara
- */
-const employees: Employee[] = [
-  {
-    employeeId: 1,
-    branchId: 0,
-    name: 'Asela Bandara',
-    email: 'asela.bandara@btrust.lk',
-    roleId: 'A',
-  },
-  {
-    employeeId: 2,
-    branchId: 0,
-    name: 'Duminda Ratnayake',
-    email: 'duminda.ratnayake@btrust.lk',
-    roleId: 'H',
-  },
-  {
-    employeeId: 5,
-    branchId: 1,
-    name: 'Kelum Pushpakumara',
-    email: 'kelum.pushpakumara@btrust.lk',
-    roleId: 'B',
-  },
-];
 
 export default function GatewayPage() {
   /*
@@ -82,7 +39,7 @@ export default function GatewayPage() {
       color: 'blue',
       icon: Briefcase,
       badge: 'Operational Portal',
-      employee: employees[2],
+      employee: portalEmployees.branchManagement,
       description:
         'Scoped to branch operations. Manage customer KYC profiles, savings accounts, ownership transfers, fixed deposits, and approve operational requests.',
       highlights: [
@@ -99,7 +56,7 @@ export default function GatewayPage() {
       color: 'purple',
       icon: UserCheck,
       badge: 'Executive Oversight',
-      employee: employees[1],
+      employee: portalEmployees.higherManagement,
       description:
         'Strategic oversight across all branches. Benchmark branch performance, inspect consolidated charts, and issue/verify HRM dual-authorization OTPs.',
       highlights: [
@@ -116,7 +73,7 @@ export default function GatewayPage() {
       color: 'slate',
       icon: Shield,
       badge: 'System Governance',
-      employee: employees[0],
+      employee: portalEmployees.admin,
       description:
         'Provision staff accounts across all role categories, manage customer account credentials, configure branches via OTP, and audit session trails.',
       highlights: [

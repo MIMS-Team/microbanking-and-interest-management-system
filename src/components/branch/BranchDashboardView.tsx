@@ -217,7 +217,7 @@ export default function BranchDashboardView({ onNavigateTab }: BranchDashboardVi
                     >
                       {t.type === 'Deposit' ? '+' : '-'}Rs. {t.amount.toLocaleString()}
                     </div>
-                    <div className="text-[10px] text-slate-400">{t.channel}</div>
+                    <div className="text-[10px] text-slate-400">{t.processedBy}</div>
                   </div>
                 </div>
               ))

@@ -4,12 +4,12 @@ import { useState } from 'react';
 import RoleHeader, { NavItem } from '@/components/common/RoleHeader';
 import BranchDashboardView from '@/components/branch/BranchDashboardView';
 import CustomersView from '@/components/branch/CustomersView';
-import SavingsAccountsView from '@/components/branch/SavingsAccountsView';
-import FixedDepositsView from '@/components/branch/FixedDepositsView';
+import BranchSavingsAccountsView from '@/components/branch/BranchSavingsAccountsView';
+import BranchFixedDepositsView from '@/components/branch/BranchFixedDepositsView';
 import TransactionsView from '@/components/branch/TransactionsView';
 import ApprovalsView from '@/components/branch/ApprovalsView';
 import ReportsView from '@/components/common/ReportsView';
-import BranchesView from '@/components/common/BranchesView';
+import BranchNetworkView from '@/components/higher-mgmt/BranchNetworkView';
 import { useSession } from '@/context/SessionContext';
 import { getApprovalRequests } from '@/services/approvalService';
 import {
@@ -58,12 +58,12 @@ export default function BranchManagementPage() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'dashboard' && <BranchDashboardView onNavigateTab={setActiveTab} />}
         {activeTab === 'customers' && <CustomersView />}
-        {activeTab === 'savings' && <SavingsAccountsView />}
-        {activeTab === 'fixed-deposits' && <FixedDepositsView />}
+        {activeTab === 'savings' && <BranchSavingsAccountsView />}
+        {activeTab === 'fixed-deposits' && <BranchFixedDepositsView />}
         {activeTab === 'transactions' && <TransactionsView />}
         {activeTab === 'approvals' && <ApprovalsView />}
         {activeTab === 'reports' && <ReportsView />}
-        {activeTab === 'branches' && <BranchesView />}
+        {activeTab === 'branches' && <BranchNetworkView />}
       </main>
     </div>
   );

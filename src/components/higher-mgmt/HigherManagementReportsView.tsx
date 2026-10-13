@@ -621,7 +621,7 @@ export default function HigherManagementReportsView() {
           <button
             type="submit"
             disabled={isLoading || Boolean(branchLoadError)}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-xs transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
           >
             <Search className="h-4 w-4" />
             {isLoading ? 'Searching…' : 'Search'}

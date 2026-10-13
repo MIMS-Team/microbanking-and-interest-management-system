@@ -1,204 +1,291 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Transaction, SavingsAccount } from '@/types';
-import { getTransactions, processTransaction } from '@/services/transactionService';
-import { getSavingsAccounts } from '@/services/accountService';
-import { mockAccountPlans } from '@/data/mockData';
+import { useState, useEffect } from 'react';
+import type { FormEvent } from 'react';
+import type { Transaction } from '@/types';
+import type {
+  BranchTransactionRow,
+  BranchTransactionSearchField,
+  BranchTransactionTypeFilter,
+} from '@/services/branchTransactionDirectoryService';
 import { useSession } from '@/context/SessionContext';
 import Pagination from '@/components/common/Pagination';
 import Modal from '@/components/common/Modal';
-import ConfirmDialog from '@/components/common/ConfirmDialog';
-import SearchableSelect from '@/components/common/SearchableSelect';
 import {
   ArrowLeftRight,
   ArrowDownLeft,
   ArrowUpRight,
-  PlusCircle,
   Search,
   Printer,
   Receipt,
 } from 'lucide-react';
 
-// Counter and field agent transaction processing terminal
+type ReceiptTransaction = Pick<
+  Transaction,
+  'id' | 'accountNumber' | 'customerName' | 'type' | 'amount' | 'balanceAfter' | 'processedBy' | 'timestamp'
+>;
+
+const transactionSearchFields: Array<{ value: BranchTransactionSearchField; label: string }> = [
+  { value: 'transaction-id', label: 'Transaction ID' },
+  { value: 'account', label: 'Account number' },
+  { value: 'customer', label: 'Customer' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'remark', label: 'Remark' },
+];
+
+const cashTypeFilters: Array<{ value: BranchTransactionTypeFilter; label: string }> = [
+  { value: 'all', label: 'All cash types' },
+  { value: 'deposit', label: 'Deposits' },
+  { value: 'withdrawal', label: 'Withdrawals' },
+];
+
+const interestTypeFilters: Array<{ value: BranchTransactionTypeFilter; label: string }> = [
+  { value: 'all', label: 'All interest types' },
+  { value: 'savings-interest', label: 'Savings interest (I)' },
+  { value: 'fixed-deposit-interest', label: 'Fixed deposit interest (F)' },
+];
+
 export default function TransactionsView() {
-  const { currentBranchId, currentUser } = useSession();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
+  const { currentUser } = useSession();
+  const [activeTransactionSection, setActiveTransactionSection] = useState<'cash' | 'interest'>('cash');
+  const [transactions, setTransactions] = useState<BranchTransactionRow[]>([]);
+  const [totalTransactions, setTotalTransactions] = useState(0);
+  const [interestTransactions, setInterestTransactions] = useState<BranchTransactionRow[]>([]);
+  const [totalInterestTransactions, setTotalInterestTransactions] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFieldInput, setSearchFieldInput] = useState<BranchTransactionSearchField>('transaction-id');
+  const [searchField, setSearchField] = useState<BranchTransactionSearchField>('transaction-id');
+  const [cashTypeFilter, setCashTypeFilter] = useState<BranchTransactionTypeFilter>('all');
+  const [interestSearchInput, setInterestSearchInput] = useState('');
+  const [interestSearchQuery, setInterestSearchQuery] = useState('');
+  const [interestSearchFieldInput, setInterestSearchFieldInput] = useState<BranchTransactionSearchField>('transaction-id');
+  const [interestSearchField, setInterestSearchField] = useState<BranchTransactionSearchField>('transaction-id');
+  const [interestTypeFilter, setInterestTypeFilter] = useState<BranchTransactionTypeFilter>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  const [interestPage, setInterestPage] = useState(1);
+  const [interestPageSize, setInterestPageSize] = useState(5);
+  const [tableError, setTableError] = useState('');
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
 
-  // Transaction form state
-  const [isProcessModalOpen, setIsProcessModalOpen] = useState(false);
-  const [selectedAccountNo, setSelectedAccountNo] = useState('');
-  const [txnType, setTxnType] = useState<'Deposit' | 'Withdrawal'>('Deposit');
-  const [amount, setAmount] = useState<number>(5000);
-  const [remark, setRemark] = useState('');
-  const [channel, setChannel] = useState<'Counter' | 'Field Agent'>('Counter');
-  const [formError, setFormError] = useState('');
+  const [receiptTxn, setReceiptTxn] = useState<ReceiptTransaction | null>(null);
 
-  // Receipt Modal state
-  const [receiptTxn, setReceiptTxn] = useState<Transaction | null>(null);
-
-  // Confirmation dialog state
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-  });
-
-  // Load branch transactions and accounts
+  // Keep both result sets current so switching sections does not require a new request.
   useEffect(() => {
-    setTransactions(getTransactions(currentBranchId));
-    setAccounts(getSavingsAccounts(currentBranchId));
-    setCurrentPage(1);
-  }, [currentBranchId]);
-
-  // Account options for SearchableSelect
-  const accountOptions = accounts.map((a) => ({
-    value: a.accountNumber,
-    label: `${a.accountNumber} - ${a.primaryCustomerName}`,
-    sublabel: `Balance: Rs. ${a.balance.toLocaleString()} • ${a.planName}`,
-  }));
-
-  const selectedAccount = accounts.find((a) => a.accountNumber === selectedAccountNo);
-  const accountPlan = mockAccountPlans.find((p) => p.id === selectedAccount?.planId);
-  const minBalance = accountPlan?.minimumBalance || 1000;
-
-  // Filter transactions
-  const filteredTransactions = transactions.filter(
-    (t) =>
-      t.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.accountNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.remark.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const paginatedTransactions = filteredTransactions.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  const openProcessModal = () => {
-    setSelectedAccountNo(accountOptions[0]?.value || '');
-    setTxnType('Deposit');
-    setAmount(5000);
-    setRemark('');
-    setChannel('Counter');
-    setFormError('');
-    setIsProcessModalOpen(true);
-  };
-
-  // Submit transaction with balance validation and confirmation
-  const handleProcessSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError('');
-
-    if (!selectedAccount) {
-      setFormError('Please select a valid customer savings account.');
-      return;
-    }
-
-    if (amount <= 0) {
-      setFormError('Transaction amount must be greater than zero.');
-      return;
-    }
-
-    // Minimum balance check for withdrawals
-    if (txnType === 'Withdrawal') {
-      if (selectedAccount.balance - amount < minBalance) {
-        setFormError(
-          `Insufficient balance. Account must maintain a minimum balance of Rs. ${minBalance.toLocaleString()}. Maximum allowable withdrawal is Rs. ${(
-            selectedAccount.balance - minBalance
-          ).toLocaleString()}.`
-        );
+    const controller = new AbortController();
+    const loadTransactions = async () => {
+      const employeeId = Number(currentUser.id);
+      if (!Number.isSafeInteger(employeeId) || employeeId < 1) {
+        setTransactions([]);
+        setTotalTransactions(0);
+        setInterestTransactions([]);
+        setTotalInterestTransactions(0);
+        setTableError('A valid branch manager session is required.');
+        setIsLoadingTransactions(false);
         return;
       }
-    }
 
-    setConfirmDialog({
-      isOpen: true,
-      title: `Confirm Counter ${txnType}`,
-      message: `Process a ${txnType} of Rs. ${amount.toLocaleString()} for account ${selectedAccount.accountNumber} (${selectedAccount.primaryCustomerName})?`,
-      onConfirm: () => {
-        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        const result = processTransaction(
-          selectedAccount.accountNumber,
-          selectedAccount.primaryCustomerName,
-          currentBranchId,
-          txnType,
-          amount,
-          selectedAccount.balance,
-          minBalance,
-          remark,
-          currentUser.name,
-          channel
-        );
+      setIsLoadingTransactions(true);
+      setTableError('');
+      try {
+        const loadDirectory = async (
+          kind: 'cash' | 'interest',
+          page: number,
+          size: number,
+          search: string,
+          field: BranchTransactionSearchField,
+          typeFilter: BranchTransactionTypeFilter,
+        ) => {
+          const params = new URLSearchParams({
+            employeeId: String(employeeId),
+            kind,
+            page: String(page),
+            pageSize: String(size),
+            search,
+            searchField: field,
+            typeFilter,
+          });
+          const response = await fetch(`/api/branch-management/transactions?${params}`, {
+            cache: 'no-store',
+            signal: controller.signal,
+          });
+          const result: unknown = await response.json();
+          if (
+            !response.ok ||
+            typeof result !== 'object' ||
+            result === null ||
+            !('rows' in result) ||
+            !Array.isArray(result.rows) ||
+            !('total' in result) ||
+            typeof result.total !== 'number'
+          ) {
+            const message =
+              typeof result === 'object' && result !== null && 'message' in result &&
+              typeof result.message === 'string'
+                ? result.message
+                : 'Unable to load branch transactions.';
+            throw new Error(message);
+          }
+          return { rows: result.rows as BranchTransactionRow[], total: result.total };
+        };
 
-        if (result.success && result.transaction) {
-          setTransactions(getTransactions(currentBranchId));
-          setAccounts(getSavingsAccounts(currentBranchId));
-          setIsProcessModalOpen(false);
-          setReceiptTxn(result.transaction);
-        } else {
-          setFormError(result.message);
-        }
-      },
-    });
+        // Each table uses its own query, type filter, and pagination while loading together.
+        const [cashPage, interestPageResult] = await Promise.all([
+          loadDirectory('cash', currentPage, pageSize, searchQuery, searchField, cashTypeFilter),
+          loadDirectory(
+            'interest',
+            interestPage,
+            interestPageSize,
+            interestSearchQuery,
+            interestSearchField,
+            interestTypeFilter,
+          ),
+        ]);
+        setTransactions(cashPage.rows);
+        setTotalTransactions(cashPage.total);
+        setInterestTransactions(interestPageResult.rows);
+        setTotalInterestTransactions(interestPageResult.total);
+      } catch (loadError) {
+        if (loadError instanceof Error && loadError.name === 'AbortError') return;
+        console.error('Failed to load branch transactions:', loadError);
+        setTableError(loadError instanceof Error ? loadError.message : 'Unable to load branch transactions.');
+        setTransactions([]);
+        setTotalTransactions(0);
+        setInterestTransactions([]);
+        setTotalInterestTransactions(0);
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingTransactions(false);
+      }
+    };
+
+    void loadTransactions();
+    // Filter changes or unmounts invalidate the request to prevent stale results replacing newer ones.
+    return () => controller.abort();
+  }, [
+    currentUser.id,
+    currentPage,
+    pageSize,
+    searchQuery,
+    searchField,
+    cashTypeFilter,
+    interestPage,
+    interestPageSize,
+    interestSearchQuery,
+    interestSearchField,
+    interestTypeFilter,
+  ]);
+
+  // Keep cash and interest query state separate so each subsection retains its own filters and page.
+  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCurrentPage(1);
+    setSearchQuery(searchInput.trim());
+    setSearchField(searchFieldInput);
+  };
+
+  const submitInterestSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setInterestPage(1);
+    setInterestSearchQuery(interestSearchInput.trim());
+    setInterestSearchField(interestSearchFieldInput);
   };
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <ArrowLeftRight className="w-5 h-5 text-blue-600" />
-            Branch Cash & Counter Transactions
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Process deposits and withdrawals with real-time balance and minimum threshold verification
-          </p>
-        </div>
+      <header>
+        <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight text-slate-900">
+          <ArrowLeftRight className="h-5 w-5 text-blue-600" />
+          Branch Transaction History
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Deposits, withdrawals, and interest transactions recorded for this branch.
+        </p>
+      </header>
 
+      <div className="flex gap-2 border-b border-slate-200">
         <button
-          onClick={openProcessModal}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
+          type="button"
+          onClick={() => setActiveTransactionSection('cash')}
+          aria-pressed={activeTransactionSection === 'cash'}
+          className={`border-b-2 px-4 py-3 text-sm font-semibold ${
+            activeTransactionSection === 'cash'
+              ? 'rounded-t-lg border-blue-800 bg-slate-900 text-white shadow-sm'
+              : 'border-transparent text-slate-900 hover:bg-slate-100'
+          }`}
         >
-          <PlusCircle className="w-4 h-4 text-emerald-400" />
-          <span>Process Transaction</span>
+          Deposits &amp; Withdrawals
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTransactionSection('interest')}
+          aria-pressed={activeTransactionSection === 'interest'}
+          className={`border-b-2 px-4 py-3 text-sm font-semibold ${
+            activeTransactionSection === 'interest'
+              ? 'rounded-t-lg border-blue-800 bg-slate-900 text-white shadow-sm'
+              : 'border-transparent text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          Interest
         </button>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs flex items-center justify-between gap-4">
-        <div className="relative w-full max-w-sm">
+      {activeTransactionSection === 'cash' && (
+        <section className="space-y-4">
+      {/* Category search narrows text fields; the transaction-type selector filters the record type separately. */}
+      <form onSubmit={submitSearch} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-2xs sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_190px_190px_auto] sm:items-end">
+        <label className="text-xs font-semibold text-slate-700">
+          Search cash transactions
           <input
-            type="text"
-            placeholder="Search transactions by ID, account, or customer..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
+            type="search"
+            maxLength={200}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Enter search text..."
+            className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
+          />
+        </label>
+        <label className="text-xs font-semibold text-slate-700">
+          Search category
+          <select
+            value={searchFieldInput}
+            onChange={(event) => setSearchFieldInput(event.target.value as BranchTransactionSearchField)}
+            className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
+          >
+            {transactionSearchFields.map((field) => (
+              <option key={field.value} value={field.value}>{field.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-slate-700">
+          Transaction type
+          <select
+            value={cashTypeFilter}
+            onChange={(event) => {
+              setCashTypeFilter(event.target.value as BranchTransactionTypeFilter);
               setCurrentPage(1);
             }}
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-blue-500 text-slate-800"
-          />
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
+          >
+            {cashTypeFilters.map((filter) => (
+              <option key={filter.value} value={filter.value}>{filter.label}</option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800">
+          <Search className="h-3.5 w-3.5" />
+          Search
+        </button>
+        <p className="text-xs text-slate-500 sm:col-span-2 xl:col-span-4">
+          Recorded transactions: <span className="font-bold text-slate-800">{totalTransactions.toLocaleString()}</span>
+        </p>
+      </form>
+      {tableError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {tableError}
         </div>
+      )}
 
-        <div className="text-xs text-slate-500">
-          Recorded Transactions: <span className="font-bold text-slate-800">{transactions.length}</span>
-        </div>
-      </div>
-
-      {/* Transactions Data Table */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
@@ -210,20 +297,24 @@ export default function TransactionsView() {
                 <th className="py-3 px-4">Type</th>
                 <th className="py-3 px-4 text-right">Amount (Rs.)</th>
                 <th className="py-3 px-4 text-right">Balance After</th>
-                <th className="py-3 px-4">Channel & Staff</th>
+                <th className="py-3 px-4">Staff</th>
                 <th className="py-3 px-4">Timestamp</th>
                 <th className="py-3 px-4 text-right">Receipt</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginatedTransactions.length === 0 ? (
+              {isLoadingTransactions ? (
+                <tr>
+                  <td colSpan={9} className="py-8 text-center text-slate-400">Loading transactions…</td>
+                </tr>
+              ) : transactions.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="text-center py-8 text-slate-400">
                     No transactions recorded for this branch query
                   </td>
                 </tr>
               ) : (
-                paginatedTransactions.map((t) => (
+                transactions.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50/60 transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">{t.id}</td>
                     <td className="py-3 px-4 font-mono text-blue-700 font-semibold">{t.accountNumber}</td>
@@ -255,14 +346,25 @@ export default function TransactionsView() {
                     <td className="py-3 px-4 text-right font-medium text-slate-700">
                       Rs. {t.balanceAfter.toLocaleString()}
                     </td>
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-slate-800">{t.channel}</div>
-                      <div className="text-[10px] text-slate-400">{t.processedBy}</div>
-                    </td>
+                    <td className="py-3 px-4 font-medium text-slate-800">{t.processedBy}</td>
                     <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">{t.timestamp}</td>
                     <td className="py-3 px-4 text-right">
                       <button
-                        onClick={() => setReceiptTxn(t)}
+                        onClick={() => {
+                          // Receipts are available for deposits and withdrawals, not interest credits.
+                          if (t.type === 'Deposit' || t.type === 'Withdrawal') {
+                            setReceiptTxn({
+                              id: t.id,
+                              accountNumber: t.accountNumber,
+                              customerName: t.customerName,
+                              type: t.type,
+                              amount: t.amount,
+                              balanceAfter: t.balanceAfter,
+                              processedBy: t.processedBy,
+                              timestamp: t.timestamp,
+                            });
+                          }
+                        }}
                         className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                         title="View & Print Voucher"
                       >
@@ -276,123 +378,123 @@ export default function TransactionsView() {
           </table>
         </div>
 
-        {/* Pagination */}
         <Pagination
           currentPage={currentPage}
-          totalItems={filteredTransactions.length}
+          totalItems={totalTransactions}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
         />
       </div>
+        </section>
+      )}
 
-      {/* Modal: Process Transaction */}
-      <Modal
-        isOpen={isProcessModalOpen}
-        onClose={() => setIsProcessModalOpen(false)}
-        title="Counter Cash Terminal"
-        maxWidth="max-w-lg"
-      >
-        <form onSubmit={handleProcessSubmit} className="space-y-4">
-          {formError && (
-            <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
-              {formError}
-            </div>
-          )}
-
-          <div>
-            <SearchableSelect
-              label="Select Customer Account"
-              options={accountOptions}
-              value={selectedAccountNo}
-              onChange={setSelectedAccountNo}
-              placeholder="Search by account number or customer..."
+      {activeTransactionSection === 'interest' && <section className="space-y-4">
+        <form
+          onSubmit={submitInterestSearch}
+          className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-2xs sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_190px_190px_auto] sm:items-end"
+        >
+          <label className="text-xs font-semibold text-slate-700">
+            Search interest transactions
+            <input
+              type="search"
+              maxLength={200}
+              value={interestSearchInput}
+              onChange={(event) => setInterestSearchInput(event.target.value)}
+              placeholder="Enter search text..."
+              className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
             />
-          </div>
-
-          {selectedAccount && (
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-slate-400 block text-[10px]">CURRENT BALANCE:</span>
-                <span className="font-bold text-slate-900 text-sm">
-                  Rs. {selectedAccount.balance.toLocaleString()}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">REQUIRED MINIMUM BALANCE:</span>
-                <span className="font-semibold text-amber-700">Rs. {minBalance.toLocaleString()}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Transaction Type</label>
-              <select
-                value={txnType}
-                onChange={(e) => setTxnType(e.target.value as 'Deposit' | 'Withdrawal')}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500 font-semibold"
-              >
-                <option value="Deposit">Deposit (Cash In)</option>
-                <option value="Withdrawal">Withdrawal (Cash Out)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Amount (Rs.)</label>
-              <input
-                type="number"
-                required
-                min={100}
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500 font-bold"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Processing Channel</label>
-              <select
-                value={channel}
-                onChange={(e) => setChannel(e.target.value as 'Counter' | 'Field Agent')}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              >
-                <option value="Counter">Counter Terminal</option>
-                <option value="Field Agent">Field Agent Collection</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Remarks / Note</label>
-              <input
-                type="text"
-                value={remark}
-                onChange={(e) => setRemark(e.target.value)}
-                placeholder="e.g. Monthly business deposit"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-hidden focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setIsProcessModalOpen(false)}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+          </label>
+          <label className="text-xs font-semibold text-slate-700">
+            Search category
+            <select
+              value={interestSearchFieldInput}
+              onChange={(event) => setInterestSearchFieldInput(event.target.value as BranchTransactionSearchField)}
+              className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-xs cursor-pointer"
+              {transactionSearchFields.map((field) => (
+                <option key={field.value} value={field.value}>{field.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-slate-700">
+            Transaction type
+            <select
+              value={interestTypeFilter}
+              onChange={(event) => {
+                setInterestTypeFilter(event.target.value as BranchTransactionTypeFilter);
+                setInterestPage(1);
+              }}
+              className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-normal text-slate-800"
             >
-              <span>Verify & Execute</span>
-            </button>
-          </div>
+              {interestTypeFilters.map((filter) => (
+                <option key={filter.value} value={filter.value}>{filter.label}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-xs font-semibold text-white hover:bg-slate-800"
+          >
+            <Search className="h-3.5 w-3.5" />
+            Search
+          </button>
+          <p className="text-xs text-slate-500 sm:col-span-2 xl:col-span-4">
+            Recorded interest transactions:{' '}
+            <span className="font-bold text-slate-800">{totalInterestTransactions.toLocaleString()}</span>
+          </p>
         </form>
-      </Modal>
 
-      {/* Modal: Printable Transaction Voucher / Receipt */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xs">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-xs text-slate-600">
+              <thead className="border-b border-slate-200/80 bg-slate-50/75 text-[11px] font-semibold uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Transaction ID</th>
+                  <th className="px-4 py-3">Account number</th>
+                  <th className="px-4 py-3">Beneficiary</th>
+                  <th className="px-4 py-3">Interest type</th>
+                  <th className="px-4 py-3 text-right">Amount (Rs.)</th>
+                  <th className="px-4 py-3 text-right">Balance after</th>
+                  <th className="px-4 py-3">Timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {isLoadingTransactions ? (
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading interest transactions…</td></tr>
+                ) : interestTransactions.length === 0 ? (
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No interest transactions match this search.</td></tr>
+                ) : interestTransactions.map((transaction) => (
+                  <tr key={transaction.id} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-3 font-mono font-bold text-slate-900">{transaction.id}</td>
+                    <td className="px-4 py-3 font-mono font-semibold text-blue-700">{transaction.accountNumber}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{transaction.customerName}</td>
+                    <td className="px-4 py-3">{transaction.type}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-emerald-700">
+                      Rs. {transaction.amount.toLocaleString('en-LK', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      Rs. {transaction.balanceAfter.toLocaleString('en-LK', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-slate-500">{transaction.timestamp}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            currentPage={interestPage}
+            totalItems={totalInterestTransactions}
+            pageSize={interestPageSize}
+            onPageChange={setInterestPage}
+            onPageSizeChange={(size) => {
+              setInterestPageSize(size);
+              setInterestPage(1);
+            }}
+          />
+        </div>
+      </section>}
+
       <Modal
         isOpen={!!receiptTxn}
         onClose={() => setReceiptTxn(null)}
@@ -437,7 +539,6 @@ export default function TransactionsView() {
 
               <div className="pt-3 text-[10px] text-slate-500 space-y-1">
                 <div>Processed by: {receiptTxn.processedBy}</div>
-                <div>Channel: {receiptTxn.channel}</div>
                 <div>Status: System Verified (Successful)</div>
               </div>
             </div>
@@ -463,14 +564,6 @@ export default function TransactionsView() {
         )}
       </Modal>
 
-      {/* Explicit Confirmation Dialog */}
-      <ConfirmDialog
-        isOpen={confirmDialog.isOpen}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        onConfirm={confirmDialog.onConfirm}
-        onCancel={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
-      />
     </div>
   );
 }
