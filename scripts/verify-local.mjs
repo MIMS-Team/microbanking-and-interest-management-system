@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import {parseEnv} from 'node:util';
 
 const runtime = JSON.parse(readFileSync('.data/local-project-runtime.json', 'utf8'));
 const sessionPath = '.data/local-project-verification-session.json';
+const settings=runtime.environmentFile?parseEnv(readFileSync(runtime.environmentFile,'utf8')):{};
+const email=process.env.LOCAL_VERIFY_EMAIL||settings.LOCAL_VERIFY_EMAIL||'agent@btrust.local';
+const password=process.env.LOCAL_VERIFY_PASSWORD||settings.LOCAL_VERIFY_PASSWORD||'Demo@12345';
 const result = { url: runtime.url, inboxURL: runtime.inboxURL, database: runtime.database };
 let sessionCookie;
 
@@ -24,7 +28,7 @@ if (existsSync(sessionPath)) {
       const session = await request('/api/auth/session', { headers: { Cookie: cached.cookie } });
       if (session.status === 200) {
         const identity = await session.json();
-        if (identity.user.email === 'agent@btrust.local' && identity.capabilities.banking === true) {
+        if (identity.user.email === email && identity.capabilities.banking === true) {
           sessionCookie = cached.cookie;
           result.login = 'cached verified session';
           result.otp = 'cached verified session';
@@ -38,14 +42,14 @@ if (existsSync(sessionPath)) {
 if (!sessionCookie) {
   const login = await request('/api/auth/login', {
     method: 'POST', headers: { Origin: runtime.url, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'agent@btrust.local', password: 'Demo@12345' }),
+    body: JSON.stringify({ email, password }),
   });
   if (login.status === 429) throw new Error(`Login verification is temporarily rate-limited. Retry after ${login.headers.get('retry-after') || 'the configured cooldown'} seconds.`);
   assert.equal(login.status, 202, await login.text());
   result.login = login.status;
   const challengeCookies = login.headers.getSetCookie().map((cookie) => cookie.split(';')[0]).join('; ');
   const messages = await (await fetch(runtime.inboxURL + '/messages')).json();
-  const code = messages.filter((message) => message.recipients.includes('agent@btrust.local')).at(-1)?.raw.match(/verification code is:\s*(\d{6})/i)?.[1];
+  const code = messages.filter((message) => message.recipients.includes(email)).at(-1)?.raw.match(/verification code is:\s*(\d{6})/i)?.[1];
   assert.ok(code, 'Local SMTP inbox did not receive the login OTP.');
 
   const otp = await request('/api/auth/otp', {
@@ -61,7 +65,7 @@ if (!sessionCookie) {
   const session = await request('/api/auth/session', { headers: { Cookie: sessionCookie } });
   assert.equal(session.status, 200);
   const identity = await session.json();
-  assert.equal(identity.user.email, 'agent@btrust.local');
+  assert.equal(identity.user.email, email);
   assert.equal(identity.capabilities.banking, true);
   result.session = session.status;
   writeFileSync(sessionPath, JSON.stringify({ url: runtime.url, database: runtime.database, cookie: sessionCookie, created: new Date().toISOString() }), { mode: 0o600 });

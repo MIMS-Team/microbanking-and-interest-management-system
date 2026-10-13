@@ -2,8 +2,13 @@
 
 The active Next.js application is at the repository root. Authentication,
 customers, savings, fixed deposits, transactions, approvals and reports now
-share MySQL 8.0 through `lib/server/db.ts` and `lib/db.ts`. Runtime never seeds
+share PostgreSQL / Neon through `lib/server/db.ts` and `lib/db.ts`. The legacy
+MySQL 8.0 adapter remains available for migration and regression checks. Runtime never seeds
 banking data automatically.
+
+Read [the PostgreSQL / Neon setup guide](docs/neon-postgres.md) for connection
+settings, native migrations, restricted roles, initial staff setup, data import,
+backup/recovery, local verification, and deployment steps.
 
 Read [the database integration report](docs/database-compliance.md) for the SRS
 mapping, migration safeguards, verification evidence and remaining limitations.
@@ -23,15 +28,16 @@ write a unique ignored connection file and preserve earlier demo/configuration f
 
 Use Node.js 22 or later and npm. The root `package-lock.json` is authoritative.
 
-For the complete local demo after a seeded MySQL database exists, use the tracked
+For the complete local app after a migrated PostgreSQL or seeded MySQL database exists, use the tracked
 launcher rather than starting Next.js directly:
 
 ```powershell
 npm run dev:full
 ```
 
-It discovers the newest reachable `.data/disposable-demo*.env`, verifies all 11
-migrations and seeded staff, and starts the Next.js app, a loopback-only OTP inbox,
+It uses PostgreSQL settings in `.env.local` first, or discovers a reachable
+`.data/disposable-postgres*.env` / `.data/disposable-demo*.env` demo. It verifies
+the backend's migrations and starts the Next.js app, a loopback-only OTP inbox,
 and the employee-notification worker. It prints the application and inbox URLs and
 writes `.data/local-project-runtime.json`. Verify the running stack with
 `npm run dev:verify`. On Windows, `Start-MIMS.cmd` runs the same launcher.
@@ -40,7 +46,7 @@ To select a connection file explicitly, use `npm run dev:full -- --env-file=PATH
 or set `MIMS_LOCAL_ENV_FILE`. An explicit file must be valid and reachable; the
 launcher does not fall back to another database. Set `MIMS_LOCAL_APP_PORT` and
 `MIMS_LOCAL_INBOX_PORT` to change the ports. An existing stack is reused only
-when its ports, connection file, file modification time, database and MySQL
+when its ports, connection file, file modification time, database and selected
 authentication adapter match. If its ports are occupied by a different setup,
 stop that setup before launching the requested configuration.
 After upgrading the launcher, restart any existing stack once to update its runtime record.
@@ -85,7 +91,7 @@ record the exact checks for this local revision. No business policy is implied
 by the demonstration fixtures.
 
 SQLite is limited to development authentication and isolated browser/unit tests;
-full banking needs MySQL. Pages keep their existing URLs, starting at `/login`.
+full banking needs PostgreSQL or MySQL. Pages keep their existing URLs, starting at `/login`.
 Do not commit `.env.local`, credentials, OTP files or database contents.
 
 ## Verification

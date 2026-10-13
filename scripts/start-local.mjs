@@ -6,6 +6,8 @@ import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import mysql from 'mysql2/promise';
 import { createLocalMailbox } from './local-mailbox.mjs';
+import {createPostgresPool} from '../lib/postgres.mjs';
+import {postgresMigrationDirectory} from './migrate-postgres.mjs';
 
 if (process.env.NODE_ENV === 'production') throw new Error('The local launcher cannot run in production.');
 
@@ -35,7 +37,7 @@ function candidates() {
   if (existsSync(resolve('.env.local'))) paths.push(resolve('.env.local'));
   if (existsSync(dataDirectory)) {
     paths.push(...readdirSync(dataDirectory)
-      .filter((name) => /^disposable-demo(?:-[a-f0-9-]+)?\.env$/i.test(name))
+      .filter((name) => /^(?:disposable-demo|disposable-postgres)(?:-[a-f0-9-]+)?\.env$/i.test(name))
       .map((name) => resolve(dataDirectory, name))
       .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs));
   }
@@ -49,6 +51,19 @@ async function selectDatabase() {
     let environment;
     try { environment = parseEnv(readFileSync(file, 'utf8')); }
     catch (error) { failures.push(`${file}: ${error.message}`); continue; }
+    if(environment.DATABASE_URL) {
+      const pool=createPostgresPool(environment.DATABASE_URL);
+      try {
+        const identity=(await pool.query('SELECT current_database() AS name')).rows[0];
+        const completed=(await pool.query("SELECT version FROM schema_migrations WHERE status='complete'")).rows.map(r=>r.version);
+        const expected=readdirSync(postgresMigrationDirectory).filter(n=>/^\d{3}-.+\.sql$/.test(n));
+        if(!expected.every(n=>completed.includes(n)))throw new Error('Apply db:migrate:postgres before starting this PostgreSQL database.');
+        return {environment:{...environment,MIMS_AUTH_DB_ADAPTER:'postgres'},file,database:identity.name,adapter:'postgres',modifiedAt:statSync(file).mtimeMs};
+      }catch(error){
+        const reason=/^[A-Z0-9_]+$/.test(error.code??'')?error.code:'check connection and PostgreSQL migrations';
+        throw new Error(`Configured PostgreSQL database is unavailable (${reason}). The launcher will not fall back to another database.`);
+      }finally{await pool.end();}
+    }
     const required = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
     if (required.some((key) => environment[key] === undefined || environment[key] === '')) {
       failures.push(`${file}: incomplete DB_* settings`);
@@ -70,7 +85,7 @@ async function selectDatabase() {
       if (identity.name !== environment.DB_NAME || Number(migrations.completed) !== 11 || Number(employees.employees) < 1) {
         throw new Error('database is not a complete seeded MIMS database');
       }
-      return { environment, file, database: identity.name, modifiedAt: statSync(file).mtimeMs };
+      return { environment, file, database: identity.name, adapter:'mysql', modifiedAt: statSync(file).mtimeMs };
     } catch (error) {
       failures.push(`${file}: ${error.code || error.message}`);
     } finally { await connection?.end(); }
@@ -102,7 +117,7 @@ if (existsSync(runtimePath)) {
     const runtime = JSON.parse(readFileSync(runtimePath, 'utf8'));
     if (runtime.url === url && runtime.inboxURL === inboxURL &&
         runtime.environmentFile === selected.file && runtime.environmentModifiedAt === selected.modifiedAt &&
-        runtime.database === selected.database && runtime.authAdapter === 'mysql' &&
+        runtime.database === selected.database && runtime.authAdapter === selected.adapter &&
         await responds(url + '/login') && await responds(inboxURL)) {
       console.log(`MIMS is already running.\nApplication: ${runtime.url}\nOTP inbox: ${runtime.inboxURL}\nDatabase: ${runtime.database}`);
       existingStack = true;
@@ -115,6 +130,10 @@ if (!await portAvailable(appPort)) throw new Error(`Port ${appPort} is already i
 if (!await portAvailable(inboxPort)) throw new Error(`Port ${inboxPort} is already in use and no matching healthy tracked MIMS runtime was found. Stop the existing stack or set MIMS_LOCAL_INBOX_PORT.`);
 
 const mailbox = await createLocalMailbox({ inboxPort, getRecipients: async () => {
+  if(selected.adapter==='postgres'){
+    const pool=createPostgresPool(selected.environment.DATABASE_URL);
+    try{return (await pool.query('SELECT email,role FROM staff')).rows;}finally{await pool.end();}
+  }
   const connection = await mysql.createConnection({
     host: selected.environment.DB_HOST, port: Number(selected.environment.DB_PORT),
     user: selected.environment.DB_USER, password: selected.environment.DB_PASSWORD,
@@ -130,7 +149,7 @@ const environment = {
   ...process.env,
   ...selected.environment,
   NODE_ENV: 'development',
-  MIMS_AUTH_DB_ADAPTER: 'mysql',
+  MIMS_AUTH_DB_ADAPTER: selected.adapter,
   NEXT_TELEMETRY_DISABLED: '1',
   APP_URL: url,
   EMAIL_PROVIDER: 'smtp',

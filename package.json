@@ -9,6 +9,7 @@
     "dev:verify": "node scripts/verify-local.mjs",
     "build": "next build --webpack",
     "start": "next start --hostname 127.0.0.1",
+    "start:host": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "scheduler": "node scripts/scheduler.mjs",
     "test": "npm run test:auth && npm run test:banking",
