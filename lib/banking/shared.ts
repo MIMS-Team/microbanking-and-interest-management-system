@@ -57,6 +57,7 @@ export interface ApprovalRow {
   branch_id: number | null;
   requested_by: number;
   status: string;
+  summary?: string;
   payload: Input;
   target_version: number | null;
   intended_approver_id: number | null;
@@ -105,6 +106,13 @@ export async function queue(tx: Queryable, user: Staff, type: string, id: number
   await tx.query(`INSERT INTO approvals(type,entity_id,${target[1]},target_version,authority,branch_id,customer_name,summary,payload,requested_by)
     VALUES($1,$2,$2,$3,$4,$5,$6,$7,$8,$9)`,[type,id,version,authority,branch,name,summary,JSON.stringify(payload),user.id]);
   await audit(tx,user,`${type}.requested`,type.split('.')[0],id,branch,{summary});
+  try {
+    await tx.query(
+      `INSERT INTO in_app_notifications(recipient_id,role,branch_id,title,message,type,link,is_read,created_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,0,CURRENT_TIMESTAMP)`,
+      [null, authority, branch, 'New Approval Request', `${user.full_name} submitted "${summary}" for approval.`, 'approval', '/dashboard?tab=decisions']
+    );
+  } catch {}
 }
 
 export async function account(tx: Queryable, id: unknown, lock = false): Promise<AccountRow> {

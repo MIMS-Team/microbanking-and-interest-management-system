@@ -1,5 +1,4 @@
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 import nodemailer from 'nodemailer';
 import type { OtpPurpose } from './db';
 import { validateE2eEnvironment } from '../../scripts/e2e-environment.mjs';
