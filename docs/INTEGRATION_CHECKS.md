@@ -1,5 +1,10 @@
 # Missing-module integration checks
 
+Historical results from October 10, 2026. The database mismatch described below
+was subsequently resolved by the shared MySQL implementation; see
+[whole-project verification](whole-project-verification.md). The obsolete
+compatibility SQL fixture was removed on October 13, 2026.
+
 Checked locally on `file-organize`, 2026-10-10. Changes are not committed or pushed by this fix.
 
 ## Changes
@@ -21,7 +26,7 @@ Checked locally on `file-organize`, 2026-10-10. Changes are not committed or pus
 
 ## Runtime boundary
 
-`tests/fixtures/legacy-banking.sql` is a recovered test-only schema. Neither the active MySQL schema nor the application's database selection was changed to make the tests pass. The new compatibility tests validate legacy service behavior in isolation, not MySQL conversion or end-to-end banking operation.
+At that revision, a recovered test-only schema supported the compatibility tests. Neither the active MySQL schema nor the application's database selection was changed to make those tests pass. Those compatibility tests validated legacy service behavior in isolation, not MySQL conversion or end-to-end banking operation.
 
 The next integration step is to reconcile the older banking services, schema, and employee identity with the team's MySQL implementation. Whole-bank HTTP smoke tests have not passed and the current build result should not be treated as a working-bank release.
 

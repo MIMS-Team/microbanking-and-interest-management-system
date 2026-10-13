@@ -32,7 +32,7 @@ customer authentication/password entities conflict with SRS section 2.3.5
 | `lib/reports.ts`, `maintenance.ts` | Real PostgreSQL aggregates and catch-up jobs; administrators have financial access; inactivity includes deposits/transfers; no durable job outcomes. |
 | `app/api/` | Authenticated root action API, but savings/FD/cron alternative paths bypass authorization and ledger. FD principal debited while pending. |
 | `src/lib/db.ts`, `src/services/`, `src/app/api/` | Absent locally. Read at reviewed main: Neon employee/branch/OTP model, in-memory customer/account services and hardcoded reports. Not active in this checkout. |
-| `tests/fixtures/legacy-banking.sql` | PostgreSQL fixture for compatibility tests only; useful design reference, not a MySQL migration. |
+| Former compatibility SQL fixture (removed October 13, 2026) | PostgreSQL fixture for compatibility tests only; not a MySQL migration. |
 | Setup / seed / scheduler / CI | PGlite setup and demo seed mixed with runtime; scheduler has no persisted outcomes; smoke test targets removed auth API; CI separates MySQL auth from banking. |
 
 ## Requirement-to-implementation checklist
@@ -115,8 +115,10 @@ unconditional claim of SRS compliance.
   and isolated development/production runners are preserved.
 - `README.md`, `.env.example`, `compose.yaml`, package manifests and this report:
   current setup, explicit policy/credential configuration and reproducible checks.
-  PostgreSQL/PGlite packages are removed. Historical SQL examples remain reference
-  material; they are not imported by the active application.
+  PostgreSQL/PGlite packages are removed. Obsolete dependency snapshots, demo
+  instructions and the unused compatibility SQL fixture were also removed on
+  October 13, 2026. Historical MySQL SQL remains reference material and is not
+  imported by the active application.
 
 ## Final schema and relationships
 

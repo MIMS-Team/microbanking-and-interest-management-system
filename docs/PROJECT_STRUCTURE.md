@@ -1,4 +1,10 @@
-# Current project structure
+# Historical project organization
+
+This report describes the October 10 organization work. The active application
+now shares MySQL for authentication and banking. Obsolete database manifests,
+lockfiles, demo instructions and the unused compatibility SQL fixture were removed
+on October 13, 2026. See [the root README](../README.md) for current setup and
+[whole-project verification](whole-project-verification.md) for later results.
 
 Cleanup base: main commit `8c2dec0f5f38b81fed6f975d6c751507da668aae`, inspected on 10 October 2026.
 
@@ -21,19 +27,17 @@ The layout uses one root application and one active package manifest/lockfile. B
 | Nested Next.js, TypeScript, Tailwind, ESLint and Vitest config | Root equivalents | Run tools from the same project directory; aliases point to the root. |
 | Nested `package-lock.json` | Root `package-lock.json` | One npm lockfile synchronized with the combined existing dependencies. |
 | Nested `.env.example` | Merged root `.env.example` | One environment template with both existing sets of settings. |
-| Original root package manifest/pnpm files | `docs/reference/` | Preserve the old PostgreSQL dependency snapshot while removing competing active configuration. |
-| Previous root README | `docs/reference/postgresql-demo-readme.md` | Preserve earlier demo instructions without presenting them as current integrated behavior. |
 | Nested `src/app/api/update-date/_route.ts` | `docs/reference/update-date-route.ts.txt` | Preserve the disabled debugging code; it remains outside active routing. |
 
 Duplicate agent instructions were byte-identical and are consolidated at root. The generated Next.js README, starter landing page and five starter SVGs were boilerplate; the landing page now redirects to the existing login route. The favicon is retained.
 
 ## Dependencies and tests
 
-The merged manifest keeps the existing nested application's Next.js/React/TypeScript versions for overlapping dependencies and adds the root banking application's existing additional dependencies. No framework upgrade was performed. The combined graph requires two newer shared transitive dependencies (`typed-array-byte-offset` and `which-typed-array`); the root npm lock records those versions. The original root manifest/lock remains in `docs/reference/`.
+The merged manifest keeps the existing nested application's Next.js/React/TypeScript versions for overlapping dependencies and adds the root banking application's existing additional dependencies. No framework upgrade was performed. The combined graph requires two newer shared transitive dependencies (`typed-array-byte-offset` and `which-typed-array`); the root npm lock records those versions.
 
 `npm run test:auth` runs the existing Vitest tests under `lib/server/`. `npm run test:banking` runs the existing Node test suites in `tests/`; `npm test` runs both, so the incomplete banking tests are not silently hidden. CI's previous authentication checks now run from root and retain their dedicated MySQL verification job.
 
-## Remaining integration gaps
+## Integration gaps at that revision
 
 The original missing imports are resolved. `lib/auth/password.ts` reuses the existing server password hash; `lib/http.ts` reuses CSRF and error handling. The four generic banking routes now pass their request to `lib/server/api.ts` and use its authenticated user. `lib/auth/approvals.ts` provides request-bound OTPs for the existing generic employee approval workflow without creating another login/session system.
 

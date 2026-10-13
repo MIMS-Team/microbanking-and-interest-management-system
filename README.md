@@ -2,8 +2,8 @@
 
 The active Next.js application is at the repository root. Authentication,
 customers, savings, fixed deposits, transactions, approvals and reports now
-share MySQL 8.0 through `lib/server/db.ts` and `lib/db.ts`. PostgreSQL/PGlite
-runtime dependencies and automatic banking seeds have been removed.
+share MySQL 8.0 through `lib/server/db.ts` and `lib/db.ts`. Runtime never seeds
+banking data automatically.
 
 Read [the database integration report](docs/database-compliance.md) for the SRS
 mapping, migration safeguards, verification evidence and remaining limitations.
@@ -64,8 +64,8 @@ without its owner's reviewed migration procedure and backup. No shared database
 was modified during the database integration task.
 
 `database/migrations/` is the canonical schema. `database/schema.sql` points to
-that installation path. `database/history/` and `tests/fixtures/legacy-banking.sql`
-are historical references and must not be executed as installation scripts.
+that installation path. `database/history/` contains historical MySQL references
+and must not be executed as installation scripts.
 `npm run seed:dev` creates and seeds a **new disposable MySQL database**.
 It requires explicit `TEST_MYSQL_*` settings, never reads an existing target from
 `DB_*`, and writes restricted application connection settings into the ignored
