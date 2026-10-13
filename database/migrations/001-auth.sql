@@ -93,4 +93,4 @@ CREATE TABLE IF NOT EXISTS `authentication_audit` (
       KEY `idx_audit_employee` (`employee_id`, `created_at`),
       KEY `idx_audit_event` (`event_type`, `created_at`),
       CONSTRAINT `fk_audit_employee` FOREIGN KEY (`employee_id`) REFERENCES `staff` (`id`) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4  COLLATE=utf8mb4_unicode_ci; 
