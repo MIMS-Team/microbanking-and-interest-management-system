@@ -43,15 +43,31 @@ fieldset { border:0; margin:0; padding:0; min-width:0; }
 .bank-logo-symbol { width:40px; height:40px; }
 .bank-logo-caption { display:block; font-size:10px; letter-spacing:.05em; color:var(--muted); margin-top:1px; }
 .bank-primary-nav { flex:1; min-width:0; }
-.workspace-nav { display:flex; gap:4px; overflow-x:auto; align-items:center; padding:4px; scrollbar-width:thin; scrollbar-color:#d6dcd1 transparent; }
-.workspace-nav a { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:10px 12px; border-radius:8px; color:var(--muted); font-size:12px; font-weight:600; text-decoration:none; white-space:nowrap; min-height:40px; }
+.workspace-nav { display:flex; gap:3px; overflow-x:auto; align-items:center; padding:2px 0; scrollbar-width:none; -ms-overflow-style:none; }
+.workspace-nav::-webkit-scrollbar { display:none; width:0; height:0; }
+.workspace-nav a { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:7px 11px; border-radius:8px; color:var(--muted); font-size:12px; font-weight:600; text-decoration:none; white-space:nowrap; min-height:34px; transition:background .15s,color .15s; }
 .workspace-nav a:hover { color:var(--ink); background:#edf0e9; }
-.workspace-nav a[aria-current=page] { background:var(--ink); color:white; box-shadow:0 2px 5px #20221f20; }
-.bank-account { display:flex; align-items:center; gap:12px; padding-left:18px; border-left:1px solid var(--border); flex-shrink:0; }
-.bank-account-link { display:flex; align-items:center; gap:9px; text-decoration:none; color:var(--ink); }
-.bank-account-name strong { display:block; font-size:12px; font-weight:650; max-width:135px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.bank-account-name small { display:block; color:var(--muted); font-size:10px; }
-.bank-logout { color:var(--muted); }
+.workspace-nav a[aria-current=page] { background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; font-weight:700; box-shadow:0 2px 6px rgba(3, 105, 161, 0.12); }
+.bank-account { display:flex; align-items:center; gap:8px; padding-left:14px; border-left:1px solid var(--border); flex-shrink:0; }
+.role-trigger { cursor:pointer; background:#ffffff; border:1px solid var(--border); color:var(--ink); transition:all 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.role-trigger:hover { background:#f4f6f1; border-color:#bdc5b7; }
+.user-menu-dropdown { box-shadow:0 20px 48px -12px rgba(16, 42, 67, 0.16), 0 0 1px 1px rgba(16, 42, 67, 0.08); border-radius:18px; }
+.role-icon-badge { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; flex-shrink:0; cursor:default; transition:transform .15s ease; }
+.role-icon-badge:hover { transform:scale(1.1); }
+.role-icon-higher_manager { background:#fef3c7; color:#b45309; border:1px solid #fde68a; }
+.role-icon-admin { background:#f1f5f9; color:#334155; border:1px solid #cbd5e1; }
+.role-icon-manager { background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; }
+.role-icon-agent { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+.role-shower { display:inline-flex; align-items:center; gap:3px; font-size:9.5px; font-weight:600; line-height:1.3; padding:1.5px 6.5px; border-radius:9999px; letter-spacing:0.02em; white-space:nowrap; }
+.role-shower-higher_manager { background:#fef3c7; color:#92400e; border:1px solid #fde68a; }
+.role-shower-admin { background:#f1f5f9; color:#334155; border:1px solid #cbd5e1; }
+.role-shower-manager { background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; }
+.role-shower-agent { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+.notification-trigger { cursor:pointer; background:#ffffff; border:1px solid var(--border); color:var(--ink); transition:all 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.notification-trigger:hover { background:#f4f6f1; border-color:#bdc5b7; color:#102a43; }
+.notification-badge { background:#e11d48; color:#ffffff; box-shadow:0 2px 6px rgba(225, 29, 72, 0.4); animation:notification-pulse 2.5s infinite; }
+@keyframes notification-pulse { 0%, 100% { transform:scale(1); } 50% { transform:scale(1.08); } }
+.notification-dropdown { box-shadow:0 20px 48px -12px rgba(16, 42, 67, 0.16), 0 0 1px 1px rgba(16, 42, 67, 0.08); border-radius:18px; }
 .bank-content { padding:0 28px 36px; min-width:0; }
 .bank-content:focus { outline:none; }
 .workspace-context { display:flex; justify-content:space-between; gap:16px; align-items:center; min-height:54px; margin:0 -28px 28px; padding:12px 28px; border-bottom:1px solid var(--border); font-size:12px; color:var(--muted); }
@@ -73,8 +89,8 @@ fieldset { border:0; margin:0; padding:0; min-width:0; }
 .text-button { display:inline-flex; gap:6px; align-items:center; padding:6px; background:transparent; font-size:12px; font-weight:600; color:var(--blue-primary); border-radius:6px; }
 .text-button:hover { background:var(--blue-subtle); color:var(--blue-hover); }
 .icon-button { display:inline-flex; align-items:center; justify-content:center; min-height:34px; min-width:34px; border-radius:8px; padding:7px; background:transparent; color:var(--muted); }
-.icon-button:hover:not(:disabled) { background:#eff1eb; color:var(--ink); }
-.local-tabs { display:flex; gap:4px; overflow-x:auto; border-bottom:1px solid var(--border); margin-bottom:24px; }
+.local-tabs { display:flex; gap:4px; overflow-x:auto; border-bottom:1px solid var(--border); margin-bottom:24px; scrollbar-width:none; -ms-overflow-style:none; }
+.local-tabs::-webkit-scrollbar { display:none; width:0; height:0; }
 .local-tabs :is(button,a) { display:inline-flex; align-items:center; gap:8px; background:transparent; padding:12px 16px; font-size:13px; font-weight:500; color:var(--muted); text-decoration:none; white-space:nowrap; border-bottom:2px solid transparent; }
 .local-tabs :is(button,a):hover { color:var(--ink); }
 .local-tabs :is(button,a):is([aria-current=page],[aria-selected=true]) { color:var(--ink); border-bottom-color:var(--ink); }
@@ -324,8 +340,8 @@ td button:hover { color:var(--blue-hover); }
 .auth-form-footer { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--muted); margin-top:30px; }
 .auth-mobile-brand { display:none; }
 
-@media (max-width:1250px) {
-  .bank-header-inner { flex-wrap:wrap; gap:12px; padding-bottom:10px; }
+@media (max-width:850px) {
+  .bank-header-inner { flex-wrap:wrap; gap:12px; padding:12px 18px 8px; }
   .bank-primary-nav { order:3; flex-basis:100%; }
   .bank-account { margin-left:auto; }
   .workspace-nav { margin:0 -4px; }

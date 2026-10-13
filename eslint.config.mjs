@@ -16,6 +16,7 @@ const eslintConfig = defineConfig([
     "playwright-report/**",
     "test-results/**",
     "scripts/**",
+    "microbanking-and-interest-management-system/**",
   ]),
 ]);
 

@@ -1,5 +1,4 @@
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 import nodemailer from 'nodemailer';
 import type { OtpPurpose } from './db';
 import { validateE2eEnvironment } from '../../scripts/e2e-environment.mjs';
@@ -138,7 +137,10 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
   if (provider === 'smtp') {
     const smtpHost = process.env.SMTP_HOST;
     if (!smtpHost) {
-      // In demo or unconfigured SMTP environments, fallback gracefully to console
+      if ((isProduction || process.env.EMAIL_PROVIDER === 'smtp') && process.env.DEMO_OTP !== 'true') {
+        throw new OtpDeliveryError('Production SMTP server is not configured (missing SMTP_HOST).', 502, 'EMAIL_CONFIG_MISSING');
+      }
+      // In non-production or demo fallback to console if SMTP is unconfigured
       return sendDevOtp(options);
     }
 
@@ -178,10 +180,17 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
   }
 
   // Development, Demo & Console fallback mode
+  if (isProduction && process.env.DEMO_OTP !== 'true') {
+    throw new OtpDeliveryError('No valid email delivery provider is configured for production.', 502, 'EMAIL_CONFIG_MISSING');
+  }
+
   return sendDevOtp(options);
 }
 
 function sendDevOtp(options: EmailDispatchOptions): { success: boolean; provider: string } {
+  if (process.env.NODE_ENV === 'production' && process.env.DEMO_OTP !== 'true') {
+    throw new OtpDeliveryError('Console delivery is prohibited in production.', 502, 'EMAIL_CONFIG_MISSING');
+  }
   console.info(`[MIMS-DEV-OTP] Code for ${options.to} (${options.purpose}): ${options.otpCode}`);
   return { success: true, provider: 'console' };
 }

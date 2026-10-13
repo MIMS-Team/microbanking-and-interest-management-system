@@ -23,3 +23,17 @@ export interface Bootstrap { permissions?:string[]; pagination?:Partial<Record<i
 export interface Bootstrap { branchHours?:Array<{branch_id:number;weekday:number;opens:string;closes:string}>; branchHolidays?:Array<{branch_id:number;holiday:string}>; }
 
 export interface Bootstrap { rateHistory?:Array<{id:number;name:string;annual_rate:Money;effective_at:string}>; }
+
+export interface InAppNotification {
+  id: number;
+  recipient_id: number | null;
+  role: string | null;
+  branch_id: number | null;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'success' | 'approval' | 'system';
+  link?: string | null;
+  is_read: boolean;
+  created_at: string;
+  read_at?: string | null;
+}

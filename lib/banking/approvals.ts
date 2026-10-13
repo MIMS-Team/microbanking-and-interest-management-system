@@ -52,6 +52,21 @@ export async function reviewApproval(tx: Queryable, user: Staff, input: Input) {
   await tx.query(`UPDATE approvals SET status=$1,reviewed_by=$2,notes=$3,reviewed_at=CURRENT_TIMESTAMP
     WHERE id=$4`, [decision, user.id, notes, approval.id]);
   await audit(tx, user, `approval.${decision}`, 'approval', approval.id, approval.branch_id, {type: approval.type, notes});
+  try {
+    const isApproved = decision === 'approved';
+    await tx.query(
+      `INSERT INTO in_app_notifications (recipient_id, role, branch_id, title, message, type, link, is_read, created_at)
+       VALUES ($1, NULL, $2, $3, $4, $5, $6, 0, CURRENT_TIMESTAMP)`,
+      [
+        approval.requested_by,
+        approval.branch_id,
+        `Request ${isApproved ? 'Approved' : 'Rejected'}: ${approval.summary || approval.type}`,
+        notes ? `Decision: ${decision}. Note: ${notes}` : `Your request "${approval.summary || approval.type}" was ${decision} by ${user.full_name}.`,
+        isApproved ? 'success' : 'warning',
+        '/dashboard?tab=decisions'
+      ]
+    );
+  } catch {}
   return {message: `Request ${decision}.`};
 }
 
