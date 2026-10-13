@@ -8,7 +8,10 @@ import {
   toggleEmployeeStatus,
   updateEmployee,
 } from '@/services/employeeService';
-import { sendEmployeePasswordResetEmail } from '@/services/passwordEmailService';
+import {
+  sendEmployeePasswordResetEmail,
+  sendEmployeeTemporaryPasswordEmail,
+} from '@/services/passwordEmailService';
 import { getEmployeeLoginSessions } from '@/services/employeeSessionService';
 
 function isPositiveInteger(value: unknown): value is number {
@@ -57,9 +60,14 @@ function isValidEmployeeData(
     typeof data.phone === 'string' &&
     data.phone.length <= 20 &&
     typeof data.roleId === 'string' &&
-    data.roleId.length === 1 &&
+    data.roleId.trim().length > 0 &&
+    data.roleId.length <= 32 &&
     isPositiveInteger(data.branchId)
   );
+}
+
+function isValidOtpCode(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{6}$/.test(value);
 }
 
 // GET /api/employees — retrieve a paginated employee list
@@ -141,8 +149,7 @@ export async function POST(request: NextRequest) {
     if (
       !isValidEmployeeData(data) ||
       !isSecondaryOtpRoles(data.secondaryOtpRoles) ||
-      typeof otpCode !== 'string' ||
-      !otpCode.trim() ||
+      !isValidOtpCode(otpCode) ||
       !isPositiveInteger(otpId) ||
       !isPositiveInteger(otpEmployeeId)
     ) {
@@ -177,7 +184,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Invalid or expired HRM OTP.' }, { status: 403 });
     }
 
-    return NextResponse.json(result, { status: 201 });
+    const emailResult = await sendEmployeeTemporaryPasswordEmail({
+      recipientEmail: result.employee.email,
+      recipientName: result.employee.name,
+      username: result.employee.username,
+      temporaryPassword: result.temporaryPassword,
+    });
+    if (!emailResult.success) {
+      return NextResponse.json(
+        {
+          message: `The employee account was created, but its temporary password could not be emailed. ${emailResult.message} Use Reset Password to issue and email a new password.`,
+          employee: result.employee,
+          employeeProvisioned: true,
+        },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({
+      employee: result.employee,
+      message: `A temporary sign-in password was emailed to ${result.employee.email}.`,
+    }, { status: 201 });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return NextResponse.json(
@@ -204,8 +231,7 @@ export async function PUT(request: NextRequest) {
       !isPositiveInteger(data.employeeId) ||
       !isValidEmployeeData(data) ||
       !isSecondaryOtpRoles(data.secondaryOtpRoles) ||
-      typeof otpCode !== 'string' ||
-      !otpCode.trim() ||
+      !isValidOtpCode(otpCode) ||
       !isPositiveInteger(otpId) ||
       !isPositiveInteger(otpEmployeeId)
     ) {

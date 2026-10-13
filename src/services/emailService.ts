@@ -72,7 +72,7 @@ export async function sendOtpEmail(
 
     // Convert the purpose code into a readable name
     const decodedPurpose = decodePurpose(purpose, details);
-
+    
     // Format details for HTML email
     const formattedDetails = details
       ? details.replace(/\n/g, '<br/>')

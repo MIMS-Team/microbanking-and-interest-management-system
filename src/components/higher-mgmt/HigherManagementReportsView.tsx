@@ -120,6 +120,7 @@ const reportDefinitions: Array<{
     title: 'Customer Deposits, Withdrawals and Net Activity',
     description: 'Customer cash-flow activity in the selected period.',
     columns: [
+      { key: 'customer_id', label: 'Customer ID' },
       { key: 'customer_name', label: 'Customer' },
       { key: 'branch_name', label: 'Branch' },
       { key: 'total_deposits', label: 'Deposits', align: 'right', isCurrency: true },
@@ -692,6 +693,7 @@ export default function HigherManagementReportsView({
                     key={[
                       row.account_no,
                       row.agent_name,
+                      row.customer_id,
                       row.customer_name,
                       row.month,
                       row.branch_name,

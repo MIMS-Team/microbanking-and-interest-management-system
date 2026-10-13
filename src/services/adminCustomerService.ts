@@ -46,7 +46,7 @@ export async function getAdminCustomers(
       )
       AND (${status === ''} OR c.status = ${statusCode})
       AND (${branchId === ''} OR c.branch_id = ${branchId})
-      ORDER BY c.id
+      ORDER BY CAST(c.id AS UNSIGNED), c.id
       LIMIT ${pageSize} OFFSET ${offset}
     `,
     sql`

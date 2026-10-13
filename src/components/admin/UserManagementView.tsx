@@ -227,15 +227,17 @@ export default function UserManagementView() {
   const [passwordResetInfo, setPasswordResetInfo] = useState<{
     isOpen: boolean;
     name: string;
-    tempPass: string;
     message: string;
     type: 'Employee' | 'Customer';
+    title: string;
+    emailSent: boolean;
   }>({
     isOpen: false,
     name: '',
-    tempPass: '',
     message: '',
     type: 'Employee',
+    title: '',
+    emailSent: false,
   });
 
   // Confirmation Dialog State
@@ -485,9 +487,22 @@ export default function UserManagementView() {
       const result: {
         message?: string;
         employee?: EmployeeRecord;
-        temporaryPassword?: string;
+        employeeProvisioned?: boolean;
       } = await response.json();
-      if (!response.ok || !result.employee || !result.temporaryPassword) {
+      if (!response.ok && result.employeeProvisioned && result.employee) {
+        setIsAddEmployeeModalOpen(false);
+        setEmployeeRefreshKey((key) => key + 1);
+        setPasswordResetInfo({
+          isOpen: true,
+          name: result.employee.name,
+          message: result.message || 'The account was created, but its password email could not be sent. Use Reset Password to issue and email a new password.',
+          type: 'Employee',
+          title: 'Employee Account Created',
+          emailSent: false,
+        });
+        return;
+      }
+      if (!response.ok || !result.employee) {
         throw new Error(result.message || 'Failed to provision employee account.');
       }
       setIsAddEmployeeModalOpen(false);
@@ -495,9 +510,10 @@ export default function UserManagementView() {
       setPasswordResetInfo({
         isOpen: true,
         name: result.employee.name,
-        tempPass: result.temporaryPassword,
-        message: `Username: ${result.employee.username}. Save this temporary password securely.`,
+        message: result.message || `The temporary sign-in password was emailed to ${result.employee.email}.`,
         type: 'Employee',
+        title: 'Employee Account Created',
+        emailSent: true,
       });
     } catch (error) {
       console.error('Error creating employee:', error);
@@ -632,9 +648,10 @@ export default function UserManagementView() {
       setPasswordResetInfo({
         isOpen: true,
         name: emp.name,
-        tempPass: '',
         message: result.message || `The new password was emailed to ${emp.email}.`,
         type: 'Employee',
+        title: 'Employee Password Reset',
+        emailSent: true,
       });
     } catch (error) {
       console.error('Error resetting employee password:', error);
@@ -672,9 +689,10 @@ export default function UserManagementView() {
       setPasswordResetInfo({
         isOpen: true,
         name: customer.name,
-        tempPass: '',
         message: result.message || `A new password was emailed to ${customer.email}.`,
         type: 'Customer',
+        title: 'Customer Password Reset',
+        emailSent: true,
       });
       setCustomerRefreshKey((key) => key + 1);
     } catch (error) {
@@ -1698,7 +1716,7 @@ export default function UserManagementView() {
       <Modal
         isOpen={passwordResetInfo.isOpen}
         onClose={() => setPasswordResetInfo((prev) => ({ ...prev, isOpen: false }))}
-        title={`${passwordResetInfo.type} Password Reset`}
+        title={passwordResetInfo.title}
         maxWidth="max-w-md"
       >
         <div className="space-y-4">
@@ -1706,23 +1724,12 @@ export default function UserManagementView() {
             <div className="flex items-center gap-2 text-xs font-bold text-blue-900">
               <CheckCircle className="w-4 h-4 text-blue-600" />
               <span>
-                {passwordResetInfo.type === 'Employee'
-                  ? 'Password reset email sent for'
-                  : 'Customer password reset email sent for'}{' '}
+                {passwordResetInfo.emailSent ? 'Credential email sent for' : 'Account created for'}{' '}
                 {passwordResetInfo.name}
               </span>
             </div>
             <p className="text-xs text-blue-700 mt-1">{passwordResetInfo.message}</p>
           </div>
-
-          {passwordResetInfo.tempPass && (
-            <div className="p-3 bg-slate-100 rounded-xl text-center">
-              <span className="text-[11px] text-slate-500 block">Temporary password:</span>
-              <span className="font-mono font-bold text-lg text-slate-900 tracking-wider">
-                {passwordResetInfo.tempPass}
-              </span>
-            </div>
-          )}
 
           <div className="flex justify-end pt-2">
             <button

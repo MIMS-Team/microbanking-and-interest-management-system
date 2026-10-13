@@ -285,6 +285,7 @@ export default function CustomersView() {
           <table className="w-full min-w-[1000px] text-left text-xs text-slate-600">
             <thead className="border-b border-slate-200/80 bg-slate-50/75 text-[11px] font-semibold uppercase text-slate-500">
               <tr>
+                <th className="px-4 py-3">Customer ID</th>
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">NIC</th>
                 <th className="px-4 py-3">Contact</th>
@@ -296,11 +297,12 @@ export default function CustomersView() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Loading customers…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Loading customers…</td></tr>
               ) : customers.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">No customers match this search.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">No customers match this search.</td></tr>
               ) : customers.map((customer) => (
                 <tr key={customer.id} className="hover:bg-slate-50/60">
+                  <td className="px-4 py-3 font-mono font-bold text-slate-800">{customer.id}</td>
                   <td className="px-4 py-3">
                     <div className="font-semibold text-slate-900">{customer.name}</div>
                     <div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400">

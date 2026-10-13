@@ -33,7 +33,7 @@ const numericColumns: Record<HigherManagementReportType, string[]> = {
   ],
   'active-fd-payouts': ['duration_months', 'principal_amount'],
   'monthly-interest': ['transaction_count', 'account_count', 'total_interest'],
-  'customer-activity': ['total_deposits', 'total_withdrawals', 'net_balance'],
+  'customer-activity': ['customer_id', 'total_deposits', 'total_withdrawals', 'net_balance'],
 };
 
 function formatColomboDate(value: Date | string): string {
@@ -265,7 +265,7 @@ export async function getHigherManagementReport(
             AND le.created_at < TIMESTAMPADD(MINUTE, -330, CONCAT(DATE_ADD(${endDate}, INTERVAL 1 DAY), ' 00:00:00'))
           GROUP BY ca.customer_id
         )
-        SELECT c.full_name AS customer_name, b.name AS branch_name,
+        SELECT c.id AS customer_id, c.full_name AS customer_name, b.name AS branch_name,
           COALESCE(m.deposits, 0) AS total_deposits,
           COALESCE(m.withdrawals, 0) AS total_withdrawals,
           COALESCE(m.deposits, 0) - COALESCE(m.withdrawals, 0) AS net_balance
@@ -274,7 +274,7 @@ export async function getHigherManagementReport(
         LEFT JOIN movements m ON m.customer_id = c.id
         WHERE c.status = 'active'
           AND (${branchId} = 0 OR c.branch_id = ${branchId})
-        ORDER BY c.full_name, c.id
+        ORDER BY CAST(c.id AS UNSIGNED), c.id
       `;
       break;
   }
