@@ -75,7 +75,9 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
   }
 
   const isTest = !isProduction && (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true');
-  const provider = (process.env.EMAIL_PROVIDER || (isProduction ? 'smtp' : isTest ? 'test' : 'console')).toLowerCase();
+  const isDemo = process.env.DEMO_OTP === 'true';
+  const defaultProvider = isDemo ? 'console' : isProduction ? 'smtp' : isTest ? 'test' : 'console';
+  const provider = (process.env.EMAIL_PROVIDER || defaultProvider).toLowerCase();
 
   // Test mode adapter: fallback when provider is 'test' or when in test environment without an explicit provider override
   if (provider === 'test' || (!process.env.EMAIL_PROVIDER && isTest)) {
@@ -136,10 +138,10 @@ export async function sendOtpEmail(options: EmailDispatchOptions): Promise<{ suc
   if (provider === 'smtp') {
     const smtpHost = process.env.SMTP_HOST;
     if (!smtpHost) {
-      if (isProduction || process.env.EMAIL_PROVIDER === 'smtp') {
+      if ((isProduction || process.env.EMAIL_PROVIDER === 'smtp') && process.env.DEMO_OTP !== 'true') {
         throw new OtpDeliveryError('Production SMTP server is not configured (missing SMTP_HOST).', 502, 'EMAIL_CONFIG_MISSING');
       }
-      // In non-production fallback to console if SMTP is unconfigured
+      // In non-production or demo fallback to console if SMTP is unconfigured
       return sendDevOtp(options);
     }
 
