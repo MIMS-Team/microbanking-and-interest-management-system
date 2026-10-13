@@ -9,7 +9,7 @@ if (process.env.NODE_ENV === 'production') throw new Error('Run browser tests ou
 const owned = createE2eEnvironment();
 const env = {
   ...process.env, ...owned, EMAIL_PROVIDER: 'test', MIMS_E2E_RELAX_RATE_LIMITS: 'true',
-  PGLITE_DATA_DIR: 'memory://', DATABASE_URL: '', NEXT_TELEMETRY_DISABLED: '1',
+  NEXT_TELEMETRY_DISABLED: '1',
   NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --max-old-space-size=4096`.trim(),
   // This auth compatibility runner never inherits a real SMTP recipient path.
   SMTP_HOST:'',SMTP_USER:'',SMTP_PASS:'',SMTP_PORT:'1',SMTP_FROM:'security@example.test',
