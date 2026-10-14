@@ -184,15 +184,22 @@ describe('Authentication and User Management System Tests', () => {
       ).rejects.toThrowError(/Invalid credentials/);
     });
 
-    it('locked employee cannot log in after repeated failed attempts', async () => {
-      for (let i = 0; i < 5; i++) {
-        try {
-          await authenticateCredentials('manager@ravindu.bank', 'WrongPassword');
-        } catch {
-          // ignore
-        }
+    it('locks the employee after 20 failed passwords and allows login after 19', async () => {
+      for (let i = 0; i < 19; i++) {
+        await expect(
+          authenticateCredentials('manager@ravindu.bank', 'WrongPassword')
+        ).rejects.toThrowError(/Invalid credentials/);
       }
 
+      const result = await authenticateCredentials('manager@ravindu.bank', 'ManagerPass!123');
+      expect(result.challengeId).toBeTruthy();
+
+      // Successful password verification resets the failed-attempt counter.
+      for (let i = 0; i < 20; i++) {
+        await expect(
+          authenticateCredentials('manager@ravindu.bank', 'WrongPassword')
+        ).rejects.toThrowError(/Invalid credentials/);
+      }
       await expect(
         authenticateCredentials('manager@ravindu.bank', 'ManagerPass!123')
       ).rejects.toThrowError(/temporarily locked/);
@@ -573,12 +580,12 @@ describe('Authentication and User Management System Tests', () => {
         headers: { 'x-forwarded-for': '203.0.113.195' },
       });
 
-      // Exhaust limit of 5 requests
-      for (let i = 0; i < 5; i++) {
+      // Exhaust limit of 20 requests
+      for (let i = 0; i < 20; i++) {
         expect(() => enforceRateLimit(req, 'LOGIN', 'victim@bank.com')).not.toThrow();
       }
 
-      // 6th request throws RateLimitError
+      // 21st request throws RateLimitError
       expect(() => enforceRateLimit(req, 'LOGIN', 'victim@bank.com')).toThrowError(RateLimitError);
     });
 

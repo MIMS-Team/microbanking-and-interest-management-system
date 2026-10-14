@@ -37,13 +37,13 @@ describe('Authentication test isolation and production protections', () => {
     vi.stubEnv('NODE_ENV', mode);
     vi.stubEnv('E2E_TEST', 'true');
     vi.stubEnv('MIMS_E2E_RELAX_RATE_LIMITS', 'true');
-    for (let index = 0; index < 6; index++) {
+    for (let index = 0; index < 21; index++) {
       const response = await login(new NextRequest('http://localhost/api/auth/login', {
         method: 'POST', headers: { 'content-type': 'application/json', ...(index % 2 ? { 'x-e2e-test': 'true' } : {}) },
         body: JSON.stringify({ email: 'unknown@example.test', password: 'WrongPass!123' }),
       }));
-      expect(response.status).toBe(index < 5 ? 401 : 429);
-      if (index === 5) {
+      expect(response.status).toBe(index < 20 ? 401 : 429);
+      if (index === 20) {
         const body = await response.json();
         expect(body.retryAfter).toBeGreaterThan(0);
         expect(response.headers.get('retry-after')).toBe(String(body.retryAfter));
@@ -56,13 +56,13 @@ describe('Authentication test isolation and production protections', () => {
     Object.entries(env).forEach(([key, value]) => vi.stubEnv(key, value));
     vi.stubEnv('MIMS_E2E_RELAX_RATE_LIMITS', 'true');
     const request = new Request('http://localhost');
-    for (let index = 0; index < 6; index++) enforceRateLimit(request, 'LOGIN');
+    for (let index = 0; index < 21; index++) enforceRateLimit(request, 'LOGIN');
     clearAllRateLimits();
     vi.stubEnv('NODE_ENV', 'production');
     expect(hasOwnedE2eEnvironment()).toBe(false);
-    for (let index = 0; index < 5; index++) enforceRateLimit(request, 'LOGIN');
+    for (let index = 0; index < 20; index++) enforceRateLimit(request, 'LOGIN');
     expect(() => enforceRateLimit(request, 'LOGIN')).toThrow(/Too many requests/);
-    expect(RATE_LIMIT_CONFIGS.LOGIN.maxAttempts).toBe(5);
+    expect(RATE_LIMIT_CONFIGS.LOGIN.maxAttempts).toBe(20);
   });
 
   it('keeps resend rate limits even in an owned relaxed browser environment', () => {

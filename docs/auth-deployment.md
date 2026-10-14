@@ -15,7 +15,7 @@ Deployments requiring a global ceiling must address this before scaling out,
 using a shared atomic rate-limit store or limits at a trusted ingress with
 equivalent semantics. No new runtime infrastructure is added by this change.
 The current limits should be assessed against expected users sharing a NAT/IP;
-login currently permits five attempts per IP and identifier per 15 minutes.
+login currently permits 20 attempts per IP and identifier per 15 minutes.
 
 ## Proxy and HTTPS assumptions
 

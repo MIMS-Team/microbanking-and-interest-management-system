@@ -161,7 +161,7 @@ export function clearAllRateLimits(): void {
 export const RATE_LIMIT_CONFIGS = {
   // Normal protections are independent of headers and obsolete test flags.
   LOGIN: {
-    maxAttempts: 5,
+    maxAttempts: 20,
     windowMs: 15 * 60 * 1000,
   },
   // OTP Verification: 5 attempts per 15 minutes

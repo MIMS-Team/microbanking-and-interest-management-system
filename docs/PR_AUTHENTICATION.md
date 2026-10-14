@@ -27,7 +27,7 @@ This upgrade establishes an enterprise-grade banking security architecture:
    - Sessions, OTPs, password reset challenges, and employee accounts remain fully persistent across server restarts.
 
 2. **Defense-in-Depth Security Controls**:
-   - **Sliding-Window Rate Limiting** (`rate-limit.ts`): Limits attempts per client IP and per target identifier (Login: 5/15m, OTP: 5/15m, Password Reset: 3/15m). Responds with HTTP `429 Too Many Requests` and standard `Retry-After` header.
+   - **Sliding-Window Rate Limiting** (`rate-limit.ts`): Limits attempts per client IP and per target identifier (Login: 20/15m, OTP: 5/15m, Password Reset: 3/15m). Responds with HTTP `429 Too Many Requests` and standard `Retry-After` header.
    - **Timing-Attack & Enumeration Defense**: Employs dummy `scryptSync` hashing for non-existent users and identical messaging on password reset endpoints.
    - **Irreversible Token Hashing**: Session tokens and OTP codes are stored strictly as SHA-256 hashes (`token_hash`, `code_hash`). Plaintext secrets never touch the database.
    - **Hardened Cookies**: Enforces `HttpOnly`, `SameSite=Lax`, `Secure` (in production), and explicit TTLs.
@@ -179,7 +179,7 @@ Content-Type: application/json
 2. **Session Security**: Raw tokens are generated with 32 bytes of cryptographic randomness (`randomBytes(32)`). Only the SHA-256 digest is persisted in SQLite/MySQL.
 3. **Session Revocation**: Password reset, employee deactivation, or explicit logout immediately invalidates all associated session records in the database.
 4. **Brute-Force & Enumeration Protections**:
-   - Max 5 failed login attempts before 15-minute account lockout.
+   - Max 20 failed login attempts before 15-minute account lockout.
    - Max 5 attempts per OTP challenge before challenge is invalidated.
    - Sliding-window IP and account rate limiter for all public endpoints.
    - Uniform response timing and messaging on password reset and unknown account queries.

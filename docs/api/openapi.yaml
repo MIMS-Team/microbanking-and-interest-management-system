@@ -271,7 +271,7 @@ paths:
         - Authentication
       summary: Step 1 - Validate credentials & dispatch 2FA OTP
       description: >
-        Validates email and scryptSync password hash. Rate limited to 5 attempts per 15 minutes per IP and account.
+        Validates email and scryptSync password hash. Rate limited to 20 attempts per 15 minutes per IP and account.
         Dispatches a 6-digit OTP to the employee's email and issues a temporary challenge cookie.
       requestBody:
         required: true

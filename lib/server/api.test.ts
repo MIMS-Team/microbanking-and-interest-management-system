@@ -136,9 +136,9 @@ describe('HTTP Route Integration & Authorization Tests', () => {
       expect(data.error).toBe('Invalid credentials.');
     });
 
-    it('POST /api/auth/login rate limits after 5 attempts returning 429', async () => {
-      // 5 failed attempts
-      for (let i = 0; i < 5; i++) {
+    it('POST /api/auth/login rate limits after 20 attempts returning 429', async () => {
+      // 20 failed attempts
+      for (let i = 0; i < 20; i++) {
         const req = new NextRequest('http://localhost/api/auth/login', {
           method: 'POST',
           headers: {
@@ -147,11 +147,12 @@ describe('HTTP Route Integration & Authorization Tests', () => {
           },
           body: JSON.stringify({ email: 'manager@ravindu.bank', password: 'WrongPassword' }),
         });
-        await loginRoute(req);
+        const res = await loginRoute(req);
+        expect(res.status).toBe(401);
       }
 
-      // 6th attempt should return 429
-      const req6 = new NextRequest('http://localhost/api/auth/login', {
+      // 21st attempt should return 429
+      const blockedReq = new NextRequest('http://localhost/api/auth/login', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -159,11 +160,11 @@ describe('HTTP Route Integration & Authorization Tests', () => {
         },
         body: JSON.stringify({ email: 'manager@ravindu.bank', password: 'ManagerPass!123' }),
       });
-      const res6 = await loginRoute(req6);
-      expect(res6.status).toBe(429);
-      expect(res6.headers.get('Retry-After')).toBeTruthy();
-      const data6 = await res6.json();
-      expect(data6.code).toBe('RATE_LIMIT_EXCEEDED');
+      const blockedRes = await loginRoute(blockedReq);
+      expect(blockedRes.status).toBe(429);
+      expect(blockedRes.headers.get('Retry-After')).toBeTruthy();
+      const blockedData = await blockedRes.json();
+      expect(blockedData.code).toBe('RATE_LIMIT_EXCEEDED');
     });
 
     it('POST /api/auth/otp with valid code sets session cookie and deletes OTP cookie', async () => {
