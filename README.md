@@ -19,6 +19,111 @@ Dashboard tabs use one URL contract; the existing `/savings` and
 `/fixed-deposits` links redirect into that workspace. New fictional demo seeds
 write a unique ignored connection file and preserve earlier demo/configuration files.
 
+## Team members and responsibilities
+
+The project is divided into five modules. Each member is responsible for the
+frontend, backend, database work and testing within their assigned module.
+
+| Person | Name | Student ID | Main ownership |
+| --- | --- | --- | --- |
+| 1 | Ravindu | 240492X | Authentication and Authorization |
+| 2 | Chanula | 240541A | Customer Management |
+| 3 | Pamuditha | 240721C | Savings and Fixed Deposits |
+| 4 | Sachintha | 240364H | Transactions and Interest |
+| 5 | Mindipa | 240434A | Admin, Manager, Reports and Branch Management |
+
+### 1. Ravindu — Authentication and User Management
+
+**Student ID:** 240492X
+
+**Main ownership:** Authentication and Authorization
+
+- **Frontend:** Login page, OTP page, password reset page, user profile,
+  role-based navigation and logout.
+- **Backend:** Login API, OTP verification, password reset, session handling,
+  role-based authorization and user CRUD (create, read, update and delete).
+- **Database:** Employee, Employee Authentication, OTP and authentication-related
+  queries.
+- **Testing and final improvements:** Successful and failed login, wrong password,
+  wrong OTP, deactivated users and unauthorized access; final improvements to
+  authentication and authorization.
+
+### 2. Chanula — Customer Management
+
+**Student ID:** 240541A
+
+**Main ownership:** Customer Management
+
+- **Frontend:** Customer dashboard, customer registration, viewing and editing
+  customer details, activation/deactivation and customer search.
+- **Backend:** Customer APIs, registration, updates, activation/deactivation and
+  the manager approval workflow for customer changes.
+- **Database:** Customer, customer-related approval requests and the
+  Customer-Agent relationship.
+- **Testing:** Registration, validation, duplicate customers, update requests,
+  approval/rejection and deactivation.
+
+This module covers the SRS customer functionality: registration, profile
+management and activation/deactivation.
+
+### 3. Pamuditha — Savings and Fixed Deposits
+
+**Student ID:** 240721C
+
+**Main ownership:** Savings and Fixed Deposits (FDs)
+
+- **Frontend:** Savings account page, account creation and editing,
+  activation/deactivation, FD creation, FD details, FD deactivation and renewal.
+- **Backend:** Savings APIs, FD APIs, customer-account assignment and FD maturity
+  and renewal logic.
+- **Database:** Savings Account, Customer Account, Account Type, Fixed Deposit
+  and Fixed Deposit Type.
+- **Testing:** Savings account creation, multiple account holders, FD creation,
+  maturity and renewal, and invalid account cases.
+
+These related modules share one owner. The ERD links customers to savings accounts
+through Customer Account and links savings accounts to fixed deposits.
+
+### 4. Sachintha — Transactions and Interest
+
+**Student ID:** 240364H
+
+**Main ownership:** Transactions and Interest
+
+- **Frontend:** Transaction dashboard, deposit form, withdrawal form, transaction
+  history, account balance and interest information.
+- **Backend:** Deposit and withdrawal APIs, balance updates, transaction
+  validation, interest calculation and interest assignment.
+- **Database:** Normal Transaction, Online Transaction and interest-related logic.
+- **Advanced logic:** Minimum balance validation, transaction atomicity,
+  rollback, daily savings interest calculation, monthly savings interest credit,
+  and monthly FD interest calculation and credit.
+- **Testing:** Deposits, withdrawals, insufficient balance, minimum balance,
+  inactive accounts, invalid transactions, rollback, interest calculation and
+  monthly interest credit.
+
+As required by the SRS, savings interest is calculated daily and credited monthly;
+FD interest is calculated and credited monthly.
+
+### 5. Mindipa — Admin, Manager, Reports and Branch Management
+
+**Student ID:** 240434A
+
+**Main ownership:** Admin, Manager, Reports and Branch Management
+
+- **Frontend:** Admin, manager and higher-management dashboards, branch
+  management, approval dashboard and reports dashboard.
+- **Backend:** Approval APIs, branch APIs, report APIs, manager-specific
+  operations and higher-management operations.
+- **Database:** Branch, Approval Request Account, Approval Request Customer,
+  Approval Request FD and reporting queries/views.
+- **Reports:** Customer, savings account, FD, transaction, branch-wise, interest
+  and employee/agent reports.
+
+This module covers the SRS requirements for report generation and branch-wise
+management. Detailed file ownership and cross-module coordination are documented
+in the [team guide](docs/team/README.md).
+
 ## Install and configure
 
 Use Node.js 22 or later and npm. The root `package-lock.json` is authoritative.
